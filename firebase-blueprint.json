@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "An SEO project tracking a specific domain or property.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the project."
+        },
+        "domain": {
+          "type": "string",
+          "description": "The domain being tracked."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns the project."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "domain", "ownerId", "createdAt"]
+    },
+    "Filter": {
+      "title": "Filter",
+      "description": "A saved custom filter for GSC data.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the saved filter."
+        },
+        "projectId": {
+          "type": "string",
+          "description": "The ID of the project this filter belongs to."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who created the filter."
+        },
+        "configuration": {
+          "type": "string",
+          "description": "JSON stringified filter configuration."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "projectId", "ownerId", "configuration", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/projects/{projectId}": {
+      "schema": {
+        "$ref": "#/entities/Project"
+      },
+      "description": "Stores SEO projects."
+    },
+    "/filters/{filterId}": {
+      "schema": {
+        "$ref": "#/entities/Filter"
+      },
+      "description": "Stores saved custom filters."
+    }
+  }
+}

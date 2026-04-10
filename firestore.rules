@@ -1,0 +1,115 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: projects
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required, max 100 chars)
+    //   - domain: string (required, max 200 chars)
+    //   - ownerId: string (required, immutable)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: filters
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required, max 100 chars)
+    //   - projectId: string (required, immutable)
+    //   - ownerId: string (required, immutable)
+    //   - configuration: string (required, max 5000 chars)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.ownerId;
+    }
+    
+    function uidUnchanged() {
+      return !('ownerId' in request.resource.data) || request.resource.data.ownerId == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !('ownerId' in request.resource.data) || request.resource.data.ownerId == resource.data.ownerId;
+    }
+    
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+    
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidProject(data) {
+      return hasOnlyAllowedFields(['name', 'domain', 'ownerId', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.domain is string && data.domain.size() > 0 && data.domain.size() <= 200 &&
+             data.ownerId is string && data.ownerId == request.auth.uid &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidFilter(data) {
+      return hasOnlyAllowedFields(['name', 'projectId', 'ownerId', 'configuration', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.projectId is string && data.projectId.size() > 0 &&
+             data.ownerId is string && data.ownerId == request.auth.uid &&
+             data.configuration is string && data.configuration.size() > 0 && data.configuration.size() <= 5000 &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /projects/{projectId} {
+      allow read: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      allow create: if isAuthenticated() && 
+                    hasRequiredFields(['name', 'domain', 'ownerId', 'createdAt']) &&
+                    isValidProject(request.resource.data) && 
+                    uidUnchanged();
+      allow update: if isDocOwner() && 
+                    isValidProject(request.resource.data) && 
+                    uidNotModified() &&
+                    areImmutableFieldsUnchanged(['ownerId', 'createdAt', 'domain']);
+      allow delete: if isDocOwner();
+    }
+
+    match /filters/{filterId} {
+      allow read: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      allow create: if isAuthenticated() && 
+                    hasRequiredFields(['name', 'projectId', 'ownerId', 'configuration', 'createdAt']) &&
+                    isValidFilter(request.resource.data) && 
+                    uidUnchanged();
+      allow update: if isDocOwner() && 
+                    isValidFilter(request.resource.data) && 
+                    uidNotModified() &&
+                    areImmutableFieldsUnchanged(['ownerId', 'createdAt', 'projectId']);
+      allow delete: if isDocOwner();
+    }
+  }
+}
