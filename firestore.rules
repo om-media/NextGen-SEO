@@ -23,6 +23,17 @@ service cloud.firestore {
     //   - configuration: string (required, max 5000 chars)
     //   - createdAt: timestamp (required, immutable)
     //
+    // Collection: pageDailyStats
+    // Document ID: auto-generated
+    // Fields:
+    //   - siteUrl: string (required, max 200 chars)
+    //   - date: string (required, max 10 chars)
+    //   - page: string (required, max 2000 chars)
+    //   - queryCount: number (required)
+    //   - clicks: number (required)
+    //   - impressions: number (required)
+    //   - ownerId: string (required, immutable)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -82,6 +93,17 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isValidPageDailyStat(data) {
+      return hasOnlyAllowedFields(['siteUrl', 'date', 'page', 'queryCount', 'clicks', 'impressions', 'ownerId']) &&
+             data.siteUrl is string && data.siteUrl.size() > 0 && data.siteUrl.size() <= 200 &&
+             data.date is string && data.date.size() == 10 &&
+             data.page is string && data.page.size() > 0 && data.page.size() <= 2000 &&
+             data.queryCount is number && data.queryCount >= 0 &&
+             data.clicks is number && data.clicks >= 0 &&
+             data.impressions is number && data.impressions >= 0 &&
+             data.ownerId is string && data.ownerId == request.auth.uid;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -109,6 +131,19 @@ service cloud.firestore {
                     isValidFilter(request.resource.data) && 
                     uidNotModified() &&
                     areImmutableFieldsUnchanged(['ownerId', 'createdAt', 'projectId']);
+      allow delete: if isDocOwner();
+    }
+
+    match /pageDailyStats/{statId} {
+      allow read: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      allow create: if isAuthenticated() && 
+                    hasRequiredFields(['siteUrl', 'date', 'page', 'queryCount', 'clicks', 'impressions', 'ownerId']) &&
+                    isValidPageDailyStat(request.resource.data) && 
+                    uidUnchanged();
+      allow update: if isDocOwner() && 
+                    isValidPageDailyStat(request.resource.data) && 
+                    uidNotModified() &&
+                    areImmutableFieldsUnchanged(['ownerId', 'siteUrl', 'date', 'page']);
       allow delete: if isDocOwner();
     }
   }

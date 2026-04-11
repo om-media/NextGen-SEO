@@ -14,14 +14,27 @@ import { generateGscInsights } from "@/src/services/aiService"
 import { format, subDays } from "date-fns"
 import { DateRange } from "react-day-picker"
 import Markdown from "react-markdown"
+import { Overview } from "./Overview"
 
 type SortColumn = 'key' | 'intent' | 'clicks' | 'impressions' | 'ctr' | 'position' | null;
 
-export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteUrl: string, dimension?: 'query' | 'page' | 'country', dateRange?: DateRange }) {
+export function GscDataGrid({ 
+  siteUrl, 
+  dimension = 'query', 
+  dateRange,
+  isCompareMode,
+  compareDateRange
+}: { 
+  siteUrl: string, 
+  dimension?: 'query' | 'page' | 'country', 
+  dateRange?: DateRange,
+  isCompareMode?: boolean,
+  compareDateRange?: DateRange
+}) {
   const [searchTerm, setSearchTerm] = useState("")
   const [intentFilter, setIntentFilter] = useState("all")
   const { accessToken, clearAccessToken } = useAuth()
-  const [data, setData] = useState<GscSearchAnalyticsRow[]>([])
+  const [data, setData] = useState<(GscSearchAnalyticsRow & { compareClicks?: number, compareImpressions?: number, compareCtr?: number, comparePosition?: number })[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
@@ -48,6 +61,9 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
   const [isGeneratingAi, setIsGeneratingAi] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
 
+  // Selected row for chart
+  const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
+
   useEffect(() => {
     setAiInsights(null)
     setAiError(null)
@@ -62,15 +78,50 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
       const startDate = format(dateRange.from, 'yyyy-MM-dd')
       const endDate = format(dateRange.to, 'yyyy-MM-dd')
 
-      gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension])
-        .then(rows => {
-          setData(rows)
+      const promises = [
+        gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension])
+      ];
+
+      if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
+        const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
+        const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
+        promises.push(
+          gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension])
+        )
+      }
+
+      Promise.all(promises)
+        .then(([primaryRows, compareRows]) => {
+          if (!isCompareMode || !compareRows) {
+            setData(primaryRows)
+            return;
+          }
+
+          // Merge primary and compare rows
+          const compareMap = new Map(compareRows.map(row => [row.keys[0], row]));
+          
+          const mergedData = primaryRows.map(row => {
+            const compareRow = compareMap.get(row.keys[0]);
+            return {
+              ...row,
+              compareClicks: compareRow?.clicks || 0,
+              compareImpressions: compareRow?.impressions || 0,
+              compareCtr: compareRow?.ctr || 0,
+              comparePosition: compareRow?.position || 0,
+            };
+          });
+
+          // Add rows that are only in compare data (optional, but good for completeness)
+          // For now, let's just stick to the primary rows to keep it simple and focused on current performance.
+          
+          setData(mergedData)
         })
         .catch(err => {
-          console.error("Failed to fetch GSC data:", err)
           if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
+            console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
             clearAccessToken()
           } else {
+            console.error("Failed to fetch GSC data:", err)
             setError(err.message)
           }
         })
@@ -78,7 +129,7 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
           setLoading(false)
         })
     }
-  }, [accessToken, siteUrl, dimension, dateRange, clearAccessToken])
+  }, [accessToken, siteUrl, dimension, dateRange, isCompareMode, compareDateRange, clearAccessToken])
 
   // Simple intent classification based on query keywords
   const classifyIntent = (query: string) => {
@@ -158,6 +209,10 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
     return 'Search Queries'
   }
 
+  const getTitleWithCount = () => {
+    return `${getTitle()} (${sortedData.length})`
+  }
+
   const getSearchPlaceholder = () => {
     if (dimension === 'page') return 'Filter pages...'
     if (dimension === 'country') return 'Filter countries...'
@@ -210,11 +265,58 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
     }
   }
 
+  const renderDifference = (current: number, previous: number | undefined, isPercentage: boolean = false, inverse: boolean = false) => {
+    if (!isCompareMode || previous === undefined) return null;
+    
+    const diff = current - previous;
+    if (diff === 0) return null;
+
+    let isPositive = diff > 0;
+    if (inverse) isPositive = !isPositive;
+
+    const formattedDiff = isPercentage 
+      ? `${diff > 0 ? '+' : ''}${(diff * 100).toFixed(2)}%`
+      : `${diff > 0 ? '+' : ''}${Number.isInteger(diff) ? diff.toLocaleString() : diff.toFixed(1)}`;
+
+    return (
+      <span className={`text-xs ml-2 ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
+        {formattedDiff}
+      </span>
+    );
+  };
+
   return (
-    <Card className="mt-6">
-      <CardHeader>
+    <div className="space-y-6">
+      {selectedRowKey && (
+        <Card className="border shadow-sm">
+          <div className="p-4 border-b bg-muted/20 flex justify-between items-center">
+            <div>
+              <h3 className="font-semibold text-lg">Historic Trend</h3>
+              <p className="text-sm text-muted-foreground">
+                Performance over time for {dimension}: <span className="font-medium text-foreground">{selectedRowKey}</span>
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setSelectedRowKey(null)}>
+              Close Chart
+            </Button>
+          </div>
+          <div className="p-6">
+            <Overview 
+              siteUrl={siteUrl} 
+              dateRange={dateRange} 
+              filterDimension={dimension} 
+              filterValue={selectedRowKey} 
+              isCompareMode={isCompareMode}
+              compareDateRange={compareDateRange}
+            />
+          </div>
+        </Card>
+      )}
+
+      <Card className="mt-6">
+        <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>{getTitle()}</CardTitle>
+          <CardTitle>{getTitleWithCount()}</CardTitle>
           <div className="flex items-center gap-2">
             <Dialog open={isAiDialogOpen} onOpenChange={(open) => {
               setIsAiDialogOpen(open)
@@ -226,13 +328,13 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
                 <Sparkles className="w-4 h-4 mr-2 text-indigo-500" />
                 Analyze with AI
               </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+              <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
                     <Sparkles className="w-5 h-5 text-indigo-500" />
                     AI SEO Insights
                   </DialogTitle>
-                  <DialogDescription>
+                  <DialogDescription className="italic">
                     Analysis based on your current filters and sorting for {getTitle().toLowerCase()}.
                   </DialogDescription>
                 </DialogHeader>
@@ -543,7 +645,11 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
                   const key = row.keys[0]
                   const intent = dimension === 'query' ? classifyIntent(key) : null
                   return (
-                    <TableRow key={i}>
+                    <TableRow 
+                      key={i}
+                      className={`cursor-pointer hover:bg-muted/50 ${selectedRowKey === key ? 'bg-muted' : ''}`}
+                      onClick={() => setSelectedRowKey(key)}
+                    >
                       <TableCell className="font-medium max-w-[300px] truncate" title={key}>
                         {dimension === 'page' ? (
                           <a href={key} target="_blank" rel="noreferrer" className="text-primary hover:underline">
@@ -562,10 +668,22 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
                           </Badge>
                         </TableCell>
                       )}
-                      <TableCell className="text-right">{row.clicks.toLocaleString()}</TableCell>
-                      <TableCell className="text-right">{row.impressions.toLocaleString()}</TableCell>
-                      <TableCell className="text-right">{(row.ctr * 100).toFixed(2)}%</TableCell>
-                      <TableCell className="text-right">{row.position.toFixed(1)}</TableCell>
+                      <TableCell className="text-right">
+                        {row.clicks.toLocaleString()}
+                        {renderDifference(row.clicks, row.compareClicks)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {row.impressions.toLocaleString()}
+                        {renderDifference(row.impressions, row.compareImpressions)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {(row.ctr * 100).toFixed(2)}%
+                        {renderDifference(row.ctr, row.compareCtr, true)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {row.position.toFixed(1)}
+                        {renderDifference(row.position, row.comparePosition, false, true)}
+                      </TableCell>
                     </TableRow>
                   )
                 })
@@ -575,5 +693,6 @@ export function GscDataGrid({ siteUrl, dimension = 'query', dateRange }: { siteU
         </div>
       </CardContent>
     </Card>
+    </div>
   )
 }

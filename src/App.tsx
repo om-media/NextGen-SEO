@@ -2,6 +2,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { Overview } from "@/components/dashboard/Overview"
 import { GscDataGrid } from "@/components/dashboard/GscDataGrid"
+import { QueryCountView } from "@/components/dashboard/QueryCountView"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -14,6 +15,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DatePicker } from "@/components/ui/date-picker"
 import { subDays } from "date-fns"
 import { DateRange } from "react-day-picker"
+
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 function MainApp() {
   const { user, loading, accessToken, signInWithGoogle, signOut, clearAccessToken } = useAuth()
@@ -28,6 +32,12 @@ function MainApp() {
     to: subDays(new Date(), 2),
   })
 
+  const [isCompareMode, setIsCompareMode] = useState(false)
+  const [compareDateRange, setCompareDateRange] = useState<DateRange>({
+    from: subDays(new Date(), 59),
+    to: subDays(new Date(), 31),
+  })
+
   const handleFromDateChange = (date: Date | undefined) => {
     if (date) {
       setDateRange(prev => ({ ...prev, from: date }))
@@ -37,6 +47,18 @@ function MainApp() {
   const handleToDateChange = (date: Date | undefined) => {
     if (date) {
       setDateRange(prev => ({ ...prev, to: date }))
+    }
+  }
+
+  const handleCompareFromDateChange = (date: Date | undefined) => {
+    if (date) {
+      setCompareDateRange(prev => ({ ...prev, from: date }))
+    }
+  }
+
+  const handleCompareToDateChange = (date: Date | undefined) => {
+    if (date) {
+      setCompareDateRange(prev => ({ ...prev, to: date }))
     }
   }
 
@@ -53,10 +75,11 @@ function MainApp() {
           }
         })
         .catch(err => {
-          console.error("Failed to fetch sites:", err)
           if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
+            console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
             clearAccessToken()
           } else {
+            console.error("Failed to fetch sites:", err)
             setApiError(err.message)
           }
         })
@@ -88,7 +111,7 @@ function MainApp() {
             </h1>
             <p className="text-sm text-muted-foreground">
               {user && !accessToken 
-                ? "Please re-authenticate to connect your Google Search Console" 
+                ? "Your Google Search Console session has expired (tokens are valid for 1 hour). Please re-authenticate to continue." 
                 : "Sign in to connect your Google Search Console"}
             </p>
           </div>
@@ -164,12 +187,30 @@ function MainApp() {
                     Here's an overview of your search performance.
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-2 bg-card border rounded-md p-1">
-                    <DatePicker date={dateRange.from} setDate={handleFromDateChange} label="From" />
-                    <span className="text-muted-foreground text-sm font-medium px-1">to</span>
-                    <DatePicker date={dateRange.to} setDate={handleToDateChange} label="To" />
+                <div className="flex flex-col items-end gap-2">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center space-x-2">
+                      <Switch 
+                        id="compare-mode" 
+                        checked={isCompareMode}
+                        onCheckedChange={setIsCompareMode}
+                      />
+                      <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">Compare</Label>
+                    </div>
+                    <div className="flex items-center gap-2 bg-card border rounded-md p-1">
+                      <DatePicker date={dateRange.from} setDate={handleFromDateChange} label="From" />
+                      <span className="text-muted-foreground text-sm font-medium px-1">to</span>
+                      <DatePicker date={dateRange.to} setDate={handleToDateChange} label="To" />
+                    </div>
                   </div>
+                  {isCompareMode && (
+                    <div className="flex items-center gap-2 bg-muted/30 border border-dashed rounded-md p-1">
+                      <span className="text-muted-foreground text-sm font-medium px-2">vs</span>
+                      <DatePicker date={compareDateRange.from} setDate={handleCompareFromDateChange} label="Compare From" />
+                      <span className="text-muted-foreground text-sm font-medium px-1">to</span>
+                      <DatePicker date={compareDateRange.to} setDate={handleCompareToDateChange} label="Compare To" />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -218,24 +259,28 @@ function MainApp() {
 
               {selectedSite && !apiError && (
                 <Tabs defaultValue="overview" className="space-y-4">
-                  <TabsList>
-                    <TabsTrigger value="overview">Overview</TabsTrigger>
-                    <TabsTrigger value="queries">Queries</TabsTrigger>
-                    <TabsTrigger value="pages">Pages</TabsTrigger>
-                    <TabsTrigger value="countries">Countries</TabsTrigger>
+                  <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6">
+                    <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
+                    <TabsTrigger value="queries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Queries</TabsTrigger>
+                    <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
+                    <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Countries</TabsTrigger>
+                    <TabsTrigger value="query-count" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Query Count</TabsTrigger>
                   </TabsList>
                   <TabsContent value="overview" className="space-y-4">
-                    <Overview siteUrl={selectedSite} dateRange={dateRange} />
-                    <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} />
+                    <Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                    <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
                   </TabsContent>
                   <TabsContent value="queries" className="space-y-4">
-                    <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} />
+                    <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
                   </TabsContent>
                   <TabsContent value="pages" className="space-y-4">
-                    <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} />
+                    <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
                   </TabsContent>
                   <TabsContent value="countries" className="space-y-4">
-                    <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} />
+                    <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                  </TabsContent>
+                  <TabsContent value="query-count" className="space-y-4">
+                    <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
                   </TabsContent>
                 </Tabs>
               )}

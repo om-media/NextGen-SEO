@@ -51,6 +51,42 @@
         }
       },
       "required": ["name", "projectId", "ownerId", "configuration", "createdAt"]
+    },
+    "PageDailyStats": {
+      "title": "PageDailyStats",
+      "description": "Warehoused daily stats for a specific page, including query counts.",
+      "type": "object",
+      "properties": {
+        "siteUrl": {
+          "type": "string",
+          "description": "The GSC site URL."
+        },
+        "date": {
+          "type": "string",
+          "description": "The date of the stats (YYYY-MM-DD)."
+        },
+        "page": {
+          "type": "string",
+          "description": "The page URL."
+        },
+        "queryCount": {
+          "type": "number",
+          "description": "The number of unique queries this page ranked for on this date."
+        },
+        "clicks": {
+          "type": "number",
+          "description": "Total clicks for this page on this date."
+        },
+        "impressions": {
+          "type": "number",
+          "description": "Total impressions for this page on this date."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns this data."
+        }
+      },
+      "required": ["siteUrl", "date", "page", "queryCount", "clicks", "impressions", "ownerId"]
     }
   },
   "firestore": {
@@ -65,6 +101,12 @@
         "$ref": "#/entities/Filter"
       },
       "description": "Stores saved custom filters."
+    },
+    "/pageDailyStats/{statId}": {
+      "schema": {
+        "$ref": "#/entities/PageDailyStats"
+      },
+      "description": "Stores warehoused daily page stats."
     }
   }
 }

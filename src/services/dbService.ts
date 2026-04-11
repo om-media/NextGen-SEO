@@ -1,6 +1,4 @@
-import { collection, addDoc, getDocs, query, where, serverTimestamp, deleteDoc, doc } from 'firebase/firestore';
-import { db, auth } from '../firebase';
-import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+import { auth } from '../firebase';
 
 export interface SavedFilter {
   id?: string;
@@ -12,42 +10,53 @@ export interface SavedFilter {
 }
 
 export const saveFilter = async (filter: Omit<SavedFilter, 'id' | 'createdAt' | 'ownerId'>) => {
-  const path = 'filters';
   try {
     if (!auth.currentUser) throw new Error("Not authenticated");
-    const docRef = await addDoc(collection(db, path), {
+    
+    const id = crypto.randomUUID();
+    const newFilter = {
       ...filter,
+      id,
       ownerId: auth.currentUser.uid,
-      createdAt: serverTimestamp()
+      createdAt: new Date().toISOString()
+    };
+    
+    const res = await fetch('/api/filters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newFilter)
     });
-    return docRef.id;
+    if (!res.ok) throw new Error('Failed to save filter');
+    
+    return id;
   } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+    console.error(error);
+    throw error;
   }
 }
 
 export const getFilters = async (projectId: string) => {
-  const path = 'filters';
   try {
     if (!auth.currentUser) throw new Error("Not authenticated");
-    const q = query(
-      collection(db, path), 
-      where('ownerId', '==', auth.currentUser.uid),
-      where('projectId', '==', projectId)
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SavedFilter));
+    
+    const res = await fetch(`/api/filters?ownerId=${auth.currentUser.uid}&projectId=${encodeURIComponent(projectId)}`);
+    if (!res.ok) throw new Error('Failed to fetch filters');
+    
+    const filters = await res.json();
+    return filters.filter((f: any) => f.projectId === projectId);
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
+    console.error(error);
+    throw error;
   }
 }
 
 export const deleteFilter = async (filterId: string) => {
-  const path = `filters/${filterId}`;
   try {
     if (!auth.currentUser) throw new Error("Not authenticated");
-    await deleteDoc(doc(db, 'filters', filterId));
+    const res = await fetch(`/api/filters/${filterId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete filter');
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+    console.error(error);
+    throw error;
   }
 }

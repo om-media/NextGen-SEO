@@ -50,16 +50,23 @@ export class GscApiService {
     siteUrl: string,
     startDate: string,
     endDate: string,
-    dimensions: string[] = ['query']
+    dimensions: string[] = ['query'],
+    dimensionFilterGroups?: any[]
   ): Promise<GscSearchAnalyticsRow[]> {
+    const body: any = {
+      startDate,
+      endDate,
+      dimensions,
+      rowLimit: 25000,
+    };
+
+    if (dimensionFilterGroups) {
+      body.dimensionFilterGroups = dimensionFilterGroups;
+    }
+
     const data = await this.fetchApi(`/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`, {
       method: 'POST',
-      body: JSON.stringify({
-        startDate,
-        endDate,
-        dimensions,
-        rowLimit: 1000, // Adjust as needed
-      }),
+      body: JSON.stringify(body),
     });
 
     return data.rows || [];
