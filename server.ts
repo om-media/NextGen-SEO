@@ -23,6 +23,13 @@ db.exec(`
     configuration TEXT,
     createdAt TEXT
   );
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT,
+    tier TEXT,
+    unlockedSites TEXT,
+    createdAt TEXT
+  );
 `);
 
 async function startServer() {
@@ -32,6 +39,61 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
 
   // API Routes
+  
+  // User Routes
+  app.get('/api/users/:id', (req, res) => {
+    try {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
+      if (user) {
+        user.unlockedSites = JSON.parse(user.unlockedSites || '[]');
+        res.json(user);
+      } else {
+        res.status(404).json({ error: 'User not found' });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/users', (req, res) => {
+    const { id, email, tier, unlockedSites, createdAt } = req.body;
+    try {
+      db.prepare('INSERT OR IGNORE INTO users (id, email, tier, unlockedSites, createdAt) VALUES (?, ?, ?, ?, ?)')
+        .run(id, email, tier, JSON.stringify(unlockedSites || []), createdAt);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/users/:id/unlock', (req, res) => {
+    const { siteUrl } = req.body;
+    try {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      
+      const unlockedSites = JSON.parse(user.unlockedSites || '[]');
+      if (!unlockedSites.includes(siteUrl)) {
+        unlockedSites.push(siteUrl);
+        db.prepare('UPDATE users SET unlockedSites = ? WHERE id = ?')
+          .run(JSON.stringify(unlockedSites), req.params.id);
+      }
+      res.json({ success: true, unlockedSites });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/users/:id/tier', (req, res) => {
+    const { tier } = req.body;
+    try {
+      db.prepare('UPDATE users SET tier = ? WHERE id = ?').run(tier, req.params.id);
+      res.json({ success: true, tier });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/projects', (req, res) => {
     const { ownerId } = req.query;
     if (!ownerId) return res.json([]);

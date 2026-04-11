@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { GscApiService } from "@/src/services/gscService"
@@ -56,7 +57,7 @@ export function QueryCountView({
   isCompareMode?: boolean,
   compareDateRange?: DateRange
 }) {
-  const { accessToken, clearAccessToken } = useAuth()
+  const { accessToken, userProfile, clearAccessToken } = useAuth()
   
   const [tableData, setTableData] = useState<any[]>([])
   const [chartData, setChartData] = useState<any[]>([])
@@ -78,7 +79,7 @@ export function QueryCountView({
     setLoadingTable(true)
     setError(null)
     
-    const gscService = new GscApiService(accessToken)
+    const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
     const startDate = format(dateRange.from, 'yyyy-MM-dd')
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     
@@ -162,7 +163,7 @@ export function QueryCountView({
     
     setLoadingChart(true)
     
-    const gscService = new GscApiService(accessToken)
+    const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
     const startDate = format(dateRange.from, 'yyyy-MM-dd')
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     

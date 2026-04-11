@@ -1,0 +1,78 @@
+import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { AlertCircle, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+
+interface Props {
+  children?: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends Component<Props, State> {
+  public state: State = {
+    hasError: false,
+    error: null
+  };
+
+  public static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Uncaught error:', error, errorInfo);
+  }
+
+  private handleReset = () => {
+    this.setState({ hasError: false, error: null });
+    window.location.reload();
+  }
+
+  public render() {
+    if (this.state.hasError) {
+      let errorMessage = "An unexpected error occurred.";
+      let isQuotaError = false;
+
+      if (this.state.error) {
+        try {
+          const parsed = JSON.parse(this.state.error.message);
+          if (parsed.error && typeof parsed.error === 'string') {
+            errorMessage = parsed.error;
+            if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota limit exceeded')) {
+              isQuotaError = true;
+              errorMessage = "The free database quota limit has been exceeded. Please try again tomorrow or upgrade your Firebase project to a paid plan.";
+            }
+          }
+        } catch (e) {
+          errorMessage = this.state.error.message;
+          if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota limit exceeded')) {
+            isQuotaError = true;
+            errorMessage = "The free database quota limit has been exceeded. Please try again tomorrow or upgrade your Firebase project to a paid plan.";
+          }
+        }
+      }
+
+      return (
+        <div className="flex h-screen w-full items-center justify-center bg-background p-4">
+          <div className="max-w-md w-full p-6 border border-destructive/50 bg-destructive/10 rounded-lg flex flex-col items-center text-center space-y-4">
+            <AlertCircle className="h-12 w-12 text-destructive" />
+            <h2 className="text-xl font-bold text-destructive">
+              {isQuotaError ? "Database Quota Exceeded" : "Something went wrong"}
+            </h2>
+            <p className="text-sm text-foreground">
+              {errorMessage}
+            </p>
+            <Button onClick={this.handleReset} className="mt-4" variant="outline">
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Reload Application
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}

@@ -6,9 +6,9 @@ import { QueryCountView } from "@/components/dashboard/QueryCountView"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuGroup, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuPortal, DropdownMenuSubContent } from "@/components/ui/dropdown-menu"
 import { AuthProvider, useAuth } from "./contexts/AuthContext"
-import { BarChart3, LogOut, AlertCircle, ExternalLink } from "lucide-react"
+import { BarChart3, LogOut, AlertCircle, ExternalLink, Lock, Settings2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { GscApiService, GscSite } from "./services/gscService"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -19,8 +19,10 @@ import { DateRange } from "react-day-picker"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+
 function MainApp() {
-  const { user, loading, accessToken, signInWithGoogle, signOut, clearAccessToken } = useAuth()
+  const { user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setTier } = useAuth()
   const [sites, setSites] = useState<GscSite[]>([])
   const [selectedSite, setSelectedSite] = useState<string>("")
   const [fetchingSites, setFetchingSites] = useState(false)
@@ -62,22 +64,35 @@ function MainApp() {
     }
   }
 
+  const [showUnlockModal, setShowUnlockModal] = useState(false)
+  const [siteToUnlock, setSiteToUnlock] = useState<string | null>(null)
+  const [unlockError, setUnlockError] = useState<string | null>(null)
+
   useEffect(() => {
     if (accessToken) {
       setFetchingSites(true)
       setApiError(null)
-      const gscService = new GscApiService(accessToken)
+      const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
       gscService.getSites()
         .then(fetchedSites => {
           setSites(fetchedSites)
           if (fetchedSites.length > 0) {
-            setSelectedSite(fetchedSites[0].siteUrl)
+            // Try to select the first unlocked site, or the first site if none unlocked
+            const firstUnlocked = fetchedSites.find(s => userProfile?.unlockedSites.includes(s.siteUrl));
+            if (firstUnlocked) {
+              setSelectedSite(firstUnlocked.siteUrl)
+            } else if (fetchedSites[0]) {
+              setSelectedSite(fetchedSites[0].siteUrl)
+            }
           }
         })
         .catch(err => {
           if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
             console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
             clearAccessToken()
+          } else if (err.message === "Failed to fetch") {
+            console.error("Network error fetching sites:", err)
+            setApiError("Network error: Unable to connect to Google Search Console API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
           } else {
             console.error("Failed to fetch sites:", err)
             setApiError(err.message)
@@ -85,7 +100,44 @@ function MainApp() {
         })
         .finally(() => setFetchingSites(false))
     }
-  }, [accessToken, clearAccessToken])
+  }, [accessToken, clearAccessToken, userProfile?.tier, userProfile?.unlockedSites])
+
+  const handleSiteSelect = async (siteUrl: string) => {
+    if (!userProfile) return;
+    
+    const isUnlocked = userProfile.unlockedSites.includes(siteUrl);
+    
+    if (isUnlocked) {
+      setSelectedSite(siteUrl);
+      return;
+    }
+
+    const limit = userProfile.tier === 'free' ? 1 : userProfile.tier === 'pro' ? 3 : Infinity;
+    
+    if (userProfile.unlockedSites.length < limit) {
+      // They can unlock it
+      setSiteToUnlock(siteUrl);
+      setShowUnlockModal(true);
+      setUnlockError(null);
+    } else {
+      // Reached limit
+      setSiteToUnlock(siteUrl);
+      setShowUnlockModal(true);
+      setUnlockError(`You have reached the maximum number of sites (${limit}) for your ${userProfile.tier} tier.`);
+    }
+  };
+
+  const confirmUnlock = async () => {
+    if (!siteToUnlock) return;
+    try {
+      await unlockSite(siteToUnlock);
+      setSelectedSite(siteToUnlock);
+      setShowUnlockModal(false);
+      setSiteToUnlock(null);
+    } catch (err: any) {
+      setUnlockError(err.message);
+    }
+  };
 
   if (loading) {
     return (
@@ -138,16 +190,22 @@ function MainApp() {
             <div className="flex-1 flex items-center gap-4">
               <h1 className="text-lg font-semibold hidden sm:block">Dashboard</h1>
               {sites.length > 0 && (
-                <Select value={selectedSite} onValueChange={setSelectedSite}>
+                <Select value={selectedSite} onValueChange={handleSiteSelect}>
                   <SelectTrigger className="w-[250px] h-8 bg-muted/50 border-none">
                     <SelectValue placeholder="Select a property" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sites.map(site => (
-                      <SelectItem key={site.siteUrl} value={site.siteUrl}>
-                        {site.siteUrl.replace('https://', '').replace('http://', '').replace('sc-domain:', '')}
-                      </SelectItem>
-                    ))}
+                    {sites.map(site => {
+                      const isUnlocked = userProfile?.unlockedSites.includes(site.siteUrl);
+                      return (
+                        <SelectItem key={site.siteUrl} value={site.siteUrl}>
+                          <div className="flex items-center justify-between w-full">
+                            <span>{site.siteUrl.replace('https://', '').replace('http://', '').replace('sc-domain:', '')}</span>
+                            {!isUnlocked && <Lock className="h-3 w-3 text-muted-foreground ml-2" />}
+                          </div>
+                        </SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
               )}
@@ -161,14 +219,41 @@ function MainApp() {
                   </Avatar>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="w-56" align="end">
-                  <DropdownMenuLabel className="font-normal">
-                    <div className="flex flex-col space-y-1">
-                      <p className="text-sm font-medium leading-none">{user.displayName}</p>
-                      <p className="text-xs leading-none text-muted-foreground">
-                        {user.email}
-                      </p>
-                    </div>
-                  </DropdownMenuLabel>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel className="font-normal">
+                      <div className="flex flex-col space-y-1">
+                        <p className="text-sm font-medium leading-none">{user.displayName}</p>
+                        <p className="text-xs leading-none text-muted-foreground">
+                          {user.email}
+                        </p>
+                      </div>
+                    </DropdownMenuLabel>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Settings2 className="mr-2 h-4 w-4" />
+                        <span>Test Tiers</span>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuPortal>
+                        <DropdownMenuSubContent>
+                          <DropdownMenuItem onClick={() => setTier('free')}>
+                            Free Tier (1 site)
+                            {userProfile?.tier === 'free' && " ✓"}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setTier('pro')}>
+                            Pro Tier (3 sites)
+                            {userProfile?.tier === 'pro' && " ✓"}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setTier('enterprise')}>
+                            Enterprise (Unlimited)
+                            {userProfile?.tier === 'enterprise' && " ✓"}
+                          </DropdownMenuItem>
+                        </DropdownMenuSubContent>
+                      </DropdownMenuPortal>
+                    </DropdownMenuSub>
+                  </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={signOut} className="text-destructive focus:text-destructive cursor-pointer">
                     <LogOut className="mr-2 h-4 w-4" />
@@ -199,7 +284,7 @@ function MainApp() {
                     </div>
                     <div className="flex items-center gap-2 bg-card border rounded-md p-1">
                       <DatePicker date={dateRange.from} setDate={handleFromDateChange} label="From" />
-                      <span className="text-muted-foreground text-sm font-medium px-1">to</span>
+                      <span className="text-muted-foreground text-sm font-medium px-2">to</span>
                       <DatePicker date={dateRange.to} setDate={handleToDateChange} label="To" />
                     </div>
                   </div>
@@ -207,7 +292,7 @@ function MainApp() {
                     <div className="flex items-center gap-2 bg-muted/30 border border-dashed rounded-md p-1">
                       <span className="text-muted-foreground text-sm font-medium px-2">vs</span>
                       <DatePicker date={compareDateRange.from} setDate={handleCompareFromDateChange} label="Compare From" />
-                      <span className="text-muted-foreground text-sm font-medium px-1">to</span>
+                      <span className="text-muted-foreground text-sm font-medium px-2">to</span>
                       <DatePicker date={compareDateRange.to} setDate={handleCompareToDateChange} label="Compare To" />
                     </div>
                   )}
@@ -288,14 +373,43 @@ function MainApp() {
           </main>
         </div>
       </div>
+
+      <Dialog open={showUnlockModal} onOpenChange={setShowUnlockModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unlock Property</DialogTitle>
+            <DialogDescription>
+              {unlockError ? (
+                <span className="text-destructive">{unlockError}</span>
+              ) : (
+                <span>
+                  You are about to unlock <strong>{siteToUnlock}</strong>. 
+                  Your current tier ({userProfile?.tier}) allows you to unlock up to {userProfile?.tier === 'free' ? 1 : userProfile?.tier === 'pro' ? 3 : 'unlimited'} properties.
+                  Once unlocked, you cannot remove it.
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowUnlockModal(false)}>Cancel</Button>
+            {!unlockError && (
+              <Button onClick={confirmUnlock}>Confirm Unlock</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SidebarProvider>
   )
 }
 
+import { ErrorBoundary } from "./components/ErrorBoundary"
+
 export default function App() {
   return (
-    <AuthProvider>
-      <MainApp />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <MainApp />
+      </AuthProvider>
+    </ErrorBoundary>
   )
 }

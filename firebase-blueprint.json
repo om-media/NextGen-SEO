@@ -1,5 +1,33 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing tier and unlocked sites.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "User's email address."
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["free", "pro", "enterprise"],
+          "description": "The user's subscription tier."
+        },
+        "unlockedSites": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of GSC site URLs the user has unlocked."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["email", "tier", "unlockedSites", "createdAt"]
+    },
     "Project": {
       "title": "Project",
       "description": "An SEO project tracking a specific domain or property.",
@@ -90,6 +118,12 @@
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Stores user profiles including their tier and unlocked sites."
+    },
     "/projects/{projectId}": {
       "schema": {
         "$ref": "#/entities/Project"

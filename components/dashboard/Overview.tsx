@@ -65,7 +65,7 @@ export function Overview({
   isCompareMode?: boolean,
   compareDateRange?: DateRange
 }) {
-  const { accessToken, clearAccessToken } = useAuth()
+  const { accessToken, userProfile, clearAccessToken } = useAuth()
   const [rawData, setRawData] = useState<any[]>([])
   const [compareRawData, setCompareRawData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -90,7 +90,7 @@ export function Overview({
   useEffect(() => {
     if (accessToken && siteUrl && dateRange?.from && dateRange?.to) {
       setLoading(true)
-      const gscService = new GscApiService(accessToken)
+      const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
       
       const endDate = format(dateRange.to, 'yyyy-MM-dd')
       const startDate = format(dateRange.from, 'yyyy-MM-dd')

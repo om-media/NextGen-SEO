@@ -17,9 +17,11 @@ export interface GscSearchAnalyticsResponse {
 
 export class GscApiService {
   private accessToken: string;
+  private tier: 'free' | 'pro' | 'enterprise';
 
-  constructor(accessToken: string) {
+  constructor(accessToken: string, tier: 'free' | 'pro' | 'enterprise' = 'free') {
     this.accessToken = accessToken;
+    this.tier = tier;
   }
 
   private async fetchApi(path: string, options: RequestInit = {}) {
@@ -53,22 +55,50 @@ export class GscApiService {
     dimensions: string[] = ['query'],
     dimensionFilterGroups?: any[]
   ): Promise<GscSearchAnalyticsRow[]> {
-    const body: any = {
-      startDate,
-      endDate,
-      dimensions,
-      rowLimit: 25000,
-    };
-
-    if (dimensionFilterGroups) {
-      body.dimensionFilterGroups = dimensionFilterGroups;
+    
+    const maxRowsPerRequest = 25000;
+    let targetRowLimit = 2500; // Free tier
+    
+    if (this.tier === 'pro') {
+      targetRowLimit = 25000;
+    } else if (this.tier === 'enterprise') {
+      targetRowLimit = Infinity;
     }
 
-    const data = await this.fetchApi(`/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    let allRows: GscSearchAnalyticsRow[] = [];
+    let startRow = 0;
+    let hasMore = true;
 
-    return data.rows || [];
+    while (hasMore && allRows.length < targetRowLimit) {
+      const fetchLimit = Math.min(maxRowsPerRequest, targetRowLimit - allRows.length);
+      
+      const body: any = {
+        startDate,
+        endDate,
+        dimensions,
+        rowLimit: fetchLimit,
+        startRow: startRow
+      };
+
+      if (dimensionFilterGroups) {
+        body.dimensionFilterGroups = dimensionFilterGroups;
+      }
+
+      const data = await this.fetchApi(`/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+
+      const rows = data.rows || [];
+      allRows = allRows.concat(rows);
+      
+      if (rows.length < fetchLimit) {
+        hasMore = false; // We've reached the end of the available data
+      } else {
+        startRow += fetchLimit;
+      }
+    }
+
+    return allRows;
   }
 }

@@ -33,7 +33,7 @@ export function GscDataGrid({
 }) {
   const [searchTerm, setSearchTerm] = useState("")
   const [intentFilter, setIntentFilter] = useState("all")
-  const { accessToken, clearAccessToken } = useAuth()
+  const { accessToken, userProfile, clearAccessToken } = useAuth()
   const [data, setData] = useState<(GscSearchAnalyticsRow & { compareClicks?: number, compareImpressions?: number, compareCtr?: number, comparePosition?: number })[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -73,7 +73,7 @@ export function GscDataGrid({
     if (accessToken && siteUrl && dateRange?.from && dateRange?.to) {
       setLoading(true)
       setError(null)
-      const gscService = new GscApiService(accessToken)
+      const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
       
       const startDate = format(dateRange.from, 'yyyy-MM-dd')
       const endDate = format(dateRange.to, 'yyyy-MM-dd')

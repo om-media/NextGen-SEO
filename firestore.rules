@@ -6,6 +6,14 @@ service cloud.firestore {
     // Assumed Data Model
     // ===============================================================
     //
+    // Collection: users
+    // Document ID: user UID
+    // Fields:
+    //   - email: string (required, max 200 chars)
+    //   - tier: string (required, 'free', 'pro', 'enterprise', immutable by user)
+    //   - unlockedSites: list of strings (required, max 100 items)
+    //   - createdAt: timestamp (required, immutable)
+    //
     // Collection: projects
     // Document ID: auto-generated
     // Fields:
@@ -76,6 +84,14 @@ service cloud.firestore {
     // Domain Validators
     // ===============================================================
 
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['email', 'tier', 'unlockedSites', 'createdAt']) &&
+             data.email is string && data.email.size() > 0 && data.email.size() <= 200 &&
+             data.tier is string && data.tier in ['free', 'pro', 'enterprise'] &&
+             data.unlockedSites is list && data.unlockedSites.size() <= 100 &&
+             data.createdAt is timestamp;
+    }
+
     function isValidProject(data) {
       return hasOnlyAllowedFields(['name', 'domain', 'ownerId', 'createdAt']) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
@@ -107,6 +123,18 @@ service cloud.firestore {
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && 
+                    hasRequiredFields(['email', 'tier', 'unlockedSites', 'createdAt']) &&
+                    isValidUser(request.resource.data) &&
+                    request.resource.data.tier == 'free';
+      allow update: if isOwner(userId) && 
+                    isValidUser(request.resource.data) && 
+                    areImmutableFieldsUnchanged(['tier', 'createdAt', 'email']);
+      allow delete: if false;
+    }
 
     match /projects/{projectId} {
       allow read: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
