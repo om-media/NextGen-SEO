@@ -32,6 +32,13 @@ db.exec(`
   );
 `);
 
+// Add bingApiKey column if it doesn't exist
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN bingApiKey TEXT`);
+} catch (e) {
+  // Column likely already exists
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -56,10 +63,10 @@ async function startServer() {
   });
 
   app.post('/api/users', (req, res) => {
-    const { id, email, tier, unlockedSites, createdAt } = req.body;
+    const { id, email, tier, unlockedSites, createdAt, bingApiKey } = req.body;
     try {
-      db.prepare('INSERT OR IGNORE INTO users (id, email, tier, unlockedSites, createdAt) VALUES (?, ?, ?, ?, ?)')
-        .run(id, email, tier, JSON.stringify(unlockedSites || []), createdAt);
+      db.prepare('INSERT OR IGNORE INTO users (id, email, tier, unlockedSites, createdAt, bingApiKey) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(id, email, tier, JSON.stringify(unlockedSites || []), createdAt, bingApiKey || null);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -89,6 +96,53 @@ async function startServer() {
     try {
       db.prepare('UPDATE users SET tier = ? WHERE id = ?').run(tier, req.params.id);
       res.json({ success: true, tier });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/users/:id/bing-key', (req, res) => {
+    const { bingApiKey } = req.body;
+    try {
+      db.prepare('UPDATE users SET bingApiKey = ? WHERE id = ?').run(bingApiKey, req.params.id);
+      res.json({ success: true, bingApiKey });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Bing Webmaster API Proxy Routes
+  app.get('/api/bing/sites', async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: 'Missing userId' });
+    
+    try {
+      const user = db.prepare('SELECT bingApiKey FROM users WHERE id = ?').get(userId) as any;
+      if (!user || !user.bingApiKey) {
+        return res.status(400).json({ error: 'Bing API key not configured' });
+      }
+
+      const response = await fetch(`https://ssl.bing.com/webmaster/api.svc/json/GetUserSites?apikey=${user.bingApiKey}`);
+      const data = await response.json();
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/bing/stats', async (req, res) => {
+    const { userId, siteUrl } = req.query;
+    if (!userId || !siteUrl) return res.status(400).json({ error: 'Missing userId or siteUrl' });
+    
+    try {
+      const user = db.prepare('SELECT bingApiKey FROM users WHERE id = ?').get(userId) as any;
+      if (!user || !user.bingApiKey) {
+        return res.status(400).json({ error: 'Bing API key not configured' });
+      }
+
+      const response = await fetch(`https://ssl.bing.com/webmaster/api.svc/json/GetQueryStats?siteUrl=${encodeURIComponent(siteUrl as string)}&apikey=${user.bingApiKey}`);
+      const data = await response.json();
+      res.json(data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

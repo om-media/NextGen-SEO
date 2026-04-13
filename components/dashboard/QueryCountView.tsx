@@ -147,6 +147,8 @@ export function QueryCountView({
         if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
           console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
           clearAccessToken()
+        } else if (err.message.includes("sufficient permission")) {
+          setError("You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.")
         } else {
           console.error("Failed to load query count table data:", err)
           setError(err.message)
@@ -234,6 +236,8 @@ export function QueryCountView({
       .catch(err => {
         if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
           clearAccessToken()
+        } else if (err.message.includes("sufficient permission")) {
+          // Error is already handled by the table fetch
         } else {
           console.error("Failed to load query count chart data:", err)
         }

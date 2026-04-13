@@ -120,6 +120,8 @@ export function GscDataGrid({
           if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
             console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
             clearAccessToken()
+          } else if (err.message.includes("sufficient permission")) {
+            setError("You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.")
           } else {
             console.error("Failed to fetch GSC data:", err)
             setError(err.message)
@@ -287,6 +289,11 @@ export function GscDataGrid({
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="p-4 border border-destructive/50 bg-destructive/10 rounded-lg text-destructive text-sm">
+          {error}
+        </div>
+      )}
       {selectedRowKey && (
         <Card className="border shadow-sm">
           <div className="p-4 border-b bg-muted/20 flex justify-between items-center">

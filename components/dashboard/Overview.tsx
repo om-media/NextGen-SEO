@@ -69,6 +69,7 @@ export function Overview({
   const [rawData, setRawData] = useState<any[]>([])
   const [compareRawData, setCompareRawData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const [activeMetrics, setActiveMetrics] = useState({
     clicks: true,
@@ -114,6 +115,7 @@ export function Overview({
       Promise.all(promises)
         .then(([primaryRows, compareRows]) => {
           setRawData(primaryRows)
+          setError(null)
           if (compareRows) {
             setCompareRawData(compareRows)
           } else {
@@ -124,8 +126,11 @@ export function Overview({
           if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
             console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
             clearAccessToken()
+          } else if (err.message.includes("sufficient permission")) {
+            setError("You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.")
           } else {
             console.error("Failed to fetch GSC overview data:", err)
+            setError(err.message)
           }
         })
         .finally(() => {
@@ -274,6 +279,11 @@ export function Overview({
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="p-4 border border-destructive/50 bg-destructive/10 rounded-lg text-destructive text-sm">
+          {error}
+        </div>
+      )}
       {/* GSC Style Toggle Cards */}
       <div className="flex flex-col sm:flex-row border rounded-lg overflow-hidden shadow-sm bg-white">
         {/* Clicks Card */}

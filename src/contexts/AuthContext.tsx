@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut } from 'firebase/auth';
+import { User, GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, linkWithPopup } from 'firebase/auth';
 import { auth } from '../firebase';
 
 export interface UserProfile {
   email: string;
   tier: 'free' | 'pro' | 'enterprise';
   unlockedSites: string[];
+  bingApiKey?: string;
 }
 
 interface AuthContextType {
@@ -14,10 +15,13 @@ interface AuthContextType {
   loading: boolean;
   accessToken: string | null;
   signInWithGoogle: () => Promise<void>;
+  registerWithEmail: (email: string, pass: string) => Promise<void>;
+  loginWithEmail: (email: string, pass: string) => Promise<void>;
   signOut: () => Promise<void>;
   clearAccessToken: () => void;
   unlockSite: (siteUrl: string) => Promise<void>;
   setTier: (tier: 'free' | 'pro' | 'enterprise') => Promise<void>;
+  setBingApiKey: (key: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -99,16 +103,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
     provider.addScope('https://www.googleapis.com/auth/webmasters.readonly');
+    provider.addScope('https://www.googleapis.com/auth/analytics.readonly');
     try {
-      const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setAccessToken(credential.accessToken);
-        sessionStorage.setItem('gsc_access_token', credential.accessToken);
+      if (auth.currentUser && !auth.currentUser.providerData.some(p => p.providerId === 'google.com')) {
+        const result = await linkWithPopup(auth.currentUser, provider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          setAccessToken(credential.accessToken);
+          sessionStorage.setItem('gsc_access_token', credential.accessToken);
+        }
+      } else {
+        const result = await signInWithPopup(auth, provider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          setAccessToken(credential.accessToken);
+          sessionStorage.setItem('gsc_access_token', credential.accessToken);
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error signing in with Google:", error);
+      if (error.code === 'auth/credential-already-in-use') {
+        // If the google account is already linked to another user, just sign in with it
+        const result = await signInWithPopup(auth, provider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          setAccessToken(credential.accessToken);
+          sessionStorage.setItem('gsc_access_token', credential.accessToken);
+        }
+      }
     }
+  };
+
+  const registerWithEmail = async (email: string, pass: string) => {
+    await createUserWithEmailAndPassword(auth, email, pass);
+  };
+
+  const loginWithEmail = async (email: string, pass: string) => {
+    await signInWithEmailAndPassword(auth, email, pass);
   };
 
   const signOut = async () => {
@@ -125,6 +156,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const unlockSite = async (siteUrl: string) => {
     if (!user || !userProfile) return;
     
+    if (userProfile.tier === 'enterprise') return; // Enterprise users have all sites unlocked
+
     // Check limits
     const limit = userProfile.tier === 'free' ? 1 : userProfile.tier === 'pro' ? 3 : Infinity;
     if (userProfile.unlockedSites.length >= limit) {
@@ -174,8 +207,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const setBingApiKey = async (bingApiKey: string) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/users/${user.uid}/bing-key`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bingApiKey })
+      });
+      if (res.ok) {
+        setUserProfile(prev => prev ? { ...prev, bingApiKey } : null);
+      }
+    } catch (error) {
+      console.error("Failed to update Bing API key:", error);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setTier }}>
+    <AuthContext.Provider value={{ user, userProfile, loading, accessToken, signInWithGoogle, registerWithEmail, loginWithEmail, signOut, clearAccessToken, unlockSite, setTier, setBingApiKey }}>
       {children}
     </AuthContext.Provider>
   );
