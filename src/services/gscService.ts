@@ -39,6 +39,9 @@ export class GscApiService {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('UNAUTHORIZED');
+      }
       const error = await response.json();
       throw new Error(error.error?.message || 'Failed to fetch GSC data');
     }
@@ -61,7 +64,10 @@ export class GscApiService {
   ): Promise<GscSearchAnalyticsRow[]> {
     
     // Check if we can fulfill this from our local data warehouse
-    const canUseWarehouse = !forceLive && dimensions.every(d => d === 'query' || d === 'date');
+    const hasUnsupportedFilter = dimensionFilterGroups?.some((group: any) => 
+      group.filters?.some((filter: any) => filter.dimension !== 'query' && filter.dimension !== 'date')
+    );
+    const canUseWarehouse = !forceLive && !hasUnsupportedFilter && dimensions.every(d => d === 'query' || d === 'date');
     if (canUseWarehouse) {
       try {
         const response = await fetch('/api/warehouse/query', {

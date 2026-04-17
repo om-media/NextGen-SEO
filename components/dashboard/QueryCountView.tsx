@@ -72,6 +72,10 @@ export function QueryCountView({
   const [sortColumn, setSortColumn] = useState<SortColumn>('queryCount')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
 
+  // Pagination state
+  const [pageIndex, setPageIndex] = useState(0)
+  const pageSize = 100
+
   // Fetch Table Data (Pages and their Query Count)
   useEffect(() => {
     if (!siteUrl || !dateRange?.from || !dateRange?.to) return;
@@ -258,6 +262,9 @@ export function QueryCountView({
     })
   }, [tableData, sortColumn, sortDirection])
 
+  const pageCount = Math.ceil(sortedTableData.length / pageSize)
+  const currentData = sortedTableData.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)
+
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
@@ -423,7 +430,7 @@ export function QueryCountView({
                     <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                   </TableCell>
                 </TableRow>
-              ) : sortedTableData.map((row, i) => (
+              ) : currentData.map((row, i) => (
                 <TableRow 
                   key={i} 
                   className={`cursor-pointer hover:bg-muted/50 ${selectedPage === row.page ? 'bg-muted' : ''}`}
@@ -456,6 +463,38 @@ export function QueryCountView({
             </TableBody>
           </Table>
         </div>
+
+        {/* Pagination Controls */}
+        {pageCount > 1 && (
+          <div className="flex items-center justify-between px-4 py-4 border-t">
+            <div className="flex-1 text-sm text-muted-foreground">
+              Showing {pageIndex * pageSize + 1} to {Math.min((pageIndex + 1) * pageSize, sortedTableData.length)} of {sortedTableData.length} entries
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                className="h-8 w-8 p-0"
+                onClick={() => setPageIndex(Math.max(0, pageIndex - 1))}
+                disabled={pageIndex === 0}
+              >
+                <span className="sr-only">Go to previous page</span>
+                &lt;
+              </Button>
+              <div className="flex w-[100px] items-center justify-center text-sm font-medium">
+                Page {pageIndex + 1} of {pageCount}
+              </div>
+              <Button
+                variant="outline"
+                className="h-8 w-8 p-0"
+                onClick={() => setPageIndex(Math.min(pageCount - 1, pageIndex + 1))}
+                disabled={pageIndex >= pageCount - 1}
+              >
+                <span className="sr-only">Go to next page</span>
+                &gt;
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   )

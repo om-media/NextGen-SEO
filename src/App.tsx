@@ -5,6 +5,7 @@ import { GscDataGrid } from "@/components/dashboard/GscDataGrid"
 import { QueryCountView } from "@/components/dashboard/QueryCountView"
 import { Ga4DataGrid } from "@/components/dashboard/Ga4DataGrid"
 import { Ga4Overview } from "@/components/dashboard/Ga4Overview"
+import { Ga4Demographics } from "@/components/dashboard/Ga4Demographics"
 import { BingDataGrid } from "@/components/dashboard/BingDataGrid"
 import { WarehouseSync } from "@/components/dashboard/WarehouseSync"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -77,6 +78,11 @@ function MainApp() {
     to: subDays(new Date(), 31),
   })
 
+  type Ga4Dimension = 'country' | 'city' | 'region' | 'deviceCategory' | 'browser' | 'operatingSystem';
+  const [ga4UserDimension, setGa4UserDimension] = useState<Ga4Dimension>('country')
+  
+  const [sessionExpired, setSessionExpired] = useState(false);
+
   const handleFromDateChange = (date: Date | undefined) => {
     if (date) {
       setDateRange(prev => {
@@ -145,8 +151,9 @@ function MainApp() {
             }
           })
           .catch(err => {
-            if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
+            if (err.message === 'UNAUTHORIZED' || err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
               console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
+              setSessionExpired(true);
               clearAccessToken()
               
               // Fallback to warehouse-synced / unlocked sites
@@ -224,8 +231,9 @@ function MainApp() {
           }
         })
         .catch(err => {
-          if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token") || err.message.includes("insufficient authentication scopes")) {
+          if (err.message === 'UNAUTHORIZED' || err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token") || err.message.includes("insufficient authentication scopes")) {
             console.warn("GA4 Access token expired or missing scopes. Prompting re-authentication.");
+            setSessionExpired(true);
             clearAccessToken()
           } else if (err.message.includes("Google Analytics Admin API has not been used in project") || err.message.includes("is disabled")) {
             console.error("GA4 API not enabled:", err)
@@ -502,116 +510,163 @@ function MainApp() {
                 </div>
               </div>
 
-              {apiError && (
-                <div className="p-6 border border-destructive/50 bg-destructive/10 rounded-lg flex flex-col items-start space-y-4">
-                  <div className="flex items-center gap-2 text-destructive font-semibold">
-                    <AlertCircle className="h-5 w-5" />
-                    <h3>API Access Required</h3>
+              {!accessToken && ((dataSource === 'ga4') || (dataSource === 'gsc' && sites.length === 0)) ? (
+                <div className="flex flex-col items-center justify-center p-12 text-center border rounded-lg bg-card shadow-sm space-y-6 mt-8">
+                  <div className="bg-primary/10 p-4 rounded-full">
+                    <BarChart3 className="h-12 w-12 text-primary" />
                   </div>
-                  <p className="text-sm text-foreground">
-                    The Google Search Console API needs to be enabled for your Firebase project before we can fetch your data.
-                  </p>
-                  {apiError.includes("https://console.developers.google.com") ? (
-                    <div className="space-y-4 w-full">
-                      <div className="p-3 bg-background rounded border text-xs font-mono text-muted-foreground break-all">
-                        {apiError}
+                  <div className="space-y-2 max-w-md">
+                    {sessionExpired ? (
+                      <>
+                        <h2 className="text-2xl font-bold tracking-tight">Session Expired</h2>
+                        <p className="text-muted-foreground">
+                          Your Google API access token has expired. For security reasons, we require you to reconnect to immediately resume viewing your dashboard.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h2 className="text-2xl font-bold tracking-tight">Connect your data</h2>
+                        <p className="text-muted-foreground">
+                          To view your Google Search Console and Google Analytics 4 performance, you need to connect your Google account. We only request read-only access.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <Button onClick={signInWithGoogle} size="lg" className="px-8">
+                    {sessionExpired ? "Reconnect Google Account" : "Connect Google Account"}
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  {apiError && (
+                    <div className="p-6 border border-destructive/50 bg-destructive/10 rounded-lg flex flex-col items-start space-y-4">
+                      <div className="flex items-center gap-2 text-destructive font-semibold">
+                        <AlertCircle className="h-5 w-5" />
+                        <h3>API Access Required</h3>
                       </div>
-                      <a 
-                        href={apiError.match(/https:\/\/console\.developers\.google\.com[^\s]*/)?.[0] || "#"} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className={buttonVariants({ variant: "default" })}
-                      >
-                        Enable API in Google Cloud Console <ExternalLink className="ml-2 h-4 w-4" />
-                      </a>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        After enabling the API, wait a minute or two, then refresh this page.
+                      <p className="text-sm text-foreground">
+                        The API needs to be enabled for your Firebase project before we can fetch your data.
                       </p>
-                    </div>
-                  ) : (
-                    <div className="p-3 bg-background rounded border text-xs font-mono text-muted-foreground break-all">
-                      {apiError}
+                      {apiError.includes("https://console.developers.google.com") ? (
+                        <div className="space-y-4 w-full">
+                          <div className="p-3 bg-background rounded border text-xs font-mono text-muted-foreground break-all">
+                            {apiError}
+                          </div>
+                          <a 
+                            href={apiError.match(/https:\/\/console\.developers\.google\.com[^\s]*/)?.[0] || "#"} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className={buttonVariants({ variant: "default" })}
+                          >
+                            Enable API in Google Cloud Console <ExternalLink className="ml-2 h-4 w-4" />
+                          </a>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            After enabling the API, wait a minute or two, then refresh this page.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="p-3 bg-background rounded border text-xs font-mono text-muted-foreground break-all">
+                          {apiError}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
 
-              {!selectedSite && !fetchingSites && !apiError && (
-                <div className="p-8 text-center border rounded-lg bg-card flex flex-col items-center justify-center space-y-3">
-                  <AlertCircle className="h-10 w-10 text-muted-foreground" />
-                  <h3 className="text-lg font-medium">No properties found</h3>
-                  <p className="text-sm text-muted-foreground max-w-md">
-                    {dataSource === 'gsc' 
-                      ? "We couldn't find any Google Search Console properties associated with your account. Please make sure you have set up GSC for your website."
-                      : dataSource === 'bing'
-                      ? "We couldn't find any Bing Webmaster Tools properties. Please make sure your API key is correct and you have sites verified in Bing."
-                      : "We couldn't find any Google Analytics 4 properties associated with your account. Please make sure you have set up GA4 for your website."}
-                  </p>
-                </div>
-              )}
+                  {!selectedSite && !fetchingSites && !apiError && (
+                    <div className="p-8 text-center border rounded-lg bg-card flex flex-col items-center justify-center space-y-3">
+                      <AlertCircle className="h-10 w-10 text-muted-foreground" />
+                      <h3 className="text-lg font-medium">No properties found</h3>
+                      <p className="text-sm text-muted-foreground max-w-md">
+                        {dataSource === 'gsc' 
+                          ? "We couldn't find any Google Search Console properties associated with your account. Please make sure you have set up GSC for your website."
+                          : dataSource === 'bing'
+                          ? "We couldn't find any Bing Webmaster Tools properties. Please make sure your API key is correct and you have sites verified in Bing."
+                          : "We couldn't find any Google Analytics 4 properties associated with your account. Please make sure you have set up GA4 for your website."}
+                      </p>
+                    </div>
+                  )}
 
-              {selectedSite && !apiError && dataSource === 'gsc' && sites.some(s => s.siteUrl === selectedSite) && (
-                <Tabs defaultValue="overview" className="space-y-4">
-                  <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6">
-                    <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
-                    <TabsTrigger value="queries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Queries</TabsTrigger>
-                    <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
-                    <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Countries</TabsTrigger>
-                    <TabsTrigger value="query-count" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Query Count</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="overview" className="space-y-4">
-                    <Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                    <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                  <TabsContent value="queries" className="space-y-4">
-                    <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                  <TabsContent value="pages" className="space-y-4">
-                    <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                  <TabsContent value="countries" className="space-y-4">
-                    <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                  <TabsContent value="query-count" className="space-y-4">
-                    <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                </Tabs>
-              )}
+                  {selectedSite && !apiError && dataSource === 'gsc' && sites.some(s => s.siteUrl === selectedSite) && (
+                    <Tabs defaultValue="overview" className="space-y-4">
+                      <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
+                        <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
+                        <TabsTrigger value="queries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Queries</TabsTrigger>
+                        <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
+                        <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Countries</TabsTrigger>
+                        <TabsTrigger value="query-count" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Query Count</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="overview" className="space-y-4">
+                        <Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                      <TabsContent value="queries" className="space-y-4">
+                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                      <TabsContent value="pages" className="space-y-4">
+                        <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                      <TabsContent value="countries" className="space-y-4">
+                        <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                      <TabsContent value="query-count" className="space-y-4">
+                        <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                    </Tabs>
+                  )}
 
-              {selectedSite && !apiError && dataSource === 'bing' && userProfile?.bingApiKey && bingSites.some(s => s.siteUrl === selectedSite) && (
-                <div className="space-y-4">
-                  <div className="p-4 border rounded-lg bg-card">
-                    <h3 className="text-lg font-medium mb-2">Bing Webmaster Tools Data</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Bing integration is currently in beta. Advanced filtering and comparison features will be added soon.
-                    </p>
-                  </div>
-                  <BingDataGrid siteUrl={selectedSite} />
-                </div>
-              )}
+                  {selectedSite && !apiError && dataSource === 'bing' && userProfile?.bingApiKey && bingSites.some(s => s.siteUrl === selectedSite) && (
+                    <div className="space-y-4">
+                      <div className="p-4 border rounded-lg bg-card">
+                        <h3 className="text-lg font-medium mb-2">Bing Webmaster Tools Data</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Bing integration is currently in beta. Advanced filtering and comparison features will be added soon.
+                        </p>
+                      </div>
+                      <BingDataGrid siteUrl={selectedSite} />
+                    </div>
+                  )}
 
-              {selectedSite && !apiError && dataSource === 'ga4' && ga4Sites.some(s => s.siteUrl === selectedSite) && (
-                <Tabs defaultValue="overview" className="space-y-4">
-                  <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 overflow-x-auto">
-                    <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
-                    <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
-                    <TabsTrigger value="sources" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Sources/Mediums</TabsTrigger>
-                    <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Countries</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="overview" className="space-y-4">
-                    <Ga4Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                    <Ga4DataGrid siteUrl={selectedSite} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                  <TabsContent value="pages" className="space-y-4">
-                    <Ga4DataGrid siteUrl={selectedSite} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                  <TabsContent value="sources" className="space-y-4">
-                    <Ga4DataGrid siteUrl={selectedSite} dimension="sessionSourceMedium" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                  <TabsContent value="countries" className="space-y-4">
-                    <Ga4DataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                  </TabsContent>
-                </Tabs>
+                  {selectedSite && !apiError && dataSource === 'ga4' && ga4Sites.some(s => s.siteUrl === selectedSite) && (
+                    <Tabs defaultValue="overview" className="space-y-4">
+                      <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
+                        <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
+                        <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
+                        <TabsTrigger value="sources" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Traffic Sources</TabsTrigger>
+                        <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Users</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="overview" className="space-y-4">
+                        <Ga4Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                        <Ga4DataGrid siteUrl={selectedSite} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                      <TabsContent value="pages" className="space-y-4">
+                        <Ga4DataGrid siteUrl={selectedSite} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                      <TabsContent value="sources" className="space-y-4">
+                        <Ga4DataGrid siteUrl={selectedSite} dimension="sessionSourceMedium" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                      <TabsContent value="countries" className="space-y-4">
+                        <Ga4Demographics siteUrl={selectedSite} dateRange={dateRange} />
+                        <div className="flex justify-between items-center mt-8">
+                          <h3 className="text-lg font-medium">Detailed User Data</h3>
+                          <Select value={ga4UserDimension} onValueChange={(value) => setGa4UserDimension(value as Ga4Dimension)}>
+                            <SelectTrigger className="w-[180px]">
+                              <SelectValue placeholder="Select Dimension" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="country">Country</SelectItem>
+                              <SelectItem value="city">City</SelectItem>
+                              <SelectItem value="region">Region</SelectItem>
+                              <SelectItem value="deviceCategory">Device Category</SelectItem>
+                              <SelectItem value="browser">Browser</SelectItem>
+                              <SelectItem value="operatingSystem">Operating System</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Ga4DataGrid siteUrl={selectedSite} dimension={ga4UserDimension} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                    </Tabs>
+                  )}
+                </>
               )}
             </div>
           </main>

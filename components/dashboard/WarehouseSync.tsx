@@ -49,9 +49,9 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
       let currentDate = startOfData
       let completeDays = 0
 
-      // Process in 30-day chunks
+      // Process in 5-day chunks to prevent hitting the 25,000 row API limit per request
       while (currentDate >= maxHistory) {
-        const chunkStart = subDays(currentDate, 29)
+        const chunkStart = subDays(currentDate, 4)
         const effectiveStart = chunkStart < maxHistory ? maxHistory : chunkStart
         
         const startDateStr = format(effectiveStart, 'yyyy-MM-dd')

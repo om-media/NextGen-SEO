@@ -83,6 +83,14 @@ async function startServer() {
       const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
       if (user) {
         user.unlockedSites = JSON.parse(user.unlockedSites || '[]');
+        
+        // Ensure tier limit is respected
+        const limit = user.tier === 'free' ? 1 : user.tier === 'pro' ? 3 : Infinity;
+        if (user.unlockedSites.length > limit) {
+          user.unlockedSites = user.unlockedSites.slice(0, limit);
+          db.prepare('UPDATE users SET unlockedSites = ? WHERE id = ?').run(JSON.stringify(user.unlockedSites), req.params.id);
+        }
+
         res.json(user);
       } else {
         res.status(404).json({ error: 'User not found' });
@@ -124,8 +132,20 @@ async function startServer() {
   app.put('/api/users/:id/tier', (req, res) => {
     const { tier } = req.body;
     try {
-      db.prepare('UPDATE users SET tier = ? WHERE id = ?').run(tier, req.params.id);
-      res.json({ success: true, tier });
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      let unlockedSites = JSON.parse(user.unlockedSites || '[]');
+      const limit = tier === 'free' ? 1 : tier === 'pro' ? 3 : Infinity;
+      
+      let trimmedSites = unlockedSites;
+      if (unlockedSites.length > limit) {
+        trimmedSites = unlockedSites.slice(0, limit);
+        db.prepare('UPDATE users SET tier = ?, unlockedSites = ? WHERE id = ?').run(tier, JSON.stringify(trimmedSites), req.params.id);
+      } else {
+        db.prepare('UPDATE users SET tier = ? WHERE id = ?').run(tier, req.params.id);
+      }
+      res.json({ success: true, tier, unlockedSites: trimmedSites });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

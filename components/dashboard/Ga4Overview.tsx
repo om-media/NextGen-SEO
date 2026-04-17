@@ -148,7 +148,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     }
 
     fetchData()
-  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange])
+  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue])
 
 
   const { chartData, summary, compareSummary } = useMemo(() => {

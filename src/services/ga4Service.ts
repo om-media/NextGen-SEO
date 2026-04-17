@@ -34,6 +34,9 @@ export class Ga4ApiService {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('UNAUTHORIZED');
+      }
       const error = await response.json();
       throw new Error(error.error?.message || 'Failed to fetch GA4 data');
     }

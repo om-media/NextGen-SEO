@@ -200,7 +200,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ tier })
       });
       if (res.ok) {
-        setUserProfile(prev => prev ? { ...prev, tier } : null);
+        const data = await res.json();
+        setUserProfile(prev => prev ? { ...prev, tier, unlockedSites: data.unlockedSites || prev.unlockedSites } : null);
       }
     } catch (error) {
       console.error("Failed to update tier:", error);

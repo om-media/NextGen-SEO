@@ -15,7 +15,7 @@ const COLORS = ['#4285f4', '#5e35b1', '#00897b', '#e65100', '#c2185b', '#0288d1'
 interface Ga4DataGridProps {
   siteUrl: string;
   dateRange?: DateRange;
-  dimension?: 'date' | 'pagePath' | 'sessionSourceMedium' | 'country';
+  dimension?: 'date' | 'pagePath' | 'sessionSourceMedium' | 'country' | 'city' | 'region' | 'deviceCategory' | 'browser' | 'operatingSystem';
   isCompareMode?: boolean;
   compareDateRange?: DateRange;
 }
@@ -90,15 +90,31 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
            setData(primaryRows);
         } else {
            const compareRows = results[1].rows || [];
-           const compareMap = new Map(compareRows.map((row: any) => [row.dimensionValues[0].value, row]));
+           let mergedData = [];
            
-           const mergedData = primaryRows.map((row: any) => {
-             const compareRow: any = compareMap.get(row.dimensionValues[0].value);
-             return {
-               ...row,
-               compareMetricValues: compareRow ? compareRow.metricValues : undefined
-             };
-           });
+           if (dimension === 'date') {
+             // For dates, map by index after sorting chronologically, so day 1 matches compare day 1
+             const sortedPrimary = [...primaryRows].sort((a: any, b: any) => a.dimensionValues[0].value.localeCompare(b.dimensionValues[0].value));
+             const sortedCompare = [...compareRows].sort((a: any, b: any) => a.dimensionValues[0].value.localeCompare(b.dimensionValues[0].value));
+             
+             mergedData = sortedPrimary.map((row: any, index: number) => {
+               const compareRow = sortedCompare[index];
+               return {
+                 ...row,
+                 compareMetricValues: compareRow ? compareRow.metricValues : undefined
+               };
+             });
+           } else {
+             const compareMap = new Map(compareRows.map((row: any) => [row.dimensionValues[0].value, row]));
+             
+             mergedData = primaryRows.map((row: any) => {
+               const compareRow: any = compareMap.get(row.dimensionValues[0].value);
+               return {
+                 ...row,
+                 compareMetricValues: compareRow ? compareRow.metricValues : undefined
+               };
+             });
+           }
            
            setData(mergedData);
         }
@@ -160,7 +176,11 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   }, [data, sortColumn, sortDirection]);
 
   const pieData = useMemo(() => {
-    if (dimension === 'date' || sortedData.length === 0) return null;
+    if (dimension === 'date' || dimension === 'pagePath' || sortedData.length === 0) return null;
+    
+    // Hide the generic pie charts if dimension is one of the demographics (since we have Ga4Demographics)
+    const demographicDimensions = ['country', 'city', 'region', 'deviceCategory', 'browser', 'operatingSystem'];
+    if (demographicDimensions.includes(dimension!)) return null;
     
     const sessionsSorted = [...data].sort((a, b) => parseFloat(b.metricValues[0].value) - parseFloat(a.metricValues[0].value));
     
@@ -217,6 +237,11 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
       case 'pagePath': return 'Page Path';
       case 'sessionSourceMedium': return 'Source / Medium';
       case 'country': return 'Country';
+      case 'city': return 'City';
+      case 'region': return 'Region';
+      case 'deviceCategory': return 'Device';
+      case 'browser': return 'Browser';
+      case 'operatingSystem': return 'OS';
       default: return 'Dimension';
     }
   }
@@ -238,20 +263,6 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
       <span className={`text-xs ml-2 flex-shrink-0 ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
         {formattedDiff}
       </span>
-    );
-  };
-  
-  const RADIAN = Math.PI / 180;
-  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
-    if (percent < 0.05) return null;
-    const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
-    const x = cx + radius * Math.cos(-midAngle * RADIAN);
-    const y = cy + radius * Math.sin(-midAngle * RADIAN);
-  
-    return (
-      <text x={x} y={y} fill="white" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" fontSize={10} fontWeight="bold">
-        {`${(percent * 100).toFixed(0)}%`}
-      </text>
     );
   };
 
@@ -285,7 +296,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
       )}
 
       {pieData && !selectedRowKey && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-5xl mx-auto">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Top Sessions Breakdown</CardTitle>
@@ -293,15 +304,15 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             <CardContent>
               <div className="h-[250px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                  <PieChart margin={{ top: 0, right: 0, bottom: 20, left: 0 }}>
                     <Pie
                       data={pieData.sessions}
                       cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={renderCustomizedLabel}
+                      cy="45%"
+                      innerRadius={55}
                       outerRadius={80}
-                      fill="#8884d8"
+                      paddingAngle={3}
+                      stroke="none"
                       dataKey="value"
                     >
                       {pieData.sessions.map((entry, index) => (
@@ -312,12 +323,13 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                       formatter={(value: number) => value.toLocaleString()}
                       contentStyle={{ borderRadius: '8px', zIndex: 1000 }}
                     />
-                    <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: '11px', maxHeight: '180px', overflow: 'hidden' }} />
+                    <Legend layout="horizontal" verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
             </CardContent>
           </Card>
+
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Top Users Breakdown</CardTitle>
@@ -325,15 +337,15 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             <CardContent>
               <div className="h-[250px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                  <PieChart margin={{ top: 0, right: 0, bottom: 20, left: 0 }}>
                     <Pie
                       data={pieData.users}
                       cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={renderCustomizedLabel}
+                      cy="45%"
+                      innerRadius={55}
                       outerRadius={80}
-                      fill="#8884d8"
+                      paddingAngle={3}
+                      stroke="none"
                       dataKey="value"
                     >
                       {pieData.users.map((entry, index) => (
@@ -344,7 +356,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                       formatter={(value: number) => value.toLocaleString()}
                       contentStyle={{ borderRadius: '8px', zIndex: 1000 }}
                     />
-                    <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: '11px', maxHeight: '180px', overflow: 'hidden' }} />
+                    <Legend layout="horizontal" verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
