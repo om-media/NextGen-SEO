@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { BingApiService, BingQueryStat } from "../../services/bingService"
-import { useAuth } from "../../contexts/AuthContext"
+import { BingApiService, BingQueryStat } from "@/src/services/bingService"
+import { useAuth } from "@/src/contexts/AuthContext"
 import { Loader2 } from "lucide-react"
 
 interface BingDataGridProps {

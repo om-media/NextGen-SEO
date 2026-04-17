@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts"
+import { ComposedChart, Area, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { GscApiService } from "@/src/services/gscService"
 import { format, parseISO, startOfWeek, startOfMonth } from "date-fns"
@@ -89,7 +89,7 @@ export function Overview({
   }
 
   useEffect(() => {
-    if (accessToken && siteUrl && dateRange?.from && dateRange?.to) {
+    if (siteUrl && dateRange?.from && dateRange?.to) {
       setLoading(true)
       const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
       
@@ -140,7 +140,9 @@ export function Overview({
   }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, clearAccessToken])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
-    if (!rawData.length) return { chartData: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 }, compareSummary: null };
+    if (!rawData.length || !dateRange?.from || !dateRange?.to) {
+      return { chartData: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 }, compareSummary: null };
+    }
 
     // Sort ascending by date
     const sortedRows = [...rawData].sort((a, b) => a.keys[0].localeCompare(b.keys[0]));
@@ -159,8 +161,40 @@ export function Overview({
     let compareTotalImpressions = 0;
     let compareSumPositionTotal = 0;
 
+    // Use exact daily boundaries from the date picker to avoid timezone shifting
+    const startPrimaryExact = parseISO(format(dateRange.from, 'yyyy-MM-dd'));
+    const endPrimaryExact = parseISO(format(dateRange.to, 'yyyy-MM-dd'));
+    
+    // Generate all exact days in the range to ensure continuous chart
+    // We use eachDayOfInterval from date-fns since it creates exact day bumps
+    const allPrimaryDates = [];
+    let curr = startPrimaryExact;
+    while (curr <= endPrimaryExact) {
+      allPrimaryDates.push(curr);
+      curr = new Date(curr.getTime() + 24 * 60 * 60 * 1000);
+    }
+    
+    const keysArray: string[] = [];
+
+    // Initialize all chart buckets so there are no visual gaps
+    allPrimaryDates.forEach(date => {
+      let key = '';
+      if (timeframe === 'Day') {
+        key = format(date, 'MMM d, yyyy');
+      } else if (timeframe === 'Week') {
+        key = format(startOfWeek(date), 'MMM d, yyyy');
+      } else if (timeframe === 'Month') {
+        key = format(startOfMonth(date), 'MMM yyyy');
+      }
+      keysArray.push(key);
+
+      if (!aggregatedData.has(key)) {
+        aggregatedData.set(key, { clicks: 0, impressions: 0, sumPosition: 0, count: 0, compareClicks: 0, compareImpressions: 0, compareSumPosition: 0, compareCount: 0 });
+      }
+    });
+
     // Process primary data
-    sortedRows.forEach((row, index) => {
+    sortedRows.forEach((row) => {
       const date = parseISO(row.keys[0]);
       let key = '';
       
@@ -172,37 +206,40 @@ export function Overview({
         key = format(startOfMonth(date), 'MMM yyyy');
       }
 
-      if (!aggregatedData.has(key)) {
-        aggregatedData.set(key, { clicks: 0, impressions: 0, sumPosition: 0, count: 0 });
+      // If outside bounds, skip buckets but add to totals
+      const current = aggregatedData.get(key);
+      if (current) {
+        current.clicks += row.clicks;
+        current.impressions += row.impressions;
+        current.sumPosition += (row.position * row.impressions);
+        current.count += 1;
       }
-
-      const current = aggregatedData.get(key)!;
-      current.clicks += row.clicks;
-      current.impressions += row.impressions;
-      current.sumPosition += (row.position * row.impressions);
-      current.count += 1;
 
       totalClicks += row.clicks;
       totalImpressions += row.impressions;
       sumPositionTotal += (row.position * row.impressions);
     });
 
-    // Process compare data and align by index
-    if (isCompareMode && sortedCompareRows.length > 0) {
-      const keys = Array.from(aggregatedData.keys());
-      sortedCompareRows.forEach((row, index) => {
-        // Align by index if possible, otherwise just add to totals
-        const key = keys[index] || `Compare Day ${index + 1}`;
+    // Process compare data and align by precise logical day offset
+    if (isCompareMode && sortedCompareRows.length > 0 && compareDateRange?.from) {
+      const startCompareExact = parseISO(format(compareDateRange.from, 'yyyy-MM-dd'));
+      
+      sortedCompareRows.forEach((row) => {
+        const date = parseISO(row.keys[0]);
+        // Difference measured in whole days
+        const offset = Math.round((date.getTime() - startCompareExact.getTime()) / (24 * 60 * 60 * 1000));
         
-        if (!aggregatedData.has(key)) {
-          aggregatedData.set(key, { clicks: 0, impressions: 0, sumPosition: 0, count: 0 });
+        // If the offset falls cleanly into our chart array length, match it up
+        if (offset >= 0 && offset < keysArray.length) {
+          const key = keysArray[offset];
+          const current = aggregatedData.get(key);
+          if (current) {
+            current.compareClicks = (current.compareClicks || 0) + row.clicks;
+            current.compareImpressions = (current.compareImpressions || 0) + row.impressions;
+            current.compareSumPosition = (current.compareSumPosition || 0) + (row.position * row.impressions);
+            current.compareCount = (current.compareCount || 0) + 1;
+          }
         }
-
-        const current = aggregatedData.get(key)!;
-        current.compareClicks = (current.compareClicks || 0) + row.clicks;
-        current.compareImpressions = (current.compareImpressions || 0) + row.impressions;
-        current.compareSumPosition = (current.compareSumPosition || 0) + (row.position * row.impressions);
-        current.compareCount = (current.compareCount || 0) + 1;
 
         compareTotalClicks += row.clicks;
         compareTotalImpressions += row.impressions;
@@ -239,7 +276,7 @@ export function Overview({
         position: compareTotalImpressions > 0 ? compareSumPositionTotal / compareTotalImpressions : 0
       } : null
     };
-  }, [rawData, compareRawData, timeframe, isCompareMode]);
+  }, [rawData, compareRawData, timeframe, isCompareMode, dateRange, compareDateRange]);
 
   const toggleMetric = (metric: keyof typeof activeMetrics) => {
     setActiveMetrics(prev => ({
@@ -439,7 +476,25 @@ export function Overview({
           ) : (
             <div className="h-[400px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="color_clicks" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.clicks} stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor={colors.clicks} stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="color_impressions" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.impressions} stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor={colors.impressions} stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="color_ctr" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.ctr} stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor={colors.ctr} stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="color_position" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.position} stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor={colors.position} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid 
                     vertical={false} 
                     stroke="#e2e8f0"
@@ -459,14 +514,15 @@ export function Overview({
                   {/* Lines render first so they are underneath the axis labels */}
                   {activeMetrics.clicks && (
                     <>
-                      <Line
+                      <Area
                         yAxisId="clicks"
                         type="monotone"
                         dataKey="clicks"
                         name="Clicks"
                         stroke={colors.clicks}
                         strokeWidth={2}
-                        dot={false}
+                        fillOpacity={1}
+                        fill="url(#color_clicks)"
                         activeDot={{ r: 6 }}
                       />
                       {isCompareMode && (
@@ -486,14 +542,15 @@ export function Overview({
                   )}
                   {activeMetrics.impressions && (
                     <>
-                      <Line
+                      <Area
                         yAxisId="impressions"
                         type="monotone"
                         dataKey="impressions"
                         name="Impressions"
                         stroke={colors.impressions}
                         strokeWidth={2}
-                        dot={false}
+                        fillOpacity={1}
+                        fill="url(#color_impressions)"
                         activeDot={{ r: 6 }}
                       />
                       {isCompareMode && (
@@ -513,14 +570,15 @@ export function Overview({
                   )}
                   {activeMetrics.ctr && (
                     <>
-                      <Line
+                      <Area
                         yAxisId="ctr"
                         type="monotone"
                         dataKey="ctr"
                         name="CTR"
                         stroke={colors.ctr}
                         strokeWidth={2}
-                        dot={false}
+                        fillOpacity={1}
+                        fill="url(#color_ctr)"
                         activeDot={{ r: 6 }}
                       />
                       {isCompareMode && (
@@ -540,14 +598,15 @@ export function Overview({
                   )}
                   {activeMetrics.position && (
                     <>
-                      <Line
+                      <Area
                         yAxisId="position"
                         type="monotone"
                         dataKey="position"
                         name="Position"
                         stroke={colors.position}
                         strokeWidth={2}
-                        dot={false}
+                        fillOpacity={1}
+                        fill="url(#color_position)"
                         activeDot={{ r: 6 }}
                       />
                       {isCompareMode && (
@@ -634,7 +693,7 @@ export function Overview({
                       return [value.toLocaleString(), name];
                     }}
                   />
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           )}

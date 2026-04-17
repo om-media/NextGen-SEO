@@ -66,13 +66,26 @@ export class Ga4ApiService {
     startDate: string,
     endDate: string,
     dimensions: string[] = ['date'],
-    metrics: string[] = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate']
+    metrics: string[] = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate'],
+    dimensionFilter?: { filterDimension: string, filterValue: string }
   ) {
-    const body = {
+    const body: any = {
       dateRanges: [{ startDate, endDate }],
       dimensions: dimensions.map(name => ({ name })),
       metrics: metrics.map(name => ({ name }))
     };
+
+    if (dimensionFilter) {
+      body.dimensionFilter = {
+        filter: {
+          fieldName: dimensionFilter.filterDimension,
+          stringFilter: {
+            value: dimensionFilter.filterValue,
+            matchType: 'EXACT'
+          }
+        }
+      };
+    }
 
     const data = await this.fetchApi(`https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`, {
       method: 'POST',

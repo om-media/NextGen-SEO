@@ -3,6 +3,10 @@ import { AppSidebar } from "@/components/layout/AppSidebar"
 import { Overview } from "@/components/dashboard/Overview"
 import { GscDataGrid } from "@/components/dashboard/GscDataGrid"
 import { QueryCountView } from "@/components/dashboard/QueryCountView"
+import { Ga4DataGrid } from "@/components/dashboard/Ga4DataGrid"
+import { Ga4Overview } from "@/components/dashboard/Ga4Overview"
+import { BingDataGrid } from "@/components/dashboard/BingDataGrid"
+import { WarehouseSync } from "@/components/dashboard/WarehouseSync"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -13,7 +17,7 @@ import { useEffect, useState } from "react"
 import { GscApiService, GscSite } from "./services/gscService"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePicker } from "@/components/ui/date-picker"
-import { subDays } from "date-fns"
+import { subDays, differenceInDays } from "date-fns"
 import { DateRange } from "react-day-picker"
 
 import { Switch } from "@/components/ui/switch"
@@ -24,8 +28,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AuthScreen } from "./components/auth/AuthScreen"
 import { BingApiService, BingSite } from "./services/bingService"
 import { Ga4ApiService } from "./services/ga4Service"
-import { BingDataGrid } from "./components/dashboard/BingDataGrid"
-import { Ga4DataGrid } from "./components/dashboard/Ga4DataGrid"
 import { Input } from "@/components/ui/input"
 
 function MainApp() {
@@ -77,13 +79,33 @@ function MainApp() {
 
   const handleFromDateChange = (date: Date | undefined) => {
     if (date) {
-      setDateRange(prev => ({ ...prev, from: date }))
+      setDateRange(prev => {
+        const newRange = { ...prev, from: date }
+        if (newRange.from && newRange.to) {
+          const diff = differenceInDays(newRange.to, newRange.from)
+          setCompareDateRange({
+            from: subDays(newRange.from, diff + 1),
+            to: subDays(newRange.from, 1)
+          })
+        }
+        return newRange
+      })
     }
   }
 
   const handleToDateChange = (date: Date | undefined) => {
     if (date) {
-      setDateRange(prev => ({ ...prev, to: date }))
+      setDateRange(prev => {
+        const newRange = { ...prev, to: date }
+        if (newRange.from && newRange.to) {
+          const diff = differenceInDays(newRange.to, newRange.from)
+          setCompareDateRange({
+            from: subDays(newRange.from, diff + 1),
+            to: subDays(newRange.from, 1)
+          })
+        }
+        return newRange
+      })
     }
   }
 
@@ -104,36 +126,59 @@ function MainApp() {
   const [unlockError, setUnlockError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (dataSource === 'gsc' && accessToken) {
-      setFetchingSites(true)
-      setApiError(null)
-      const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
-      gscService.getSites()
-        .then(fetchedSites => {
-          setSites(fetchedSites)
-          if (fetchedSites.length > 0) {
-            const match = findMatchingSite(selectedSite, fetchedSites);
-            if (match) {
-              setSelectedSite(match.siteUrl);
-            } else {
-              const firstUnlocked = fetchedSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-              setSelectedSite(firstUnlocked?.siteUrl || fetchedSites[0]?.siteUrl || "")
+    if (dataSource === 'gsc') {
+      if (accessToken) {
+        setFetchingSites(true)
+        setApiError(null)
+        const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
+        gscService.getSites()
+          .then(fetchedSites => {
+            setSites(fetchedSites)
+            if (fetchedSites.length > 0) {
+              const match = findMatchingSite(selectedSite, fetchedSites);
+              if (match) {
+                setSelectedSite(match.siteUrl);
+              } else {
+                const firstUnlocked = fetchedSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
+                setSelectedSite(firstUnlocked?.siteUrl || fetchedSites[0]?.siteUrl || "")
+              }
             }
+          })
+          .catch(err => {
+            if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
+              console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
+              clearAccessToken()
+              
+              // Fallback to warehouse-synced / unlocked sites
+              if (userProfile?.unlockedSites && userProfile?.unlockedSites.length > 0) {
+                const offlineSites = userProfile.unlockedSites.map(url => ({ siteUrl: url, permissionLevel: 'warehouse' }));
+                setSites(offlineSites);
+                if (!findMatchingSite(selectedSite, offlineSites)) {
+                  setSelectedSite(offlineSites[0].siteUrl);
+                }
+              }
+            } else if (err.message === "Failed to fetch") {
+              console.error("Network error fetching sites:", err)
+              setApiError("Network error: Unable to connect to Google Search Console API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
+            } else {
+              console.error("Failed to fetch sites:", err)
+              setApiError(err.message)
+            }
+          })
+          .finally(() => setFetchingSites(false))
+      } else {
+        // No GSC token, populate with mapped unlocked sites to access local warehouse
+        if (userProfile?.unlockedSites && userProfile?.unlockedSites.length > 0) {
+          const offlineSites = userProfile.unlockedSites.map(url => ({ siteUrl: url, permissionLevel: 'warehouse' }));
+          setSites(offlineSites);
+          if (!findMatchingSite(selectedSite, offlineSites)) {
+            setSelectedSite(offlineSites[0].siteUrl);
           }
-        })
-        .catch(err => {
-          if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
-            console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
-            clearAccessToken()
-          } else if (err.message === "Failed to fetch") {
-            console.error("Network error fetching sites:", err)
-            setApiError("Network error: Unable to connect to Google Search Console API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
-          } else {
-            console.error("Failed to fetch sites:", err)
-            setApiError(err.message)
-          }
-        })
-        .finally(() => setFetchingSites(false))
+        } else {
+          setSites([]);
+          setSelectedSite("");
+        }
+      }
     } else if (dataSource === 'bing' && user) {
       if (!userProfile?.bingApiKey) {
         setBingSites([]);
@@ -254,32 +299,6 @@ function MainApp() {
     return <AuthScreen />
   }
 
-  if (user && !accessToken) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-background">
-        <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[350px]">
-          <div className="flex flex-col space-y-2 text-center">
-            <div className="mx-auto bg-primary text-primary-foreground p-3 rounded-xl mb-4">
-              <BarChart3 className="h-8 w-8" />
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Welcome to NextGen SEO
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Your Google Search Console session has expired (tokens are valid for 1 hour). Please re-authenticate to continue.
-            </p>
-          </div>
-          <Button onClick={signInWithGoogle} className="w-full" size="lg">
-            Reconnect Google Account
-          </Button>
-          <Button variant="ghost" onClick={signOut} className="w-full">
-            Sign out
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
@@ -375,6 +394,12 @@ function MainApp() {
                   </SelectContent>
                 </Select>
               )}
+              {dataSource === 'gsc' && !accessToken && (
+                <Button onClick={signInWithGoogle} variant="outline" size="sm" className="h-8 border-yellow-500 text-yellow-600 hover:bg-yellow-50/50 hover:text-yellow-700">
+                  <AlertCircle className="w-4 h-4 mr-2" />
+                  Reconnect Google
+                </Button>
+              )}
             </div>
             <div className="flex items-center gap-4">
               <DropdownMenu>
@@ -455,6 +480,11 @@ function MainApp() {
                       />
                       <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">Compare</Label>
                     </div>
+                    {selectedSite && dataSource === 'gsc' && (
+                      <div className="hidden sm:block">
+                        <WarehouseSync siteUrl={selectedSite} />
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 bg-card border rounded-md p-1">
                       <DatePicker date={dateRange.from} setDate={handleFromDateChange} label="From" />
                       <span className="text-muted-foreground text-sm font-medium px-2">to</span>
@@ -561,15 +591,27 @@ function MainApp() {
               )}
 
               {selectedSite && !apiError && dataSource === 'ga4' && ga4Sites.some(s => s.siteUrl === selectedSite) && (
-                <div className="space-y-4">
-                  <div className="p-4 border rounded-lg bg-card">
-                    <h3 className="text-lg font-medium mb-2">Google Analytics 4 Data</h3>
-                    <p className="text-sm text-muted-foreground">
-                      GA4 integration is currently in beta. More metrics and dimensions will be added soon.
-                    </p>
-                  </div>
-                  <Ga4DataGrid siteUrl={selectedSite} dateRange={dateRange} />
-                </div>
+                <Tabs defaultValue="overview" className="space-y-4">
+                  <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 overflow-x-auto">
+                    <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
+                    <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
+                    <TabsTrigger value="sources" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Sources/Mediums</TabsTrigger>
+                    <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Countries</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="overview" className="space-y-4">
+                    <Ga4Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                    <Ga4DataGrid siteUrl={selectedSite} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                  </TabsContent>
+                  <TabsContent value="pages" className="space-y-4">
+                    <Ga4DataGrid siteUrl={selectedSite} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                  </TabsContent>
+                  <TabsContent value="sources" className="space-y-4">
+                    <Ga4DataGrid siteUrl={selectedSite} dimension="sessionSourceMedium" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                  </TabsContent>
+                  <TabsContent value="countries" className="space-y-4">
+                    <Ga4DataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                  </TabsContent>
+                </Tabs>
               )}
             </div>
           </main>

@@ -16,15 +16,18 @@ export interface GscSearchAnalyticsResponse {
 }
 
 export class GscApiService {
-  private accessToken: string;
+  private accessToken: string | null;
   private tier: 'free' | 'pro' | 'enterprise';
 
-  constructor(accessToken: string, tier: 'free' | 'pro' | 'enterprise' = 'free') {
+  constructor(accessToken: string | null = null, tier: 'free' | 'pro' | 'enterprise' = 'free') {
     this.accessToken = accessToken;
     this.tier = tier;
   }
 
   private async fetchApi(path: string, options: RequestInit = {}) {
+    if (!this.accessToken) {
+      throw new Error("invalid authentication credentials - OAuth 2 access token has expired or is missing");
+    }
     const url = `https://www.googleapis.com/webmasters/v3${path}`;
     const response = await fetch(url, {
       ...options,
@@ -53,9 +56,38 @@ export class GscApiService {
     startDate: string,
     endDate: string,
     dimensions: string[] = ['query'],
-    dimensionFilterGroups?: any[]
+    dimensionFilterGroups?: any[],
+    forceLive: boolean = false
   ): Promise<GscSearchAnalyticsRow[]> {
     
+    // Check if we can fulfill this from our local data warehouse
+    const canUseWarehouse = !forceLive && dimensions.every(d => d === 'query' || d === 'date');
+    if (canUseWarehouse) {
+      try {
+        const response = await fetch('/api/warehouse/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            siteUrl,
+            startDate,
+            endDate,
+            dimensions,
+            dimensionFilterGroups
+          })
+        });
+
+        if (response.ok) {
+          const rows = await response.json();
+          // If the warehouse returns data, use it! It's much faster and has no 16-month limit.
+          if (rows && rows.length > 0) {
+            return rows;
+          }
+        }
+      } catch (err) {
+        console.error("Warehouse query failed, falling back to Google API", err);
+      }
+    }
+
     const maxRowsPerRequest = 25000;
     let targetRowLimit = 2500; // Free tier
     

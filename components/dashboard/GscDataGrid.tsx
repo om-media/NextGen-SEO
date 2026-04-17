@@ -64,13 +64,22 @@ export function GscDataGrid({
   // Selected row for chart
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = 100
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, intentFilter, minClicks, minImpressions, maxPosition, isQuestionOnly, minWords, sortColumn, sortDirection, dimension, dateRange, compareDateRange, isCompareMode])
+
   useEffect(() => {
     setAiInsights(null)
     setAiError(null)
   }, [siteUrl, dimension, dateRange, searchTerm, intentFilter, minClicks, minImpressions, maxPosition, isQuestionOnly, minWords, sortColumn, sortDirection])
 
   useEffect(() => {
-    if (accessToken && siteUrl && dateRange?.from && dateRange?.to) {
+    if (siteUrl && dateRange?.from && dateRange?.to) {
       setLoading(true)
       setError(null)
       const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
@@ -190,6 +199,8 @@ export function GscDataGrid({
     if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
     return 0;
   })
+
+  const totalPages = Math.ceil(filteredData.length / pageSize)
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -648,7 +659,7 @@ export function GscDataGrid({
                   </TableCell>
                 </TableRow>
               ) : (
-                sortedData.map((row, i) => {
+                sortedData.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((row, i) => {
                   const key = row.keys[0]
                   const intent = dimension === 'query' ? classifyIntent(key) : null
                   return (
@@ -698,6 +709,36 @@ export function GscDataGrid({
             </TableBody>
           </Table>
         </div>
+        
+        {/* Pagination Controls */}
+        {!loading && !error && sortedData.length > 0 && (
+          <div className="flex items-center justify-between mt-4">
+            <div className="text-sm text-muted-foreground">
+              Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, sortedData.length)} of {sortedData.length} entries
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              <div className="text-sm font-medium">
+                Page {currentPage} of {totalPages}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
     </div>

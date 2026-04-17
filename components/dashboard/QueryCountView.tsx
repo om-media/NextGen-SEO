@@ -7,7 +7,7 @@ import { GscApiService } from "@/src/services/gscService"
 import { format, parseISO } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Loader2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 type SortColumn = 'page' | 'queryCount' | 'clicks' | 'impressions' | null;
 
@@ -74,7 +74,7 @@ export function QueryCountView({
 
   // Fetch Table Data (Pages and their Query Count)
   useEffect(() => {
-    if (!accessToken || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    if (!siteUrl || !dateRange?.from || !dateRange?.to) return;
     
     setLoadingTable(true)
     setError(null)
@@ -161,7 +161,7 @@ export function QueryCountView({
 
   // Fetch Chart Data (Historic Trend of Unique Queries)
   useEffect(() => {
-    if (!accessToken || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    if (!siteUrl || !dateRange?.from || !dateRange?.to) return;
     
     setLoadingChart(true)
     
@@ -318,7 +318,13 @@ export function QueryCountView({
           ) : (
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="color_queryCount" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis
                     dataKey="date"
@@ -344,13 +350,14 @@ export function QueryCountView({
                     labelStyle={{ fontWeight: 'bold', marginBottom: '4px', color: '#0f172a' }}
                     formatter={(value: number) => [value.toLocaleString(), 'Unique Queries']}
                   />
-                  <Line
+                  <Area
                     type="monotone"
                     dataKey="queryCount"
                     name="Unique Queries"
                     stroke="#6366f1"
                     strokeWidth={2}
-                    dot={false}
+                    fillOpacity={1}
+                    fill="url(#color_queryCount)"
                     activeDot={{ r: 6 }}
                   />
                   {isCompareMode && (
@@ -365,7 +372,7 @@ export function QueryCountView({
                       activeDot={{ r: 4 }}
                     />
                   )}
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           )}
