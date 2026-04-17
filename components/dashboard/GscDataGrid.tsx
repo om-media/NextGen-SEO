@@ -23,13 +23,15 @@ export function GscDataGrid({
   dimension = 'query', 
   dateRange,
   isCompareMode,
-  compareDateRange
+  compareDateRange,
+  useLiveData = true
 }: { 
   siteUrl: string, 
   dimension?: 'query' | 'page' | 'country', 
   dateRange?: DateRange,
   isCompareMode?: boolean,
-  compareDateRange?: DateRange
+  compareDateRange?: DateRange,
+  useLiveData?: boolean
 }) {
   const [searchTerm, setSearchTerm] = useState("")
   const [intentFilter, setIntentFilter] = useState("all")
@@ -87,15 +89,36 @@ export function GscDataGrid({
       const startDate = format(dateRange.from, 'yyyy-MM-dd')
       const endDate = format(dateRange.to, 'yyyy-MM-dd')
 
+      const fetchWarehouseData = async (start: string, end: string) => {
+        const res = await fetch('/api/warehouse/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: [dimension] })
+        })
+        if (!res.ok) throw new Error("Failed to fetch warehouse data")
+        const json = await res.json()
+        return json.data.map((r: any) => ({
+          keys: [r[dimension]],
+          clicks: r.clicks,
+          impressions: r.impressions,
+          ctr: r.ctr,
+          position: r.position
+        }))
+      }
+
       const promises = [
-        gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension])
+        useLiveData 
+          ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension])
+          : fetchWarehouseData(startDate, endDate)
       ];
 
       if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
         const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
         const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
         promises.push(
-          gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension])
+          useLiveData
+            ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension])
+            : fetchWarehouseData(compareStartDate, compareEndDate)
         )
       }
 
@@ -107,7 +130,7 @@ export function GscDataGrid({
           }
 
           // Merge primary and compare rows
-          const compareMap = new Map(compareRows.map(row => [row.keys[0], row]));
+          const compareMap = new Map((compareRows as any[]).map(row => [row.keys[0], row]));
           
           const mergedData = primaryRows.map(row => {
             const compareRow = compareMap.get(row.keys[0]);
@@ -140,15 +163,38 @@ export function GscDataGrid({
           setLoading(false)
         })
     }
-  }, [accessToken, siteUrl, dimension, dateRange, isCompareMode, compareDateRange, clearAccessToken])
+  }, [accessToken, siteUrl, dimension, dateRange, isCompareMode, compareDateRange, clearAccessToken, useLiveData])
 
-  // Simple intent classification based on query keywords
+  // Improved intent classification based on query keywords
   const classifyIntent = (query: string) => {
     const q = query.toLowerCase()
-    if (q.includes("buy") || q.includes("price") || q.includes("cheap") || q.includes("software") || q.includes("tool")) return "Commercial"
-    if (q.includes("how") || q.includes("what") || q.includes("guide") || q.includes("tutorial")) return "Informational"
-    if (q.includes("review") || q.includes("vs") || q.includes("compare")) return "Commercial"
-    return "Navigational"
+    
+    // Attempt to extract brand name to detect navigational queries accurately
+    let brand = "";
+    try {
+      const cleanUrl = siteUrl.replace('sc-domain:', '').replace('https://', '').replace('http://', '').replace('www.', '');
+      brand = cleanUrl.split('.')[0].toLowerCase();
+    } catch(e) {}
+
+    // 1. Explicit Navigational (user knows EXACTLY where they want to go within the site)
+    const navWords = ["login", "signin", "sign up", "contact", "support", "dashboard", "portal"];
+    if (navWords.some(w => q.includes(w))) return "Navigational";
+
+    // 2. Commercial intent (user is looking to buy, compare, or evaluate)
+    const commercialWords = ["buy", "price", "cheap", "software", "tool", "review", "vs", "compare", "best", "top", "discount", "coupon", "order", "purchase", "hire", "services", "cost", "pricing", "deal", "app", "platform"];
+    if (commercialWords.some(w => q.includes(w))) return "Commercial";
+
+    // 3. Informational intent (user is looking for knowledge)
+    const informationalWords = ["how", "what", "guide", "tutorial", "why", "when", "where", "who", "tips", "ideas", "examples", "learn", "meaning", "definition", "can", "is", "does", "ways", "benefits", "history", "news", "free"];
+    if (informationalWords.some(w => q.includes(w))) return "Informational";
+
+    // 4. Brand presence as fallback (if no other intent words are found, it's just the brand -> Navigational)
+    if (brand && (q === brand || q.includes(brand) || q.includes(brand.replace(/-/g, ' ')))) {
+        return "Navigational";
+    }
+
+    // 5. Fallback for most long-tail and broad queries
+    return "Informational"
   }
 
   const filteredData = data.filter(row => {

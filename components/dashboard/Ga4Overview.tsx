@@ -13,9 +13,11 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer
+  ResponsiveContainer,
+  ReferenceLine
 } from 'recharts'
 import { cn } from "@/lib/utils"
+import { Annotation } from "@/src/services/annotationsService"
 
 const formatCompactNumber = (number: number) => {
   return new Intl.NumberFormat('en-US', { 
@@ -66,9 +68,10 @@ interface Ga4OverviewProps {
   compareDateRange?: DateRange;
   filterDimension?: string;
   filterValue?: string;
+  annotations?: Annotation[];
 }
 
-export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue }: Ga4OverviewProps) {
+export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, annotations = [] }: Ga4OverviewProps) {
   const { accessToken } = useAuth()
   const [data, setData] = useState<Ga4DataRow[]>([])
   const [compareData, setCompareData] = useState<Ga4DataRow[]>([])
@@ -79,7 +82,8 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     sessions: true,
     users: true,
     pageViews: false,
-    bounceRate: false
+    bounceRate: false,
+    eventCount: false
   })
 
   const [timeframe, setTimeframe] = useState<'Day' | 'Week' | 'Month'>('Day')
@@ -89,7 +93,8 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     sessions: "#4285f4",
     users: "#5e35b1",
     pageViews: "#00897b",
-    bounceRate: "#e65100"
+    bounceRate: "#e65100",
+    eventCount: "#c2185b"
   }
 
   useEffect(() => {
@@ -111,7 +116,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
             startDate, 
             endDate, 
             ['date'], 
-            ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate'],
+            ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
             dimensionFilter
           )
         ];
@@ -125,7 +130,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
               compareStartDate, 
               compareEndDate, 
               ['date'], 
-              ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate'],
+              ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
               dimensionFilter
             )
           )
@@ -153,7 +158,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
 
   const { chartData, summary, compareSummary } = useMemo(() => {
     if (!data.length || !dateRange?.from || !dateRange?.to) {
-      return { chartData: [], summary: { sessions: 0, users: 0, pageViews: 0, bounceRateTotal: 0, count: 0 }, compareSummary: null };
+      return { chartData: [], summary: { sessions: 0, users: 0, pageViews: 0, bounceRateTotal: 0, eventCount: 0, count: 0 }, compareSummary: null };
     }
 
     const aggregatedData = new Map<string, any>();
@@ -162,12 +167,14 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     let totalUsers = 0;
     let totalPageViews = 0;
     let totalBounceRate = 0;
+    let totalEventCount = 0;
     let count = 0;
 
     let compareTotalSessions = 0;
     let compareTotalUsers = 0;
     let compareTotalPageViews = 0;
     let compareTotalBounceRate = 0;
+    let compareTotalEventCount = 0;
     let compareCount = 0;
 
     const startPrimaryExact = parseISO(format(dateRange.from, 'yyyy-MM-dd'));
@@ -196,7 +203,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
       keysArray.push(key);
 
       if (!aggregatedData.has(key)) {
-        aggregatedData.set(key, { sessions: 0, users: 0, pageViews: 0, bounceRateCount: 0, bounceRateTotal: 0 });
+        aggregatedData.set(key, { sessions: 0, users: 0, pageViews: 0, bounceRateCount: 0, bounceRateTotal: 0, eventCount: 0 });
       }
     });
 
@@ -224,6 +231,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
       const users = parseInt(row.metricValues[1].value);
       const pageViews = parseInt(row.metricValues[2].value);
       const bounceRate = parseFloat(row.metricValues[3].value);
+      const eventCount = parseInt(row.metricValues[4] ? row.metricValues[4].value : "0");
 
       const current = aggregatedData.get(key);
       if (current) {
@@ -232,12 +240,14 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         current.pageViews += pageViews;
         current.bounceRateTotal += bounceRate;
         current.bounceRateCount += 1;
+        current.eventCount += eventCount;
       }
 
       totalSessions += sessions;
       totalUsers += users;
       totalPageViews += pageViews;
       totalBounceRate += bounceRate;
+      totalEventCount += eventCount;
       count += 1;
     });
 
@@ -253,6 +263,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         const users = parseInt(row.metricValues[1].value);
         const pageViews = parseInt(row.metricValues[2].value);
         const bounceRate = parseFloat(row.metricValues[3].value);
+        const eventCount = parseInt(row.metricValues[4] ? row.metricValues[4].value : "0");
 
         if (offset >= 0 && offset < keysArray.length) {
           const key = keysArray[offset];
@@ -263,6 +274,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
             current.comparePageViews = (current.comparePageViews || 0) + pageViews;
             current.compareBounceRateTotal = (current.compareBounceRateTotal || 0) + bounceRate;
             current.compareBounceRateCount = (current.compareBounceRateCount || 0) + 1;
+            current.compareEventCount = (current.compareEventCount || 0) + eventCount;
           }
         }
 
@@ -270,6 +282,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         compareTotalUsers += users;
         compareTotalPageViews += pageViews;
         compareTotalBounceRate += bounceRate;
+        compareTotalEventCount += eventCount;
         compareCount += 1;
       });
     }
@@ -280,17 +293,19 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
       users: d.users,
       pageViews: d.pageViews,
       bounceRate: d.bounceRateCount > 0 ? (d.bounceRateTotal / d.bounceRateCount) * 100 : 0,
+      eventCount: d.eventCount,
       
       compareSessions: isCompareMode ? (d.compareSessions || 0) : undefined,
       compareUsers: isCompareMode ? (d.compareUsers || 0) : undefined,
       comparePageViews: isCompareMode ? (d.comparePageViews || 0) : undefined,
       compareBounceRate: isCompareMode ? ((d.compareBounceRateCount || 0) > 0 ? (d.compareBounceRateTotal / d.compareBounceRateCount) * 100 : 0) : undefined,
+      compareEventCount: isCompareMode ? (d.compareEventCount || 0) : undefined,
     }));
 
     return { 
       chartData: finalChartData, 
-      summary: { sessions: totalSessions, users: totalUsers, pageViews: totalPageViews, bounceRateTotal: totalBounceRate, count },
-      compareSummary: isCompareMode ? { sessions: compareTotalSessions, users: compareTotalUsers, pageViews: compareTotalPageViews, bounceRateTotal: compareTotalBounceRate, count: compareCount } : null 
+      summary: { sessions: totalSessions, users: totalUsers, pageViews: totalPageViews, bounceRateTotal: totalBounceRate, eventCount: totalEventCount, count },
+      compareSummary: isCompareMode ? { sessions: compareTotalSessions, users: compareTotalUsers, pageViews: compareTotalPageViews, bounceRateTotal: compareTotalBounceRate, eventCount: compareTotalEventCount, count: compareCount } : null 
     };
   }, [data, compareData, dateRange, compareDateRange, isCompareMode, timeframe])
 
@@ -321,7 +336,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
       if (index === 1) return { orientation: 'left' as const, mirror: true, hide: false };
       if (index === 2) return { orientation: 'right' as const, mirror: false, hide: false };
     }
-    if (activeCount === 4) {
+    if (activeCount >= 4) {
       if (index === 0) return { orientation: 'left' as const, mirror: false, hide: false };
       if (index === 1) return { orientation: 'left' as const, mirror: true, hide: false };
       if (index === 2) return { orientation: 'right' as const, mirror: true, hide: false };
@@ -354,6 +369,17 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     )
   }
 
+  const getChartXParam = (dateString: string) => {
+    try {
+      const date = parseISO(dateString)
+      if (timeframe === 'Day') return format(date, 'MMM d, yyyy')
+      if (timeframe === 'Week') return format(startOfWeek(date), 'MMM d, yyyy')
+      if (timeframe === 'Month') return format(startOfMonth(date), 'MMM yyyy')
+    } catch {
+      return ""
+    }
+    return ""
+  }
 
   if (loading && data.length === 0) {
     return (
@@ -475,7 +501,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('bounceRate')}
           className={cn(
-            "cursor-pointer flex-1 p-4 transition-colors",
+            "cursor-pointer flex-1 p-4 border-b sm:border-b-0 sm:border-r transition-colors",
             activeMetrics.bounceRate ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.bounceRate ? colors.bounceRate : undefined }}
@@ -498,6 +524,37 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                 vs {compareSummary.count > 0 ? ((compareSummary.bounceRateTotal / compareSummary.count) * 100).toFixed(2) : 0}%
               </span>
               {renderChange(summary.count > 0 ? (summary.bounceRateTotal / summary.count) * 100 : 0, compareSummary.count > 0 ? (compareSummary.bounceRateTotal / compareSummary.count) * 100 : 0, true)}
+            </div>
+          )}
+        </div>
+
+        {/* Event Count Card */}
+        <div 
+          onClick={() => toggleMetric('eventCount')}
+          className={cn(
+            "cursor-pointer flex-1 p-4 transition-colors",
+            activeMetrics.eventCount ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
+          )}
+          style={{ backgroundColor: activeMetrics.eventCount ? colors.eventCount : undefined }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <div className={cn(
+              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              activeMetrics.eventCount ? "border-white bg-transparent" : "border-gray-400"
+            )}>
+              {activeMetrics.eventCount && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
+            </div>
+            <span className={cn("text-sm font-medium", activeMetrics.eventCount ? "text-white" : "text-gray-600")}>Event Count</span>
+          </div>
+          <div className={cn("text-3xl font-normal", activeMetrics.eventCount ? "text-white" : "text-gray-900")}>
+            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.eventCount)}
+          </div>
+          {isCompareMode && compareSummary && !loading && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className={cn("text-xs", activeMetrics.eventCount ? "text-white/80" : "text-muted-foreground")}>
+                vs {formatCompactNumber(compareSummary.eventCount)}
+              </span>
+              {renderChange(summary.eventCount, compareSummary.eventCount)}
             </div>
           )}
         </div>
@@ -549,6 +606,10 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                       <stop offset="5%" stopColor={colors.bounceRate} stopOpacity={0.1}/>
                       <stop offset="95%" stopColor={colors.bounceRate} stopOpacity={0}/>
                     </linearGradient>
+                    <linearGradient id="color_eventCount" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.eventCount} stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor={colors.eventCount} stopOpacity={0}/>
+                    </linearGradient>
                   </defs>
                   <CartesianGrid 
                     vertical={false} 
@@ -565,6 +626,23 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                     scale="point"
                     padding={{ left: 10, right: 10 }}
                   />
+
+                  {annotations.map(ann => (
+                    <ReferenceLine 
+                      key={ann.id}
+                      x={getChartXParam(ann.date)} 
+                      stroke={ann.type === 'system' ? '#3b82f6' : '#a855f7'}
+                      strokeDasharray="3 3"
+                      strokeWidth={1.5}
+                      label={{ 
+                        position: 'insideTopLeft', 
+                        value: ann.title, 
+                        fill: ann.type === 'system' ? '#3b82f6' : '#a855f7',
+                        fontSize: 10,
+                        fontWeight: 'bold',
+                      }}
+                    />
+                  ))}
                   
                   {activeMetrics.sessions && (
                     <>
@@ -678,6 +756,34 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                       )}
                     </>
                   )}
+                  {activeMetrics.eventCount && (
+                    <>
+                      <Area
+                        yAxisId="eventCount"
+                        type="monotone"
+                        dataKey="eventCount"
+                        name="Event Count"
+                        stroke={colors.eventCount}
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#color_eventCount)"
+                        activeDot={{ r: 6 }}
+                      />
+                      {isCompareMode && (
+                        <Line
+                          yAxisId="eventCount"
+                          type="monotone"
+                          dataKey="compareEventCount"
+                          name="Compare Event Count"
+                          stroke={colors.eventCount}
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                          activeDot={{ r: 4 }}
+                        />
+                      )}
+                    </>
+                  )}
 
                   {activeMetrics.sessions && (
                     <YAxis
@@ -733,6 +839,20 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                       tickCount={5}
                       domain={[0, 'auto']}
                       tick={<CustomYAxisTick fill={colors.bounceRate} formatter={(v: number) => `${v.toFixed(1)}%`} />}
+                    />
+                  )}
+                  {activeMetrics.eventCount && (
+                    <YAxis
+                      yAxisId="eventCount"
+                      orientation={getAxisProps('eventCount').orientation}
+                      mirror={getAxisProps('eventCount').mirror}
+                      hide={getAxisProps('eventCount').hide}
+                      tickFormatter={formatCompactNumber}
+                      axisLine={false}
+                      tickLine={false}
+                      tickCount={5}
+                      domain={[0, 'auto']}
+                      tick={<CustomYAxisTick fill={colors.eventCount} formatter={formatCompactNumber} />}
                     />
                   )}
 

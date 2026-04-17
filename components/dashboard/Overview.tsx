@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { ComposedChart, Area, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts"
+import { ComposedChart, Area, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, ReferenceLine } from "recharts"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { GscApiService } from "@/src/services/gscService"
 import { format, parseISO, startOfWeek, startOfMonth } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Loader2, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Annotation } from "@/src/services/annotationsService"
 
 const formatCompactNumber = (number: number) => {
   return new Intl.NumberFormat('en-US', { 
@@ -56,14 +57,18 @@ export function Overview({
   filterDimension,
   filterValue,
   isCompareMode,
-  compareDateRange
+  compareDateRange,
+  annotations = [],
+  useLiveData = true
 }: { 
   siteUrl: string, 
   dateRange?: DateRange,
   filterDimension?: 'query' | 'page' | 'country',
   filterValue?: string,
   isCompareMode?: boolean,
-  compareDateRange?: DateRange
+  compareDateRange?: DateRange,
+  annotations?: Annotation[],
+  useLiveData?: boolean
 }) {
   const { accessToken, userProfile, clearAccessToken } = useAuth()
   const [rawData, setRawData] = useState<any[]>([])
@@ -100,15 +105,36 @@ export function Overview({
         filters: [{ dimension: filterDimension, expression: filterValue, operator: 'equals' }]
       }] : undefined;
 
+      const fetchWarehouseData = async (start: string, end: string) => {
+        const res = await fetch('/api/warehouse/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['date'], dimensionFilterGroups: filterGroups })
+        })
+        if (!res.ok) throw new Error("Failed to fetch warehouse data")
+        const json = await res.json()
+        return json.data.map((r: any) => ({
+          keys: [r.date],
+          clicks: r.clicks,
+          impressions: r.impressions,
+          ctr: r.ctr,
+          position: r.position
+        }))
+      }
+
       const promises = [
-        gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['date'], filterGroups)
+        useLiveData 
+          ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['date'], filterGroups)
+          : fetchWarehouseData(startDate, endDate)
       ];
 
       if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
         const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
         const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
         promises.push(
-          gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['date'], filterGroups)
+          useLiveData
+            ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['date'], filterGroups)
+            : fetchWarehouseData(compareStartDate, compareEndDate)
         )
       }
 
@@ -137,7 +163,7 @@ export function Overview({
           setLoading(false)
         })
     }
-  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, clearAccessToken])
+  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, clearAccessToken, useLiveData])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
     if (!rawData.length || !dateRange?.from || !dateRange?.to) {
@@ -296,6 +322,18 @@ export function Overview({
       mirror: true,
     };
   };
+
+  const getChartXParam = (dateString: string) => {
+    try {
+      const date = parseISO(dateString)
+      if (timeframe === 'Day') return format(date, 'MMM d, yyyy')
+      if (timeframe === 'Week') return format(startOfWeek(date), 'MMM d, yyyy')
+      if (timeframe === 'Month') return format(startOfMonth(date), 'MMM yyyy')
+    } catch {
+      return ""
+    }
+    return ""
+  }
 
   const renderChange = (current: number, previous: number, inverse: boolean = false) => {
     if (!isCompareMode || !compareSummary) return null;
@@ -510,6 +548,23 @@ export function Overview({
                     scale="point"
                     padding={{ left: 10, right: 10 }}
                   />
+                  
+                  {annotations.map(ann => (
+                    <ReferenceLine 
+                      key={ann.id}
+                      x={getChartXParam(ann.date)} 
+                      stroke={ann.type === 'system' ? '#3b82f6' : '#a855f7'}
+                      strokeDasharray="3 3"
+                      strokeWidth={1.5}
+                      label={{ 
+                        position: 'insideTopLeft', 
+                        value: ann.title, 
+                        fill: ann.type === 'system' ? '#3b82f6' : '#a855f7',
+                        fontSize: 10,
+                        fontWeight: 'bold',
+                      }}
+                    />
+                  ))}
                   
                   {/* Lines render first so they are underneath the axis labels */}
                   {activeMetrics.clicks && (

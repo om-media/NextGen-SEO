@@ -65,9 +65,9 @@ export class GscApiService {
     
     // Check if we can fulfill this from our local data warehouse
     const hasUnsupportedFilter = dimensionFilterGroups?.some((group: any) => 
-      group.filters?.some((filter: any) => filter.dimension !== 'query' && filter.dimension !== 'date')
+      group.filters?.some((filter: any) => filter.dimension !== 'query' && filter.dimension !== 'date' && filter.dimension !== 'page')
     );
-    const canUseWarehouse = !forceLive && !hasUnsupportedFilter && dimensions.every(d => d === 'query' || d === 'date');
+    const canUseWarehouse = !forceLive && !hasUnsupportedFilter && dimensions.every(d => d === 'query' || d === 'date' || d === 'page');
     if (canUseWarehouse) {
       try {
         const response = await fetch('/api/warehouse/query', {

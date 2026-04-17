@@ -30,6 +30,8 @@ import { AuthScreen } from "./components/auth/AuthScreen"
 import { BingApiService, BingSite } from "./services/bingService"
 import { Ga4ApiService } from "./services/ga4Service"
 import { Input } from "@/components/ui/input"
+import { AnnotationsService, Annotation } from "./services/annotationsService"
+import { AnnotationsSettings } from "@/components/dashboard/AnnotationsSettings"
 
 function MainApp() {
   const { user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setTier, setBingApiKey } = useAuth()
@@ -43,6 +45,27 @@ function MainApp() {
   
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [tempBingKey, setTempBingKey] = useState("")
+
+  const [useLiveData, setUseLiveData] = useState(true)
+
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [showSystemAnnotations, setShowSystemAnnotations] = useState(true)
+  const [showUserAnnotations, setShowUserAnnotations] = useState(true)
+
+  const fetchAnnotations = async () => {
+    if (user?.uid) {
+       try {
+         const data = await AnnotationsService.getAnnotations(user.uid, selectedSite);
+         setAnnotations(data);
+       } catch (err) {
+         console.warn("Failed to fetch annotations:", err)
+       }
+    }
+  }
+
+  useEffect(() => {
+    fetchAnnotations();
+  }, [selectedSite, user?.uid])
 
   const findMatchingSite = (targetUrl: string, availableSites: any[]) => {
     if (!targetUrl) return null;
@@ -480,6 +503,28 @@ function MainApp() {
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <div className="flex items-center gap-4">
+                    <AnnotationsSettings 
+                      currentSiteUrl={selectedSite} 
+                      annotations={annotations} 
+                      onAnnotationsChange={fetchAnnotations}
+                      showSystemAnnotations={showSystemAnnotations}
+                      setShowSystemAnnotations={setShowSystemAnnotations}
+                      showUserAnnotations={showUserAnnotations}
+                      setShowUserAnnotations={setShowUserAnnotations}
+                    />
+                    {dataSource === 'gsc' && (
+                      <>
+                        <WarehouseSync siteUrl={selectedSite} />
+                        <div className="flex items-center space-x-2 mr-2">
+                          <Switch 
+                            id="warehouse-mode" 
+                            checked={useLiveData}
+                            onCheckedChange={setUseLiveData}
+                          />
+                          <Label htmlFor="warehouse-mode" className="text-sm font-medium cursor-pointer">Live Data</Label>
+                        </div>
+                      </>
+                    )}
                     <div className="flex items-center space-x-2">
                       <Switch 
                         id="compare-mode" 
@@ -488,11 +533,6 @@ function MainApp() {
                       />
                       <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">Compare</Label>
                     </div>
-                    {selectedSite && dataSource === 'gsc' && (
-                      <div className="hidden sm:block">
-                        <WarehouseSync siteUrl={selectedSite} />
-                      </div>
-                    )}
                     <div className="flex items-center gap-2 bg-card border rounded-md p-1">
                       <DatePicker date={dateRange.from} setDate={handleFromDateChange} label="From" />
                       <span className="text-muted-foreground text-sm font-medium px-2">to</span>
@@ -596,17 +636,23 @@ function MainApp() {
                         <TabsTrigger value="query-count" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Query Count</TabsTrigger>
                       </TabsList>
                       <TabsContent value="overview" className="space-y-4">
-                        <Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                        <Overview 
+                          siteUrl={selectedSite} 
+                          dateRange={dateRange} 
+                          isCompareMode={isCompareMode} 
+                          compareDateRange={compareDateRange} 
+                          annotations={annotations.filter(a => (a.type === 'system' && showSystemAnnotations) || (a.type === 'user' && showUserAnnotations))}
+                        />
+                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
                       </TabsContent>
                       <TabsContent value="queries" className="space-y-4">
-                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
                       </TabsContent>
                       <TabsContent value="pages" className="space-y-4">
-                        <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                        <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
                       </TabsContent>
                       <TabsContent value="countries" className="space-y-4">
-                        <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                        <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
                       </TabsContent>
                       <TabsContent value="query-count" className="space-y-4">
                         <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
@@ -630,13 +676,23 @@ function MainApp() {
                     <Tabs defaultValue="overview" className="space-y-4">
                       <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
                         <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
+                        <TabsTrigger value="events" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Events</TabsTrigger>
                         <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
-                        <TabsTrigger value="sources" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Traffic Sources</TabsTrigger>
+                        <TabsTrigger value="sources" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Traffic</TabsTrigger>
                         <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Users</TabsTrigger>
                       </TabsList>
                       <TabsContent value="overview" className="space-y-4">
-                        <Ga4Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                        <Ga4Overview 
+                          siteUrl={selectedSite} 
+                          dateRange={dateRange} 
+                          isCompareMode={isCompareMode} 
+                          compareDateRange={compareDateRange} 
+                          annotations={annotations.filter(a => (a.type === 'system' && showSystemAnnotations) || (a.type === 'user' && showUserAnnotations))}
+                        />
                         <Ga4DataGrid siteUrl={selectedSite} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                      </TabsContent>
+                      <TabsContent value="events" className="space-y-4">
+                        <Ga4DataGrid siteUrl={selectedSite} dimension="eventName" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} metrics={['eventCount', 'totalUsers']} />
                       </TabsContent>
                       <TabsContent value="pages" className="space-y-4">
                         <Ga4DataGrid siteUrl={selectedSite} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
@@ -705,7 +761,7 @@ function MainApp() {
               Configure your API keys and integrations.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="space-y-6 py-4">
             <div className="space-y-2">
               <Label htmlFor="bing-key">Bing Webmaster Tools API Key</Label>
               <Input 
@@ -718,6 +774,17 @@ function MainApp() {
                 You can generate this key in the Bing Webmaster Tools portal under Settings &gt; API Access.
               </p>
             </div>
+            {selectedSite && dataSource === 'gsc' && (
+              <div className="space-y-2 pt-4 border-t">
+                <Label>Data Warehouse Sync</Label>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground text-balance">
+                    Download historical data from Google Search Console directly to your local database for current selected site.
+                  </p>
+                  <WarehouseSync siteUrl={selectedSite} />
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSettingsModal(false)}>Cancel</Button>

@@ -50,12 +50,14 @@ export function QueryCountView({
   siteUrl, 
   dateRange,
   isCompareMode,
-  compareDateRange
+  compareDateRange,
+  useLiveData = true
 }: { 
   siteUrl: string, 
   dateRange?: DateRange,
   isCompareMode?: boolean,
-  compareDateRange?: DateRange
+  compareDateRange?: DateRange,
+  useLiveData?: boolean
 }) {
   const { accessToken, userProfile, clearAccessToken } = useAuth()
   
@@ -87,15 +89,36 @@ export function QueryCountView({
     const startDate = format(dateRange.from, 'yyyy-MM-dd')
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     
+    const fetchWarehouseData = async (start: string, end: string) => {
+      const res = await fetch('/api/warehouse/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['page', 'query'] })
+      })
+      if (!res.ok) throw new Error("Failed to fetch warehouse data")
+      const json = await res.json()
+      return json.data.map((r: any) => ({
+        keys: [r.page, r.query],
+        clicks: r.clicks,
+        impressions: r.impressions,
+        ctr: r.ctr,
+        position: r.position
+      }))
+    }
+
     const promises = [
-      gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['page', 'query'])
+      useLiveData 
+        ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['page', 'query'])
+        : fetchWarehouseData(startDate, endDate)
     ];
 
     if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
       const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
       const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
       promises.push(
-        gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['page', 'query'])
+        useLiveData
+          ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['page', 'query'])
+          : fetchWarehouseData(compareStartDate, compareEndDate)
       )
     }
 
@@ -161,7 +184,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingTable(false)
       })
-  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, clearAccessToken])
+  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, clearAccessToken, useLiveData])
 
   // Fetch Chart Data (Historic Trend of Unique Queries)
   useEffect(() => {
@@ -177,15 +200,36 @@ export function QueryCountView({
       filters: [{ dimension: 'page', expression: selectedPage, operator: 'equals' }]
     }] : undefined;
 
+    const fetchWarehouseData = async (start: string, end: string) => {
+      const res = await fetch('/api/warehouse/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['date', 'query'], dimensionFilterGroups: filterGroups })
+      })
+      if (!res.ok) throw new Error("Failed to fetch warehouse data")
+      const json = await res.json()
+      return json.data.map((r: any) => ({
+        keys: [r.date, r.query],
+        clicks: r.clicks,
+        impressions: r.impressions,
+        ctr: r.ctr,
+        position: r.position
+      }))
+    }
+
     const promises = [
-      gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['date', 'query'], filterGroups)
+      useLiveData
+        ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['date', 'query'], filterGroups)
+        : fetchWarehouseData(startDate, endDate)
     ];
 
     if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
       const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
       const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
       promises.push(
-        gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['date', 'query'], filterGroups)
+        useLiveData
+          ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['date', 'query'], filterGroups)
+          : fetchWarehouseData(compareStartDate, compareEndDate)
       )
     }
 
@@ -249,7 +293,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingChart(false)
       })
-  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, selectedPage, clearAccessToken])
+  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, selectedPage, clearAccessToken, useLiveData])
 
   const sortedTableData = useMemo(() => {
     return [...tableData].sort((a, b) => {

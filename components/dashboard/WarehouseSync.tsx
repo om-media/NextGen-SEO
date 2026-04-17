@@ -79,6 +79,16 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
           })
         }
 
+        // 3. Page+Query-level metrics
+        const pageQueryRows = await gscService.querySearchAnalytics(siteUrl, startDateStr, endDateStr, ['date', 'page', 'query'], undefined, true)
+        if (pageQueryRows && pageQueryRows.length > 0) {
+          await fetch('/api/warehouse/ingest/page_query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ siteUrl, rows: pageQueryRows })
+          })
+        }
+
         const exactDaysProcessed = Math.round((currentDate.getTime() - effectiveStart.getTime()) / (24 * 60 * 60 * 1000)) + 1
         completeDays += exactDaysProcessed
         setProgress(Math.min(100, Math.round((completeDays / totalDays) * 100)))
@@ -117,9 +127,9 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger render={<Button variant="outline" size="sm" className="gap-2" />}>
+      <DialogTrigger render={<Button variant="outline" size="sm" className="gap-2 whitespace-nowrap" />}>
         <Database className="h-4 w-4" />
-        Data Warehouse
+        Sync Data
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>

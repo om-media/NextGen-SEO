@@ -31,6 +31,17 @@ db.exec(`
     createdAt TEXT
   );
   
+  CREATE TABLE IF NOT EXISTS annotations (
+    id TEXT PRIMARY KEY,
+    userId TEXT,
+    siteUrl TEXT,
+    date TEXT,
+    title TEXT,
+    description TEXT,
+    type TEXT,
+    createdAt TEXT
+  );
+  
   -- Data Warehouse Tables
   CREATE TABLE IF NOT EXISTS gsc_site_metrics (
     siteUrl TEXT,
@@ -51,6 +62,18 @@ db.exec(`
     ctr REAL,
     position REAL,
     PRIMARY KEY (siteUrl, date, query)
+  );
+
+  CREATE TABLE IF NOT EXISTS gsc_page_query_metrics (
+    siteUrl TEXT,
+    date TEXT,
+    page TEXT,
+    query TEXT,
+    clicks INTEGER,
+    impressions INTEGER,
+    ctr REAL,
+    position REAL,
+    PRIMARY KEY (siteUrl, date, page, query)
   );
   
   CREATE TABLE IF NOT EXISTS warehouse_sync_status (
@@ -156,6 +179,55 @@ async function startServer() {
     try {
       db.prepare('UPDATE users SET bingApiKey = ? WHERE id = ?').run(bingApiKey, req.params.id);
       res.json({ success: true, bingApiKey });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Annotations Routes
+  app.get('/api/annotations/:userId', (req, res) => {
+    try {
+      const { siteUrl } = req.query;
+      let annotations;
+      if (siteUrl && siteUrl !== 'null') {
+         annotations = db.prepare('SELECT * FROM annotations WHERE userId = ? AND (siteUrl = ? OR siteUrl IS NULL) ORDER BY date DESC')
+           .all(req.params.userId, siteUrl as string);
+      } else {
+         annotations = db.prepare('SELECT * FROM annotations WHERE userId = ? ORDER BY date DESC')
+           .all(req.params.userId);
+      }
+      res.json(annotations);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/annotations/:userId', (req, res) => {
+    const { id, siteUrl, date, title, description, type } = req.body;
+    try {
+      db.prepare(`
+        INSERT INTO annotations (id, userId, siteUrl, date, title, description, type, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id || Math.random().toString(36).substring(2, 15),
+        req.params.userId,
+        siteUrl || null,
+        date, // Expected format: YYYY-MM-DD
+        title,
+        description || '',
+        type || 'user',
+        new Date().toISOString()
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/annotations/:userId/:id', (req, res) => {
+    try {
+      db.prepare('DELETE FROM annotations WHERE id = ? AND userId = ?').run(req.params.id, req.params.userId);
+      res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -314,6 +386,34 @@ async function startServer() {
     }
   });
 
+  app.post('/api/warehouse/ingest/page_query', (req, res) => {
+    const { siteUrl, rows } = req.body;
+    if (!siteUrl || !rows || !Array.isArray(rows)) return res.status(400).json({ error: 'Invalid payload' });
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO gsc_page_query_metrics (siteUrl, date, page, query, clicks, impressions, ctr, position)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(siteUrl, date, page, query) DO UPDATE SET
+          clicks=excluded.clicks,
+          impressions=excluded.impressions,
+          ctr=excluded.ctr,
+          position=excluded.position
+      `);
+      const insertMany = db.transaction((metrics) => {
+        for (const row of metrics) {
+          const date = row.keys[0];
+          const page = row.keys[1] || '';
+          const query = row.keys[2] || '';
+          stmt.run(siteUrl, date, page, query, row.clicks, row.impressions, row.ctr, row.position);
+        }
+      });
+      insertMany(rows);
+      res.json({ success: true, count: rows.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/warehouse/status', (req, res) => {
     const { siteUrl } = req.query;
     try {
@@ -355,6 +455,7 @@ async function startServer() {
       const dims = (dimensions as string[]) || [];
       const hasDate = dims.includes('date');
       const hasQuery = dims.includes('query');
+      const hasPage = dims.includes('page');
       
       let selectClauseElements = [];
       let groupByClauseElements = [];
@@ -364,6 +465,11 @@ async function startServer() {
         selectClauseElements.push("date");
         groupByClauseElements.push("date");
         orderClause = "ORDER BY date ASC";
+      }
+      if (hasPage) {
+        selectClauseElements.push("page");
+        groupByClauseElements.push("page");
+        if (!hasDate) orderClause = "ORDER BY clicks DESC, impressions DESC";
       }
       if (hasQuery) {
         selectClauseElements.push("query");
@@ -392,13 +498,39 @@ async function startServer() {
                   params[`queryFilter${paramIdx}`] = `%${filter.expression}%`;
                 }
               }
+              if (filter.dimension === 'page' && filter.expression) {
+                const paramIdx = Object.keys(params).length;
+                if (filter.operator === 'equals') {
+                  whereClause += ` AND page = @pageFilter${paramIdx}`;
+                  params[`pageFilter${paramIdx}`] = filter.expression;
+                } else if (filter.operator === 'contains') {
+                  whereClause += ` AND page LIKE @pageFilter${paramIdx}`;
+                  params[`pageFilter${paramIdx}`] = `%${filter.expression}%`;
+                } else if (filter.operator === 'notContains') {
+                  whereClause += ` AND page NOT LIKE @pageFilter${paramIdx}`;
+                  params[`pageFilter${paramIdx}`] = `%${filter.expression}%`;
+                }
+              }
             }
           }
         }
       }
 
       let rows = [];
-      if (hasQuery) {
+      if (hasPage && hasQuery) {
+         rows = db.prepare(`
+            SELECT ${selectCols} 
+                   SUM(clicks) as clicks, 
+                   SUM(impressions) as impressions, 
+                   SUM(clicks)*1.0/MAX(SUM(impressions), 1) as ctr, 
+                   SUM(position * impressions)*1.0/MAX(SUM(impressions), 1) as position
+            FROM gsc_page_query_metrics
+            ${whereClause}
+            ${groupByClause}
+            ${orderClause}
+            LIMIT 50000
+         `).all(params);
+      } else if (hasQuery) {
          rows = db.prepare(`
             SELECT ${selectCols} 
                    SUM(clicks) as clicks, 

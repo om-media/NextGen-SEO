@@ -15,18 +15,19 @@ const COLORS = ['#4285f4', '#5e35b1', '#00897b', '#e65100', '#c2185b', '#0288d1'
 interface Ga4DataGridProps {
   siteUrl: string;
   dateRange?: DateRange;
-  dimension?: 'date' | 'pagePath' | 'sessionSourceMedium' | 'country' | 'city' | 'region' | 'deviceCategory' | 'browser' | 'operatingSystem';
+  dimension?: 'date' | 'pagePath' | 'sessionSourceMedium' | 'country' | 'city' | 'region' | 'deviceCategory' | 'browser' | 'operatingSystem' | 'eventName';
   isCompareMode?: boolean;
   compareDateRange?: DateRange;
+  metrics?: string[];
 }
 
-type SortColumn = 'dimension' | 'sessions' | 'users' | 'pageviews' | 'bouncerate';
+type SortColumn = 'dimension' | 'sessions' | 'users' | 'pageviews' | 'bouncerate' | 'eventCount';
 
 type ExtendedGa4DataRow = Ga4DataRow & {
   compareMetricValues?: { value: string }[];
 };
 
-export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange }: Ga4DataGridProps) {
+export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'] }: Ga4DataGridProps) {
   const { accessToken } = useAuth()
   const [data, setData] = useState<ExtendedGa4DataRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -36,7 +37,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
   
   // Sort state
-  const [sortColumn, setSortColumn] = useState<SortColumn>('sessions')
+  const [sortColumn, setSortColumn] = useState<SortColumn>(metrics[0] === 'eventCount' ? 'eventCount' : 'sessions')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   
   // Pagination state
@@ -65,7 +66,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             startDate, 
             endDate, 
             [dimension], 
-            ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate']
+            metrics
           )
         ];
 
@@ -78,7 +79,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                compareStartDate,
                compareEndDate,
                [dimension],
-               ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate']
+               metrics
              )
            )
         }
@@ -159,12 +160,22 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
         aVal = a.dimensionValues[0].value;
         bVal = b.dimensionValues[0].value;
       } else {
-        const metricIndex = 
-          sortColumn === 'sessions' ? 0 : 
-          sortColumn === 'users' ? 1 : 
-          sortColumn === 'pageviews' ? 2 : 3;
-        aVal = parseFloat(a.metricValues[metricIndex].value);
-        bVal = parseFloat(b.metricValues[metricIndex].value);
+        let metricName = "";
+        if (sortColumn === 'sessions') metricName = 'sessions';
+        else if (sortColumn === 'users') metricName = 'totalUsers';
+        else if (sortColumn === 'pageviews') metricName = 'screenPageViews';
+        else if (sortColumn === 'bouncerate') metricName = 'bounceRate';
+        else if (sortColumn === 'eventCount') metricName = 'eventCount';
+
+        const metricIndex = metrics.indexOf(metricName);
+        if (metricIndex !== -1) {
+          aVal = parseFloat(a.metricValues[metricIndex].value);
+          bVal = parseFloat(b.metricValues[metricIndex].value);
+        } else {
+          // Fallback if metric not requested
+          aVal = 0;
+          bVal = 0;
+        }
       }
 
       if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
@@ -242,6 +253,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
       case 'deviceCategory': return 'Device';
       case 'browser': return 'Browser';
       case 'operatingSystem': return 'OS';
+      case 'eventName': return 'Event Name';
       default: return 'Dimension';
     }
   }
@@ -391,30 +403,28 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                     {sortColumn === 'dimension' && <ArrowUpDown className="ml-2 h-4 w-4" />}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort('sessions')}>
-                  <div className="flex items-center justify-end">
-                    Sessions
-                    {sortColumn === 'sessions' && <ArrowUpDown className="ml-2 h-4 w-4" />}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort('users')}>
-                  <div className="flex items-center justify-end">
-                    Users
-                    {sortColumn === 'users' && <ArrowUpDown className="ml-2 h-4 w-4" />}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort('pageviews')}>
-                  <div className="flex items-center justify-end">
-                    Page Views
-                    {sortColumn === 'pageviews' && <ArrowUpDown className="ml-2 h-4 w-4" />}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort('bouncerate')}>
-                  <div className="flex items-center justify-end">
-                    Bounce Rate
-                    {sortColumn === 'bouncerate' && <ArrowUpDown className="ml-2 h-4 w-4" />}
-                  </div>
-                </TableHead>
+                {metrics.map((metric) => {
+                  let headerName = metric;
+                  if (metric === 'sessions') headerName = 'Sessions';
+                  else if (metric === 'totalUsers') headerName = 'Users';
+                  else if (metric === 'screenPageViews') headerName = 'Page Views';
+                  else if (metric === 'bounceRate') headerName = 'Bounce Rate';
+                  else if (metric === 'eventCount') headerName = 'Event Count';
+
+                  let sortKey = metric;
+                  if (metric === 'totalUsers') sortKey = 'users';
+                  else if (metric === 'screenPageViews') sortKey = 'pageviews';
+                  else if (metric === 'bounceRate') sortKey = 'bouncerate';
+
+                  return (
+                    <TableHead key={metric} className="cursor-pointer select-none text-right" onClick={() => handleSort(sortKey as SortColumn)}>
+                      <div className="flex items-center justify-end">
+                        {headerName}
+                        {sortColumn === sortKey && <ArrowUpDown className="ml-2 h-4 w-4" />}
+                      </div>
+                    </TableHead>
+                  )
+                })}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -434,18 +444,6 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                     formattedDim = 'Unknown';
                   }
 
-                  const sessions = parseInt(row.metricValues[0].value);
-                  const compareSessions = row.compareMetricValues ? parseInt(row.compareMetricValues[0].value) : undefined;
-                  
-                  const users = parseInt(row.metricValues[1].value);
-                  const compareUsers = row.compareMetricValues ? parseInt(row.compareMetricValues[1].value) : undefined;
-                  
-                  const pageViews = parseInt(row.metricValues[2].value);
-                  const comparePageViews = row.compareMetricValues ? parseInt(row.compareMetricValues[2].value) : undefined;
-                  
-                  const bounceRate = parseFloat(row.metricValues[3].value);
-                  const compareBounceRate = row.compareMetricValues ? parseFloat(row.compareMetricValues[3].value) : undefined;
-
                   return (
                     <TableRow 
                       key={i}
@@ -458,30 +456,30 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                       }}
                     >
                       <TableCell className="font-medium max-w-[300px] truncate" title={formattedDim}>{dimension === 'pagePath' && siteUrl ? formattedDim.replace(siteUrl, '') || '/' : formattedDim}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end">
-                          {sessions.toLocaleString()}
-                          {renderDifference(sessions, compareSessions)}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end">
-                          {users.toLocaleString()}
-                          {renderDifference(users, compareUsers)}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end">
-                          {pageViews.toLocaleString()}
-                          {renderDifference(pageViews, comparePageViews)}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end">
-                          {(bounceRate * 100).toFixed(2)}%
-                          {renderDifference(bounceRate, compareBounceRate, true, true)}
-                        </div>
-                      </TableCell>
+                      {metrics.map((metric, idx) => {
+                        const val = parseFloat(row.metricValues[idx]?.value || "0");
+                        const compareVal = row.compareMetricValues ? parseFloat(row.compareMetricValues[idx]?.value || "0") : undefined;
+
+                        if (metric === 'bounceRate') {
+                          return (
+                            <TableCell key={metric} className="text-right">
+                              <div className="flex items-center justify-end">
+                                {(val * 100).toFixed(2)}%
+                                {renderDifference(val, compareVal, true, true)}
+                              </div>
+                            </TableCell>
+                          )
+                        }
+
+                        return (
+                          <TableCell key={metric} className="text-right">
+                            <div className="flex items-center justify-end">
+                              {val.toLocaleString()}
+                              {renderDifference(val, compareVal)}
+                            </div>
+                          </TableCell>
+                        )
+                      })}
                     </TableRow>
                   )
                 })
