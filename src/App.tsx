@@ -5,6 +5,7 @@ import { GscDataGrid } from "@/components/dashboard/GscDataGrid"
 import { QueryCountView } from "@/components/dashboard/QueryCountView"
 import { Ga4DataGrid } from "@/components/dashboard/Ga4DataGrid"
 import { Ga4Overview } from "@/components/dashboard/Ga4Overview"
+import { Ga4LlmTraffic } from "@/components/dashboard/Ga4LlmTraffic"
 import { Ga4Demographics } from "@/components/dashboard/Ga4Demographics"
 import { BingDataGrid } from "@/components/dashboard/BingDataGrid"
 import { WarehouseSync } from "@/components/dashboard/WarehouseSync"
@@ -33,6 +34,8 @@ import { Input } from "@/components/ui/input"
 import { AnnotationsService, Annotation } from "./services/annotationsService"
 import { AnnotationsSettings } from "@/components/dashboard/AnnotationsSettings"
 
+import { RankTrackerView } from "./components/dashboard/RankTrackerView"
+
 function MainApp() {
   const { user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setTier, setBingApiKey } = useAuth()
   const [sites, setSites] = useState<GscSite[]>([])
@@ -51,6 +54,15 @@ function MainApp() {
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [showSystemAnnotations, setShowSystemAnnotations] = useState(true)
   const [showUserAnnotations, setShowUserAnnotations] = useState(true)
+
+  const [activeMenu, setActiveMenu] = useState<string>("Dashboard")
+
+  const handleMenuSelect = (menu: string) => {
+    setActiveMenu(menu)
+    if (menu === "LLM Traffic") {
+      setDataSource('ga4')
+    }
+  }
 
   const fetchAnnotations = async () => {
     if (user?.uid) {
@@ -333,77 +345,81 @@ function MainApp() {
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <AppSidebar selectedSite={selectedSite} />
+        <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />
         <div className="flex-1 flex flex-col">
           <header className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b bg-background px-4 sm:px-6">
             <SidebarTrigger />
             <div className="flex-1 flex items-center gap-4">
-              <h1 className="text-lg font-semibold hidden sm:block">Dashboard</h1>
-              <div className="flex items-center gap-2 border rounded-md p-1 bg-muted/30">
-                <Button 
-                  variant={dataSource === 'gsc' ? 'secondary' : 'ghost'} 
-                  size="sm" 
-                  className="h-7"
-                  onClick={() => {
-                    if (dataSource !== 'gsc') {
-                      setDataSource('gsc');
-                      if (sites.length > 0) {
-                        const match = findMatchingSite(selectedSite, sites);
-                        if (match) {
-                          setSelectedSite(match.siteUrl);
-                        } else {
-                          const firstUnlocked = sites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-                          setSelectedSite(firstUnlocked?.siteUrl || sites[0]?.siteUrl || "");
+              <h1 className="text-lg font-semibold hidden sm:block">{activeMenu}</h1>
+              
+              {/* Only show source toggles if we are on Dashboard */}
+              {activeMenu === "Dashboard" && (
+                <div className="flex items-center gap-2 border rounded-md p-1 bg-muted/30">
+                  <Button 
+                    variant={dataSource === 'gsc' ? 'secondary' : 'ghost'} 
+                    size="sm" 
+                    className="h-7"
+                    onClick={() => {
+                      if (dataSource !== 'gsc') {
+                        setDataSource('gsc');
+                        if (sites.length > 0) {
+                          const match = findMatchingSite(selectedSite, sites);
+                          if (match) {
+                            setSelectedSite(match.siteUrl);
+                          } else {
+                            const firstUnlocked = sites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
+                            setSelectedSite(firstUnlocked?.siteUrl || sites[0]?.siteUrl || "");
+                          }
                         }
                       }
-                    }
-                  }}
-                >
-                  Google Search Console
-                </Button>
-                <Button 
-                  variant={dataSource === 'bing' ? 'secondary' : 'ghost'} 
-                  size="sm" 
-                  className="h-7"
-                  onClick={() => {
-                    if (dataSource !== 'bing') {
-                      setDataSource('bing');
-                      if (bingSites.length > 0) {
-                        const match = findMatchingSite(selectedSite, bingSites);
-                        if (match) {
-                          setSelectedSite(match.siteUrl);
-                        } else {
-                          const firstUnlocked = bingSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-                          setSelectedSite(firstUnlocked?.siteUrl || bingSites[0]?.siteUrl || "");
+                    }}
+                  >
+                    Google Search Console
+                  </Button>
+                  <Button 
+                    variant={dataSource === 'bing' ? 'secondary' : 'ghost'} 
+                    size="sm" 
+                    className="h-7"
+                    onClick={() => {
+                      if (dataSource !== 'bing') {
+                        setDataSource('bing');
+                        if (bingSites.length > 0) {
+                          const match = findMatchingSite(selectedSite, bingSites);
+                          if (match) {
+                            setSelectedSite(match.siteUrl);
+                          } else {
+                            const firstUnlocked = bingSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
+                            setSelectedSite(firstUnlocked?.siteUrl || bingSites[0]?.siteUrl || "");
+                          }
                         }
                       }
-                    }
-                  }}
-                >
-                  Bing Webmaster
-                </Button>
-                <Button 
-                  variant={dataSource === 'ga4' ? 'secondary' : 'ghost'} 
-                  size="sm" 
-                  className="h-7"
-                  onClick={() => {
-                    if (dataSource !== 'ga4') {
-                      setDataSource('ga4');
-                      if (ga4Sites.length > 0) {
-                        const match = findMatchingSite(selectedSite, ga4Sites);
-                        if (match) {
-                          setSelectedSite(match.siteUrl);
-                        } else {
-                          const firstUnlocked = ga4Sites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-                          setSelectedSite(firstUnlocked?.siteUrl || ga4Sites[0]?.siteUrl || "");
+                    }}
+                  >
+                    Bing Webmaster
+                  </Button>
+                  <Button 
+                    variant={dataSource === 'ga4' ? 'secondary' : 'ghost'} 
+                    size="sm" 
+                    className="h-7"
+                    onClick={() => {
+                      if (dataSource !== 'ga4') {
+                        setDataSource('ga4');
+                        if (ga4Sites.length > 0) {
+                          const match = findMatchingSite(selectedSite, ga4Sites);
+                          if (match) {
+                            setSelectedSite(match.siteUrl);
+                          } else {
+                            const firstUnlocked = ga4Sites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
+                            setSelectedSite(firstUnlocked?.siteUrl || ga4Sites[0]?.siteUrl || "");
+                          }
                         }
                       }
-                    }
-                  }}
-                >
-                  Google Analytics 4
-                </Button>
-              </div>
+                    }}
+                  >
+                    Google Analytics 4
+                  </Button>
+                </div>
+              )}
               {(dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : ga4Sites).length > 0 && (
                 <Select value={selectedSite} onValueChange={handleSiteSelect}>
                   <SelectTrigger className="w-[250px] h-8 bg-muted/50 border-none">
@@ -626,7 +642,7 @@ function MainApp() {
                     </div>
                   )}
 
-                  {selectedSite && !apiError && dataSource === 'gsc' && sites.some(s => s.siteUrl === selectedSite) && (
+                  {selectedSite && !apiError && dataSource === 'gsc' && sites.some(s => s.siteUrl === selectedSite) && activeMenu === 'Dashboard' && (
                     <Tabs defaultValue="overview" className="space-y-4">
                       <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
                         <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
@@ -643,7 +659,7 @@ function MainApp() {
                           compareDateRange={compareDateRange} 
                           annotations={annotations.filter(a => (a.type === 'system' && showSystemAnnotations) || (a.type === 'user' && showUserAnnotations))}
                         />
-                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
+                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} hideTrackerButton={true} />
                       </TabsContent>
                       <TabsContent value="queries" className="space-y-4">
                         <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
@@ -660,7 +676,7 @@ function MainApp() {
                     </Tabs>
                   )}
 
-                  {selectedSite && !apiError && dataSource === 'bing' && userProfile?.bingApiKey && bingSites.some(s => s.siteUrl === selectedSite) && (
+                  {selectedSite && !apiError && dataSource === 'bing' && userProfile?.bingApiKey && bingSites.some(s => s.siteUrl === selectedSite) && activeMenu === 'Dashboard' && (
                     <div className="space-y-4">
                       <div className="p-4 border rounded-lg bg-card">
                         <h3 className="text-lg font-medium mb-2">Bing Webmaster Tools Data</h3>
@@ -672,7 +688,7 @@ function MainApp() {
                     </div>
                   )}
 
-                  {selectedSite && !apiError && dataSource === 'ga4' && ga4Sites.some(s => s.siteUrl === selectedSite) && (
+                  {selectedSite && !apiError && dataSource === 'ga4' && ga4Sites.some(s => s.siteUrl === selectedSite) && activeMenu === 'Dashboard' && (
                     <Tabs defaultValue="overview" className="space-y-4">
                       <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
                         <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
@@ -721,6 +737,18 @@ function MainApp() {
                         <Ga4DataGrid siteUrl={selectedSite} dimension={ga4UserDimension} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
                       </TabsContent>
                     </Tabs>
+                  )}
+
+                  {selectedSite && !apiError && dataSource === 'ga4' && activeMenu === 'LLM Traffic' && ga4Sites.some(s => s.siteUrl === selectedSite) && (
+                    <div className="space-y-4">
+                      <Ga4LlmTraffic siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+                    </div>
+                  )}
+
+                  {selectedSite && !apiError && activeMenu === 'Rank Tracker' && (
+                    <div className="space-y-4">
+                      <RankTrackerView siteUrl={selectedSite} />
+                    </div>
                   )}
                 </>
               )}

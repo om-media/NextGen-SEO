@@ -97,7 +97,7 @@ export function QueryCountView({
       })
       if (!res.ok) throw new Error("Failed to fetch warehouse data")
       const json = await res.json()
-      return json.data.map((r: any) => ({
+      return json.map((r: any) => ({
         keys: [r.page, r.query],
         clicks: r.clicks,
         impressions: r.impressions,
@@ -208,7 +208,7 @@ export function QueryCountView({
       })
       if (!res.ok) throw new Error("Failed to fetch warehouse data")
       const json = await res.json()
-      return json.data.map((r: any) => ({
+      return json.map((r: any) => ({
         keys: [r.date, r.query],
         clicks: r.clicks,
         impressions: r.impressions,

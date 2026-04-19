@@ -56,8 +56,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const res = await fetch(`/api/users/${user.uid}`);
         if (res.ok) {
-          const data = await res.json();
-          setUserProfile(data);
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.indexOf("application/json") !== -1) {
+            const data = await res.json();
+            setUserProfile(data);
+          } else {
+            throw new Error("API returned non-JSON html (likely a proxy or Vite fallback).");
+          }
         } else if (res.status === 404) {
           // Create new user
           const newUser = {
@@ -84,8 +89,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           throw new Error('Failed to fetch user profile');
         }
-      } catch (error) {
-        console.error("Error fetching/creating user profile:", error);
+      } catch (error: any) {
+        if (!error.message?.includes('non-JSON')) {
+          console.error("Error fetching/creating user profile:", error);
+        }
         // Fallback to memory
         setUserProfile({
           email: user.email || '',
@@ -121,6 +128,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } catch (error: any) {
+      if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
+         // Silently ignore popup closure or notify user via toast (no crash dump)
+         return;
+      }
       console.error("Error signing in with Google:", error);
       if (error.code === 'auth/credential-already-in-use') {
         // If the google account is already linked to another user, just sign in with it

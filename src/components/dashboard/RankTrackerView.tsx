@@ -1,0 +1,526 @@
+import { useState, useEffect } from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Target, TrendingUp, TrendingDown, Minus, RefreshCw, Plus, Trash2, ArrowRight } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
+import { Badge } from "@/components/ui/badge"
+import { GscApiService } from "@/src/services/gscService"
+
+interface RankTrackerViewProps {
+  siteUrl: string;
+}
+
+export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
+  const [keywords, setKeywords] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  
+  // New Keyword Form
+  const [newKeywords, setNewKeywords] = useState("")
+  const [newLocation, setNewLocation] = useState("US")
+  const [newDevice, setNewDevice] = useState("desktop")
+  const [newTargetDomain, setNewTargetDomain] = useState("")
+  
+  // Auto-fill target domain when dialog opens based on siteUrl
+  useEffect(() => {
+    if (siteUrl && !siteUrl.includes('properties/')) {
+       setNewTargetDomain(siteUrl.replace(/^https?:\/\//, '').replace(/^sc-domain:/, '').split('/')[0])
+    } else {
+       setNewTargetDomain("")
+    }
+  }, [siteUrl])
+  
+  // Selection & History
+  const [selectedKeywordId, setSelectedKeywordId] = useState<string | null>(null)
+  const [historyData, setHistoryData] = useState<any[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  const fetchKeywords = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setKeywords(data)
+        if (data.length > 0 && !selectedKeywordId) {
+          setSelectedKeywordId(data[0].id)
+        }
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const fetchHistory = async (id: string) => {
+    setHistoryLoading(true)
+    try {
+      const res = await fetch(`/api/rank-tracking/history?keywordId=${id}`)
+      if (res.ok) {
+        const data = await res.json()
+        // Format for Recharts
+        setHistoryData(data.map((d: any) => ({
+          date: d.date,
+          // We invert position so chart goes UP when rank improves (rank 1 is highest)
+          positionRaw: d.position,
+          position: d.position === 101 ? -1 : d.position 
+        })))
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (siteUrl) {
+      fetchKeywords()
+    }
+  }, [siteUrl])
+
+  useEffect(() => {
+    if (selectedKeywordId) {
+      fetchHistory(selectedKeywordId)
+    }
+  }, [selectedKeywordId])
+
+  const handleAddKeywords = async () => {
+    const keywordArray = newKeywords.split(',').map(k => k.trim()).filter(k => k.length > 0)
+    if (keywordArray.length === 0) return
+
+    try {
+      const res = await fetch('/api/rank-tracking/keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          siteUrl,
+          keywords: keywordArray,
+          location: newLocation,
+          device: newDevice,
+          targetDomain: newTargetDomain.trim()
+        })
+      })
+      if (res.ok) {
+        setNewKeywords("")
+        // let the newTargetDomain stay sticky for convenience
+        setAddDialogOpen(false)
+        await fetchKeywords() // Pull the keywords locally instantly
+        
+        // Trigger a fresh sync with live hints automatically.
+        handleSync(true); // pass true to indicate it is an auto-sync and avoid blocking
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const handleDeleteKeyword = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await fetch(`/api/rank-tracking/keywords/${id}`, { method: 'DELETE' })
+      if (selectedKeywordId === id) {
+        setSelectedKeywordId(null)
+        setHistoryData([])
+      }
+      fetchKeywords()
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const handleSync = async (stealth: boolean | React.MouseEvent = false) => {
+    const isStealth = typeof stealth === 'boolean' && stealth;
+    if (!isStealth) setSyncing(true)
+    try {
+      // Create a hint map if we possess live GSC auth keys
+      let gscHints: Record<string, { position: number, url: string }> = {};
+      
+      // Fetch latest keywords to guarantee we don't use stale state after adding
+      const currentKeywordsRes = await fetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`);
+      const currentKeywordsData = currentKeywordsRes.ok ? await currentKeywordsRes.json() : [];
+
+      try {
+         // Google Search Console typically lags by 2-3 days. 
+         // End the window 2 days ago to avoid 0-impression null zones, and look back 14 days total.
+         const end = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+         const start = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; 
+         
+         const token = sessionStorage.getItem('gsc_access_token') || '';
+         if (token && currentKeywordsData.length > 0) {
+           const liveService = new GscApiService(token, 'free');
+           
+           // Query for all currently tracked keywords so they don't get truncated by the 2500 limit
+           const regexList = currentKeywordsData.map((k: any) => 
+               k.keyword.toLowerCase().trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+           );
+           const filterGroups = [{
+             filters: [{
+               dimension: 'query',
+               operator: 'includingRegex',
+               expression: `^(${regexList.join('|')})$`
+             }]
+           }];
+           
+           // Determine target domain nicely
+           const explicitTargetDomain = currentKeywordsData[0].targetDomain;
+           const defaultDomain = siteUrl.replace(/^https?:\/\//, '').replace(/^sc-domain:/, '').replace(/^www\./, '').split('/')[0];
+           const domainToUse = explicitTargetDomain || defaultDomain;
+           
+           // Try variations of the site URL since the user might be using a GA4 property ID initially
+           const gscSiteUrlsToTry = [
+             siteUrl,
+             `sc-domain:${domainToUse}`,
+             `https://${domainToUse}/`,
+             `https://www.${domainToUse}/`,  
+           ];
+
+           let liveData: any = null;
+           for (const tryUrl of gscSiteUrlsToTry) {
+             try {
+               const res = await liveService.querySearchAnalytics(tryUrl, start, end, ['query', 'page', 'device', 'country'], filterGroups, true);
+               if (Array.isArray(res)) {
+                 liveData = res;
+                 break; // Success!
+               }
+             } catch(e) {
+               console.debug(`GSC Hint attempt failed for ${tryUrl}`);
+             }
+           }
+
+           if (Array.isArray(liveData)) {
+              // Now we store stats per unique combination of Query + Device + Location
+              const queryStats: Record<string, { impressions: number, pos: number, url: string }> = {};
+              const fallbackStats: Record<string, { impressions: number, pos: number, url: string }> = {};
+              
+              const mapLocToGsc = (loc: string) => {
+                 if (loc === 'UK') return 'gbr';
+                 if (loc === 'US') return 'usa';
+                 if (loc === 'CA') return 'can';
+                 if (loc === 'AU') return 'aus';
+                 return loc.toLowerCase();
+              };
+
+              const validKeys = new Set(currentKeywordsData.map((k: any) => 
+                 `${k.keyword.toLowerCase().trim()}|${k.device.toLowerCase()}|${mapLocToGsc(k.location)}`
+              ));
+
+              liveData.forEach((row: any) => {
+                if (row.keys && row.keys.length >= 4) {
+                  const query = row.keys[0];
+                  const url = row.keys[1];
+                  const device = row.keys[2].toLowerCase();
+                  const country = row.keys[3].toLowerCase();
+                  
+                  const pos = Math.round(row.position);
+                  const impressions = row.impressions || 0;
+                  
+                  // Always track the absolute best canonical ranking globally as an ultimate fallback
+                  if (!fallbackStats[query] || impressions > fallbackStats[query].impressions) {
+                    fallbackStats[query] = { impressions, pos, url };
+                  }
+
+                  const compositeKey = `${query}|${device}|${country}`;
+
+                  // Only process rows that correspond to our tracked permutations for exact precision
+                  if (validKeys.has(compositeKey)) {
+                     const existing = queryStats[compositeKey];
+                     if (!existing || impressions > existing.impressions) {
+                       queryStats[compositeKey] = { impressions, pos, url };
+                     }
+                  }
+                }
+              });
+
+              for (const [key, data] of Object.entries(queryStats)) {
+                 gscHints[key] = { position: data.pos, url: data.url };
+              }
+              for (const [query, data] of Object.entries(fallbackStats)) {
+                 if (gscHints[query] === undefined) {
+                    gscHints[query] = { position: data.pos, url: data.url };
+                 }
+              }
+           }
+         }
+      } catch(e) {
+         console.warn("GSC Hint fetch failed (expected if unauthenticated)", e);
+      }
+
+      const res = await fetch('/api/rank-tracking/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ siteUrl, force: true, gscHints })
+      })
+      if (res.ok) {
+        await fetchKeywords()
+        if (selectedKeywordId) fetchHistory(selectedKeywordId)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      if (!isStealth) setSyncing(false)
+    }
+  }
+
+  const renderRankBadge = (rank: number | null) => {
+    if (rank === null) return <Badge variant="outline" className="text-muted-foreground">No Data</Badge>
+    if (rank === 101 || rank > 100) return <Badge variant="secondary" className="bg-muted text-muted-foreground">100+</Badge>
+    if (rank <= 3) return <Badge className="bg-green-100 text-green-800 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400 border-green-200 dark:border-green-800">{rank}</Badge>
+    if (rank <= 10) return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-800">{rank}</Badge>
+    return <Badge variant="outline">{rank}</Badge>
+  }
+
+  // Calculate KPIs
+  const top3 = keywords.filter(k => k.currentPosition && k.currentPosition <= 3).length
+  const top10 = keywords.filter(k => k.currentPosition && k.currentPosition <= 10).length
+  const avgRank = keywords.filter(k => k.currentPosition && k.currentPosition <= 100).length > 0 
+    ? Math.round(keywords.filter(k => k.currentPosition && k.currentPosition <= 100).reduce((acc, k) => acc + k.currentPosition, 0) / keywords.filter(k => k.currentPosition && k.currentPosition <= 100).length)
+    : 0
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Rank Tracker <Badge variant="outline" className="ml-2 bg-primary/10 text-primary border-primary/20">Beta</Badge></h2>
+          <p className="text-muted-foreground">Monitor daily Google keyword rankings with our Hybrid Engine.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing || keywords.length === 0}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing...' : 'Sync Ranks'}
+          </Button>
+          
+          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+            <DialogTrigger render={<Button size="sm" />}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Keywords
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add Keywords to Track</DialogTitle>
+                <DialogDescription>
+                  Enter keywords separated by commas to begin tracking their daily positions.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Keywords</label>
+                  <Input 
+                    placeholder="e.g. best seo tool, rank tracker, buy shoes" 
+                    value={newKeywords} 
+                    onChange={e => setNewKeywords(e.target.value)} 
+                  />
+                </div>
+                {/* Hiding target domain input so users don't have to think about it manually */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Location</label>
+                    <Select value={newLocation} onValueChange={setNewLocation}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="US">United States</SelectItem>
+                        <SelectItem value="UK">United Kingdom</SelectItem>
+                        <SelectItem value="CA">Canada</SelectItem>
+                        <SelectItem value="AU">Australia</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Device</label>
+                    <Select value={newDevice} onValueChange={setNewDevice}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="desktop">Desktop</SelectItem>
+                        <SelectItem value="mobile">Mobile</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setAddDialogOpen(false)}>Cancel</Button>
+                <Button onClick={handleAddKeywords} disabled={!newKeywords.trim()}>Add Keywords</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Average Position</CardTitle>
+            <Target className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{avgRank || '--'}</div>
+            <p className="text-xs text-muted-foreground">Across top 100 tracking</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Top 3 Rankings</CardTitle>
+            <TrendingUp className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{top3}</div>
+            <p className="text-xs text-muted-foreground">High visibility terms</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Top 10 Rankings</CardTitle>
+            <ArrowRight className="h-4 w-4 text-blue-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{top10}</div>
+            <p className="text-xs text-muted-foreground">Page 1 organic results</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Tracked Keywords</CardTitle>
+            <CardDescription>Select a keyword to view its ranking history.</CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="p-8 text-center text-muted-foreground">Loading keywords...</div>
+            ) : keywords.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
+                <Target className="w-12 h-12 mb-4 opacity-20" />
+                <p>No keywords tracked yet.</p>
+                <Button variant="link" onClick={() => setAddDialogOpen(true)}>Add your first keyword</Button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-card z-10">
+                    <TableRow>
+                      <TableHead>Keyword</TableHead>
+                      <TableHead>Device/Loc</TableHead>
+                      <TableHead className="text-center">Current Rank</TableHead>
+                      <TableHead className="hidden md:table-cell">URL</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {keywords.map(kw => (
+                      <TableRow 
+                        key={kw.id} 
+                        className={`cursor-pointer transition-colors hover:bg-muted/50 ${selectedKeywordId === kw.id ? 'bg-muted' : ''}`}
+                        onClick={() => setSelectedKeywordId(kw.id)}
+                      >
+                        <TableCell className="font-medium">{kw.keyword}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Badge variant="outline" className="text-[10px] uppercase py-0 leading-tight">{kw.device}</Badge>
+                            <Badge variant="outline" className="text-[10px] uppercase py-0 leading-tight">{kw.location}</Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {renderRankBadge(kw.currentPosition)}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell max-w-[200px] truncate text-xs text-muted-foreground" title={kw.rankingUrl}>
+                          {kw.rankingUrl === 'gsc_aggregated' ? 'GSC Data' : kw.rankingUrl === 'gsc_live_auth' ? 'GSC Live Auth' : kw.rankingUrl ? (() => { 
+                            try { 
+                              const path = new URL(kw.rankingUrl).pathname; 
+                              return path === '/' ? 'Homepage' : path;
+                            } catch(e) { return kw.rankingUrl } 
+                          })() : '--'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={(e) => handleDeleteKeyword(kw.id, e)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-1">
+          <CardHeader>
+            <CardTitle>Position History</CardTitle>
+            <CardDescription className="truncate">
+              {selectedKeywordId ? keywords.find(k => k.id === selectedKeywordId)?.keyword : "Select a keyword"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {!selectedKeywordId ? (
+               <div className="h-[300px] flex items-center justify-center text-muted-foreground border border-dashed rounded-lg">
+                 Select a keyword to view
+               </div>
+            ) : historyLoading ? (
+               <div className="h-[300px] flex items-center justify-center text-muted-foreground border border-dashed rounded-lg">
+                 Loading history...
+               </div>
+            ) : historyData.length === 0 ? (
+               <div className="h-[300px] flex items-center justify-center text-muted-foreground border border-dashed rounded-lg flex-col gap-2">
+                 <p>No history recorded yet.</p>
+                 <Button variant="outline" size="sm" onClick={handleSync}>Sync Now</Button>
+               </div>
+            ) : (
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={historyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="date" fontSize={12} tickLine={false} axisLine={false} />
+                      {/* Inverted Y-Axis logic for Recharts: smaller numbers at top */}
+                      <YAxis 
+                        reversed={true} 
+                        domain={[1, 100]} 
+                        fontSize={12} 
+                        tickLine={false} 
+                        axisLine={false}
+                        tickCount={5}
+                      />
+                      <RechartsTooltip 
+                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                        formatter={(value: any) => [value === -1 ? '100+' : value, 'Position']}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="positionRaw" 
+                        stroke="#3b82f6" 
+                        strokeWidth={3} 
+                        dot={{ r: 4, strokeWidth: 2 }} 
+                        activeDot={{ r: 6 }} 
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+            )}
+          </CardContent>
+          <CardFooter className="text-xs text-muted-foreground bg-muted/30 py-3 border-t">
+             Data powered by Google Search Console integration and anonymous SERP checks.
+          </CardFooter>
+        </Card>
+      </div>
+    </div>
+  )
+}

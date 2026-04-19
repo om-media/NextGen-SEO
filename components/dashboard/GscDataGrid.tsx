@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Filter, Search, Download, Plus, Loader2, ArrowUpDown, ArrowUp, ArrowDown, Sparkles } from "lucide-react"
+import { Filter, Search, Download, Plus, Loader2, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Check } from "lucide-react"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { GscApiService, GscSearchAnalyticsRow } from "@/src/services/gscService"
 import { saveFilter } from "@/src/services/dbService"
@@ -24,14 +24,16 @@ export function GscDataGrid({
   dateRange,
   isCompareMode,
   compareDateRange,
-  useLiveData = true
+  useLiveData = true,
+  hideTrackerButton = false
 }: { 
   siteUrl: string, 
   dimension?: 'query' | 'page' | 'country', 
   dateRange?: DateRange,
   isCompareMode?: boolean,
   compareDateRange?: DateRange,
-  useLiveData?: boolean
+  useLiveData?: boolean,
+  hideTrackerButton?: boolean
 }) {
   const [searchTerm, setSearchTerm] = useState("")
   const [intentFilter, setIntentFilter] = useState("all")
@@ -70,6 +72,91 @@ export function GscDataGrid({
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 100
 
+  // Added keywords state for visual feedback
+  const [addedKeywords, setAddedKeywords] = useState<Set<string>>(new Set())
+  const [addingKeywords, setAddingKeywords] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (siteUrl && !hideTrackerButton && dimension === 'query') {
+      fetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setAddedKeywords(new Set(data.map(k => k.keyword)));
+          }
+        })
+        .catch(console.error);
+    }
+  }, [siteUrl, hideTrackerButton, dimension]);
+
+  const handleAddToTracker = async (keyword: string) => {
+    try {
+       setAddingKeywords(prev => new Set(prev).add(keyword))
+       // Target Domain logic from RankTrackerView
+       const defaultDomain = siteUrl.replace(/^https?:\/\//, '').replace(/^sc-domain:/, '').split('/')[0];
+       
+       const res = await fetch('/api/rank-tracking/keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          siteUrl,
+          keywords: [keyword],
+          location: 'US', // default
+          device: 'desktop', // default
+          targetDomain: defaultDomain
+        })
+      })
+      if (res.ok) {
+        setAddedKeywords(prev => new Set(prev).add(keyword))
+        
+        // Grab live hints from GSC for immediate sync
+        try {
+          const gscService = new GscApiService(accessToken, userProfile?.tier || 'free');
+          const endDate = format(new Date(), 'yyyy-MM-dd');
+          const startDate = format(subDays(new Date(), 2), 'yyyy-MM-dd'); // just last 2 days for quick check
+          
+          let gscHints = undefined;
+          try {
+            const liveData = await gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['query', 'device', 'country']);
+            if (liveData && liveData.length > 0) {
+              gscHints = liveData.reduce((acc: any, row: any) => {
+                const q = row.keys[0].toLowerCase().trim();
+                const d = row.keys[1].toLowerCase();
+                const c = row.keys[2].toLowerCase();
+                const compositeKey = `${q}|${d}|${c}`;
+                acc[compositeKey] = {
+                  position: Math.round(row.position),
+                  url: null
+                };
+                if (!acc[q]) acc[q] = { position: Math.round(row.position), url: null };
+                return acc;
+              }, {});
+            }
+          } catch(e) {
+            console.warn("Could not fetch live hints during stealth sync", e)
+          }
+
+          // Automatically sync quietly in background with hints
+          await fetch(`/api/rank-tracking/sync`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ siteUrl: siteUrl, force: true, gscHints })
+          });
+        } catch (e) {
+          console.error("Silent add sync fail:", e);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to add keyword to rank tracker:", e);
+    } finally {
+      setAddingKeywords(prev => {
+        const next = new Set(prev)
+        next.delete(keyword)
+        return next
+      })
+    }
+  }
+
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1)
@@ -97,7 +184,7 @@ export function GscDataGrid({
         })
         if (!res.ok) throw new Error("Failed to fetch warehouse data")
         const json = await res.json()
-        return json.data.map((r: any) => ({
+        return json.map((r: any) => ({
           keys: [r[dimension]],
           clicks: r.clicks,
           impressions: r.impressions,
@@ -721,8 +808,35 @@ export function GscDataGrid({
                           </a>
                         ) : dimension === 'country' ? (
                           <span className="uppercase">{key}</span>
+                        ) : dimension === 'query' ? (
+                          <div className="flex items-center justify-between">
+                            <span className="truncate">{key}</span>
+                            {!hideTrackerButton && (
+                              <Button
+                                variant="ghost" 
+                                size="icon" 
+                                className={`h-6 w-6 ml-2 z-10 ${addedKeywords.has(key) ? 'text-green-500 opacity-100 cursor-default' : 'text-muted-foreground hover:text-primary opacity-50 hover:opacity-100'}`}
+                                title={addedKeywords.has(key) ? "Added to Rank Tracker" : "Add to Rank Tracker"}
+                                disabled={addedKeywords.has(key) || addingKeywords.has(key)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!addedKeywords.has(key) && !addingKeywords.has(key)) {
+                                    handleAddToTracker(key);
+                                  }
+                                }}
+                              >
+                                {addingKeywords.has(key) ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : addedKeywords.has(key) ? (
+                                  <Check className="h-4 w-4" />
+                                ) : (
+                                  <Plus className="h-4 w-4" />
+                                )}
+                              </Button>
+                            )}
+                          </div>
                         ) : (
-                          key
+                          <span className="truncate">{key}</span>
                         )}
                       </TableCell>
                       {dimension === 'query' && (

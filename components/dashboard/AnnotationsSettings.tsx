@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -9,6 +9,7 @@ import { Annotation, AnnotationsService } from "@/src/services/annotationsServic
 import { CalendarDays, Plus, Trash2, Tag } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { useAuth } from "@/src/contexts/AuthContext"
+import { cn } from "@/lib/utils"
 
 interface AnnotationsSettingsProps {
   currentSiteUrl: string;
@@ -73,11 +74,9 @@ export function AnnotationsSettings({
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger>
-        <Button variant="outline" size="sm" className="gap-2">
-          <Tag className="w-4 h-4" />
-          Annotations
-        </Button>
+      <DialogTrigger render={<Button variant="outline" size="sm" className="gap-2" />}>
+        <Tag className="w-4 h-4" />
+        Annotations
       </DialogTrigger>
       <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
         <DialogHeader>

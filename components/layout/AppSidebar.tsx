@@ -11,40 +11,34 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { BarChart3, Filter, LayoutDashboard, Settings, Sparkles, FolderKanban, Loader2 } from "lucide-react"
+import { BarChart3, Filter, LayoutDashboard, Settings, Sparkles, FolderKanban, Loader2, Bot, Target } from "lucide-react"
 import { getFilters, SavedFilter } from "@/src/services/dbService"
 import { useAuth } from "@/src/contexts/AuthContext"
 
 const items = [
   {
     title: "Dashboard",
-    url: "#",
     icon: LayoutDashboard,
-    isActive: true,
   },
   {
-    title: "GSC Analytics",
-    url: "#",
-    icon: BarChart3,
+    title: "Rank Tracker",
+    icon: Target,
+  },
+  {
+    title: "LLM Traffic",
+    icon: Bot,
   },
   {
     title: "AI Content Auditor",
-    url: "#",
     icon: Sparkles,
   },
   {
-    title: "Projects",
-    url: "#",
-    icon: FolderKanban,
-  },
-  {
     title: "Settings",
-    url: "#",
     icon: Settings,
   },
 ]
 
-export function AppSidebar({ selectedSite }: { selectedSite?: string }) {
+export function AppSidebar({ selectedSite, activeMenu = "Dashboard", onMenuSelect }: { selectedSite?: string, activeMenu?: string, onMenuSelect?: (menu: string) => void }) {
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([])
   const [loadingFilters, setLoadingFilters] = useState(false)
   const { user, userProfile } = useAuth()
@@ -84,7 +78,10 @@ export function AppSidebar({ selectedSite }: { selectedSite?: string }) {
             <SidebarMenu>
               {items.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton render={<a href={item.url} />} isActive={item.isActive}>
+                  <SidebarMenuButton 
+                    isActive={activeMenu === item.title}
+                    onClick={() => onMenuSelect && onMenuSelect(item.title)}
+                  >
                     <item.icon />
                     <span>{item.title}</span>
                   </SidebarMenuButton>

@@ -113,7 +113,7 @@ export function Overview({
         })
         if (!res.ok) throw new Error("Failed to fetch warehouse data")
         const json = await res.json()
-        return json.data.map((r: any) => ({
+        return json.map((r: any) => ({
           keys: [r.date],
           clicks: r.clicks,
           impressions: r.impressions,

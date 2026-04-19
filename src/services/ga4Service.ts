@@ -70,7 +70,7 @@ export class Ga4ApiService {
     endDate: string,
     dimensions: string[] = ['date'],
     metrics: string[] = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate'],
-    dimensionFilter?: { filterDimension: string, filterValue: string }
+    dimensionFilter?: any
   ) {
     const body: any = {
       dateRanges: [{ startDate, endDate }],
@@ -79,15 +79,19 @@ export class Ga4ApiService {
     };
 
     if (dimensionFilter) {
-      body.dimensionFilter = {
-        filter: {
-          fieldName: dimensionFilter.filterDimension,
-          stringFilter: {
-            value: dimensionFilter.filterValue,
-            matchType: 'EXACT'
+      if (dimensionFilter.filter || dimensionFilter.andGroup || dimensionFilter.orGroup) {
+        body.dimensionFilter = dimensionFilter;
+      } else {
+        body.dimensionFilter = {
+          filter: {
+            fieldName: dimensionFilter.filterDimension,
+            stringFilter: {
+              value: dimensionFilter.filterValue,
+              matchType: 'EXACT'
+            }
           }
-        }
-      };
+        };
+      }
     }
 
     const data = await this.fetchApi(`https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`, {
