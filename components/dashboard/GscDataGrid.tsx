@@ -89,7 +89,7 @@ export function GscDataGrid({
     }
   }, [siteUrl, hideTrackerButton, dimension]);
 
-  const handleAddToTracker = async (keyword: string) => {
+  const handleAddToTracker = async (keyword: string, initialPosition: number) => {
     try {
        setAddingKeywords(prev => new Set(prev).add(keyword))
        // Target Domain logic from RankTrackerView
@@ -103,48 +103,14 @@ export function GscDataGrid({
           keywords: [keyword],
           location: 'US', // default
           device: 'desktop', // default
-          targetDomain: defaultDomain
+          targetDomain: defaultDomain,
+          initialPositions: {
+            [keyword]: initialPosition
+          }
         })
       })
       if (res.ok) {
         setAddedKeywords(prev => new Set(prev).add(keyword))
-        
-        // Grab live hints from GSC for immediate sync
-        try {
-          const gscService = new GscApiService(accessToken, userProfile?.tier || 'free');
-          const endDate = format(new Date(), 'yyyy-MM-dd');
-          const startDate = format(subDays(new Date(), 2), 'yyyy-MM-dd'); // just last 2 days for quick check
-          
-          let gscHints = undefined;
-          try {
-            const liveData = await gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['query', 'device', 'country']);
-            if (liveData && liveData.length > 0) {
-              gscHints = liveData.reduce((acc: any, row: any) => {
-                const q = row.keys[0].toLowerCase().trim();
-                const d = row.keys[1].toLowerCase();
-                const c = row.keys[2].toLowerCase();
-                const compositeKey = `${q}|${d}|${c}`;
-                acc[compositeKey] = {
-                  position: Math.round(row.position),
-                  url: null
-                };
-                if (!acc[q]) acc[q] = { position: Math.round(row.position), url: null };
-                return acc;
-              }, {});
-            }
-          } catch(e) {
-            console.warn("Could not fetch live hints during stealth sync", e)
-          }
-
-          // Automatically sync quietly in background with hints
-          await fetch(`/api/rank-tracking/sync`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ siteUrl: siteUrl, force: true, gscHints })
-          });
-        } catch (e) {
-          console.error("Silent add sync fail:", e);
-        }
       }
     } catch (e) {
       console.error("Failed to add keyword to rank tracker:", e);
@@ -236,9 +202,10 @@ export function GscDataGrid({
           setData(mergedData)
         })
         .catch(err => {
-          if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
+          if (err.message === 'UNAUTHORIZED' || err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
             console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
             clearAccessToken()
+            setError("Your Google session has expired. Please click 'Reconnect Google' at the top to restore live data.")
           } else if (err.message.includes("sufficient permission")) {
             setError("You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.")
           } else {
@@ -440,7 +407,7 @@ export function GscDataGrid({
       )}
       {selectedRowKey && (
         <Card className="border shadow-sm">
-          <div className="p-4 border-b bg-muted/20 flex justify-between items-center">
+          <div className="p-4 border-b bg-muted/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
               <h3 className="font-semibold text-lg">Historic Trend</h3>
               <p className="text-sm text-muted-foreground">
@@ -466,9 +433,9 @@ export function GscDataGrid({
 
       <Card className="mt-6">
         <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle>{getTitleWithCount()}</CardTitle>
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <CardTitle className="leading-tight">{getTitleWithCount()}</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
             <Dialog open={isAiDialogOpen} onOpenChange={(open) => {
               setIsAiDialogOpen(open)
               if (open && !aiInsights) {
@@ -570,8 +537,8 @@ export function GscDataGrid({
       </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-4 mb-6">
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+            <div className="relative w-full sm:flex-1">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder={getSearchPlaceholder()}
@@ -580,24 +547,25 @@ export function GscDataGrid({
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            {dimension === 'query' && (
-              <Select value={intentFilter} onValueChange={setIntentFilter}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Intent" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Intents</SelectItem>
-                  <SelectItem value="commercial">Commercial</SelectItem>
-                  <SelectItem value="informational">Informational</SelectItem>
-                  <SelectItem value="navigational">Navigational</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
-            <Dialog open={isAdvancedFiltersOpen} onOpenChange={setIsAdvancedFiltersOpen}>
-              <DialogTrigger render={<Button variant="secondary" />}>
-                <Filter className="w-4 h-4 mr-2" />
-                Advanced Filters
-              </DialogTrigger>
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              {dimension === 'query' && (
+                <Select value={intentFilter} onValueChange={setIntentFilter}>
+                  <SelectTrigger className="w-[140px] sm:w-[180px]">
+                    <SelectValue placeholder="Intent" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Intents</SelectItem>
+                    <SelectItem value="commercial">Commercial</SelectItem>
+                    <SelectItem value="informational">Informational</SelectItem>
+                    <SelectItem value="navigational">Navigational</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+              <Dialog open={isAdvancedFiltersOpen} onOpenChange={setIsAdvancedFiltersOpen}>
+                <DialogTrigger render={<Button variant="secondary" className="shrink-0" />}>
+                  <Filter className="w-4 h-4 mr-2" />
+                  Advanced Filters
+                </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Advanced Filters</DialogTitle>
@@ -664,6 +632,7 @@ export function GscDataGrid({
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+            </div>
           </div>
           
           {/* Active Filters Bar */}
@@ -725,7 +694,7 @@ export function GscDataGrid({
           )}
         </div>
 
-        <div className="rounded-md border">
+        <div className="rounded-md border overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -821,7 +790,7 @@ export function GscDataGrid({
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (!addedKeywords.has(key) && !addingKeywords.has(key)) {
-                                    handleAddToTracker(key);
+                                    handleAddToTracker(key, row.position);
                                   }
                                 }}
                               >

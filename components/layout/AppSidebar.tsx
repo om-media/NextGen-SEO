@@ -11,7 +11,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { BarChart3, Filter, LayoutDashboard, Settings, Sparkles, FolderKanban, Loader2, Bot, Target } from "lucide-react"
+import { BarChart3, Filter, LayoutDashboard, Settings, Sparkles, FolderKanban, Loader2, Bot, Target, Server, FileSearch } from "lucide-react"
 import { getFilters, SavedFilter } from "@/src/services/dbService"
 import { useAuth } from "@/src/contexts/AuthContext"
 
@@ -23,6 +23,14 @@ const items = [
   {
     title: "Rank Tracker",
     icon: Target,
+  },
+  {
+    title: "Server Logs",
+    icon: Server,
+  },
+  {
+    title: "Page Indexing",
+    icon: FileSearch, // Use an appropriate icon if you want later, e.g. BookOpen
   },
   {
     title: "LLM Traffic",

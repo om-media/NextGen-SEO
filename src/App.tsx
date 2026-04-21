@@ -9,6 +9,8 @@ import { Ga4LlmTraffic } from "@/components/dashboard/Ga4LlmTraffic"
 import { Ga4Demographics } from "@/components/dashboard/Ga4Demographics"
 import { BingDataGrid } from "@/components/dashboard/BingDataGrid"
 import { WarehouseSync } from "@/components/dashboard/WarehouseSync"
+import { LogAnalyzerView } from "@/components/dashboard/LogAnalyzerView"
+import { PageIndexingView } from "@/components/dashboard/PageIndexingView"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -33,8 +35,10 @@ import { Ga4ApiService } from "./services/ga4Service"
 import { Input } from "@/components/ui/input"
 import { AnnotationsService, Annotation } from "./services/annotationsService"
 import { AnnotationsSettings } from "@/components/dashboard/AnnotationsSettings"
+import { GlobalSyncPoller } from "./components/dashboard/GlobalSyncPoller"
 
 import { RankTrackerView } from "./components/dashboard/RankTrackerView"
+import { Toaster } from "@/components/ui/sonner"
 
 function MainApp() {
   const { user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setTier, setBingApiKey } = useAuth()
@@ -61,6 +65,8 @@ function MainApp() {
     setActiveMenu(menu)
     if (menu === "LLM Traffic") {
       setDataSource('ga4')
+    } else if (menu === "Rank Tracker" || menu === "Server Logs" || menu === "Page Indexing") {
+      setDataSource('gsc')
     }
   }
 
@@ -82,8 +88,17 @@ function MainApp() {
   const findMatchingSite = (targetUrl: string, availableSites: any[]) => {
     if (!targetUrl) return null;
     const cleanUrl = (url: string) => url?.replace(/^(https?:\/\/|sc-domain:)/, '').replace(/\/$/, '').toLowerCase() || '';
-    const targetClean = cleanUrl(targetUrl);
     
+    let targetClean = cleanUrl(targetUrl);
+    
+    // Reverse-lookup if switching FROM GA4 to GSC to preserve selection
+    if (targetUrl.startsWith('properties/')) {
+        const ga4Match = ga4Sites.find(s => s.siteUrl === targetUrl);
+        if (ga4Match && ga4Match.displayName) {
+            targetClean = cleanUrl(ga4Match.displayName);
+        }
+    }
+
     const exactMatch = availableSites.find(s => s.siteUrl === targetUrl);
     if (exactMatch) return exactMatch;
 
@@ -93,9 +108,13 @@ function MainApp() {
       
       // For GA4, siteUrl is 'properties/123', so we check displayName
       if (s.displayName) {
-        const displayClean = s.displayName.toLowerCase();
-        if (displayClean.includes(targetClean)) return true;
+        const displayClean = cleanUrl(s.displayName);
+        if (displayClean.includes(targetClean) || targetClean.includes(displayClean)) return true;
       }
+      
+      // Check if GSC matches GA4 displayName
+      if (siteClean.includes(targetClean) || targetClean.includes(siteClean)) return true;
+      
       return false;
     });
     return fuzzyMatch || null;
@@ -344,17 +363,18 @@ function MainApp() {
 
   return (
     <SidebarProvider>
+      <GlobalSyncPoller siteUrl={selectedSite} />
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />
-        <div className="flex-1 flex flex-col">
-          <header className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b bg-background px-4 sm:px-6">
+        <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
+          <header className="sticky top-0 z-10 flex min-h-14 flex-wrap items-center gap-4 border-b bg-background px-4 py-2 sm:px-6">
             <SidebarTrigger />
-            <div className="flex-1 flex items-center gap-4">
-              <h1 className="text-lg font-semibold hidden sm:block">{activeMenu}</h1>
+            <div className="flex flex-1 items-center gap-4 min-w-0 overflow-x-auto pb-1 sm:pb-0 hide-scrollbars">
+              <h1 className="text-lg font-semibold hidden sm:block whitespace-nowrap">{activeMenu}</h1>
               
               {/* Only show source toggles if we are on Dashboard */}
               {activeMenu === "Dashboard" && (
-                <div className="flex items-center gap-2 border rounded-md p-1 bg-muted/30">
+                <div className="flex items-center gap-1 sm:gap-2 border rounded-md p-1 bg-muted/30 whitespace-nowrap shrink-0">
                   <Button 
                     variant={dataSource === 'gsc' ? 'secondary' : 'ghost'} 
                     size="sm" 
@@ -422,7 +442,7 @@ function MainApp() {
               )}
               {(dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : ga4Sites).length > 0 && (
                 <Select value={selectedSite} onValueChange={handleSiteSelect}>
-                  <SelectTrigger className="w-[250px] h-8 bg-muted/50 border-none">
+                  <SelectTrigger className="w-[180px] sm:w-[250px] shrink-0 h-8 bg-muted/50 border-none">
                     <SelectValue placeholder="Select a property" />
                   </SelectTrigger>
                   <SelectContent>
@@ -517,8 +537,8 @@ function MainApp() {
                     Here's an overview of your search performance.
                   </p>
                 </div>
-                <div className="flex flex-col items-end gap-2">
-                  <div className="flex items-center gap-4">
+                <div className="flex flex-col items-start sm:items-end gap-2 w-full mt-4 sm:mt-0 sm:w-auto">
+                  <div className="flex flex-wrap items-center gap-3 w-full sm:justify-end">
                     <AnnotationsSettings 
                       currentSiteUrl={selectedSite} 
                       annotations={annotations} 
@@ -529,17 +549,17 @@ function MainApp() {
                       setShowUserAnnotations={setShowUserAnnotations}
                     />
                     {dataSource === 'gsc' && (
-                      <>
+                      <div className="flex items-center gap-3">
                         <WarehouseSync siteUrl={selectedSite} />
-                        <div className="flex items-center space-x-2 mr-2">
+                        <div className="flex items-center space-x-2">
                           <Switch 
                             id="warehouse-mode" 
                             checked={useLiveData}
                             onCheckedChange={setUseLiveData}
                           />
-                          <Label htmlFor="warehouse-mode" className="text-sm font-medium cursor-pointer">Live Data</Label>
+                          <Label htmlFor="warehouse-mode" className="text-sm font-medium cursor-pointer whitespace-nowrap">Live Data</Label>
                         </div>
-                      </>
+                      </div>
                     )}
                     <div className="flex items-center space-x-2">
                       <Switch 
@@ -549,17 +569,17 @@ function MainApp() {
                       />
                       <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">Compare</Label>
                     </div>
-                    <div className="flex items-center gap-2 bg-card border rounded-md p-1">
+                    <div className="flex flex-wrap items-center gap-1 sm:gap-2 bg-card border rounded-md p-1">
                       <DatePicker date={dateRange.from} setDate={handleFromDateChange} label="From" />
-                      <span className="text-muted-foreground text-sm font-medium px-2">to</span>
+                      <span className="text-muted-foreground text-sm font-medium px-1 sm:px-2">to</span>
                       <DatePicker date={dateRange.to} setDate={handleToDateChange} label="To" />
                     </div>
                   </div>
                   {isCompareMode && (
-                    <div className="flex items-center gap-2 bg-muted/30 border border-dashed rounded-md p-1">
-                      <span className="text-muted-foreground text-sm font-medium px-2">vs</span>
+                    <div className="flex flex-wrap items-center gap-1 sm:gap-2 bg-muted/30 border border-dashed rounded-md p-1 self-start sm:self-end">
+                      <span className="text-muted-foreground text-sm font-medium px-1 sm:px-2">vs</span>
                       <DatePicker date={compareDateRange.from} setDate={handleCompareFromDateChange} label="Compare From" />
-                      <span className="text-muted-foreground text-sm font-medium px-2">to</span>
+                      <span className="text-muted-foreground text-sm font-medium px-1 sm:px-2">to</span>
                       <DatePicker date={compareDateRange.to} setDate={handleCompareToDateChange} label="Compare To" />
                     </div>
                   )}
@@ -750,6 +770,18 @@ function MainApp() {
                       <RankTrackerView siteUrl={selectedSite} />
                     </div>
                   )}
+
+                  {selectedSite && !apiError && activeMenu === 'Server Logs' && (
+                    <div className="space-y-4">
+                      <LogAnalyzerView siteUrl={selectedSite} dateRange={dateRange} />
+                    </div>
+                  )}
+
+                  {selectedSite && !apiError && activeMenu === 'Page Indexing' && (
+                    <div className="space-y-4">
+                      <PageIndexingView siteUrl={selectedSite} dateRange={dateRange} isLive={useLiveData} />
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -831,6 +863,7 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <MainApp />
+        <Toaster />
       </AuthProvider>
     </ErrorBoundary>
   )

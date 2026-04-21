@@ -402,32 +402,32 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
   return (
     <div className="space-y-4">
       {/* Scorecards */}
-      <div className="flex flex-col sm:flex-row rounded-lg border bg-white shadow-sm overflow-hidden">
+      <div className="grid grid-cols-2 md:flex rounded-lg border bg-white shadow-sm overflow-hidden">
         
         {/* Sessions Card */}
         <div 
           onClick={() => toggleMetric('sessions')}
           className={cn(
-            "cursor-pointer flex-1 p-4 border-b sm:border-b-0 sm:border-r transition-colors",
+            "cursor-pointer flex-1 p-3 sm:p-4 border-b md:border-b-0 border-r transition-colors",
             activeMetrics.sessions ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.sessions ? colors.sessions : undefined }}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
               activeMetrics.sessions ? "border-white bg-transparent" : "border-gray-400"
             )}>
               {activeMetrics.sessions && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
             </div>
-            <span className={cn("text-sm font-medium", activeMetrics.sessions ? "text-white" : "text-gray-600")}>Total sessions</span>
+            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.sessions ? "text-white" : "text-gray-600")}>Total sessions</span>
           </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.sessions ? "text-white" : "text-gray-900")}>
+          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.sessions ? "text-white" : "text-gray-900")}>
             {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.sessions)}
           </div>
           {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.sessions ? "text-white/80" : "text-muted-foreground")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
+              <span className={cn("text-[10px] sm:text-xs", activeMetrics.sessions ? "text-white/80" : "text-muted-foreground")}>
                 vs {formatCompactNumber(compareSummary.sessions)}
               </span>
               {renderChange(summary.sessions, compareSummary.sessions)}
@@ -439,26 +439,26 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('users')}
           className={cn(
-            "cursor-pointer flex-1 p-4 border-b sm:border-b-0 sm:border-r transition-colors",
+            "cursor-pointer flex-1 p-3 sm:p-4 border-b md:border-b-0 md:border-r transition-colors",
             activeMetrics.users ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.users ? colors.users : undefined }}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
               activeMetrics.users ? "border-white bg-transparent" : "border-gray-400"
             )}>
               {activeMetrics.users && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
             </div>
-            <span className={cn("text-sm font-medium", activeMetrics.users ? "text-white" : "text-gray-600")}>Total users</span>
+            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.users ? "text-white" : "text-gray-600")}>Total users</span>
           </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.users ? "text-white" : "text-gray-900")}>
+          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.users ? "text-white" : "text-gray-900")}>
             {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.users)}
           </div>
           {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.users ? "text-white/80" : "text-muted-foreground")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
+              <span className={cn("text-[10px] sm:text-xs", activeMetrics.users ? "text-white/80" : "text-muted-foreground")}>
                 vs {formatCompactNumber(compareSummary.users)}
               </span>
               {renderChange(summary.users, compareSummary.users)}
@@ -470,26 +470,26 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('pageViews')}
           className={cn(
-            "cursor-pointer flex-1 p-4 border-b sm:border-b-0 sm:border-r transition-colors",
+            "cursor-pointer flex-1 p-3 sm:p-4 border-b md:border-b-0 border-r transition-colors",
             activeMetrics.pageViews ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.pageViews ? colors.pageViews : undefined }}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
               activeMetrics.pageViews ? "border-white bg-transparent" : "border-gray-400"
             )}>
               {activeMetrics.pageViews && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
             </div>
-            <span className={cn("text-sm font-medium", activeMetrics.pageViews ? "text-white" : "text-gray-600")}>Page Views</span>
+            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.pageViews ? "text-white" : "text-gray-600")}>Page Views</span>
           </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.pageViews ? "text-white" : "text-gray-900")}>
+          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.pageViews ? "text-white" : "text-gray-900")}>
             {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.pageViews)}
           </div>
           {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.pageViews ? "text-white/80" : "text-muted-foreground")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
+              <span className={cn("text-[10px] sm:text-xs", activeMetrics.pageViews ? "text-white/80" : "text-muted-foreground")}>
                 vs {formatCompactNumber(compareSummary.pageViews)}
               </span>
               {renderChange(summary.pageViews, compareSummary.pageViews)}
@@ -501,26 +501,26 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('bounceRate')}
           className={cn(
-            "cursor-pointer flex-1 p-4 border-b sm:border-b-0 sm:border-r transition-colors",
-            activeMetrics.bounceRate ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
+            "cursor-pointer flex-1 p-3 sm:p-4 border-b md:border-b-0 md:border-r transition-colors",
+             activeMetrics.bounceRate ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.bounceRate ? colors.bounceRate : undefined }}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
               activeMetrics.bounceRate ? "border-white bg-transparent" : "border-gray-400"
             )}>
               {activeMetrics.bounceRate && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
             </div>
-            <span className={cn("text-sm font-medium", activeMetrics.bounceRate ? "text-white" : "text-gray-600")}>Bounce Rate</span>
+            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.bounceRate ? "text-white" : "text-gray-600")}>Bounce Rate</span>
           </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.bounceRate ? "text-white" : "text-gray-900")}>
+          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.bounceRate ? "text-white" : "text-gray-900")}>
             {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : `${summary.count > 0 ? ((summary.bounceRateTotal / summary.count) * 100).toFixed(2) : 0}%`}
           </div>
           {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.bounceRate ? "text-white/80" : "text-muted-foreground")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
+              <span className={cn("text-[10px] sm:text-xs", activeMetrics.bounceRate ? "text-white/80" : "text-muted-foreground")}>
                 vs {compareSummary.count > 0 ? ((compareSummary.bounceRateTotal / compareSummary.count) * 100).toFixed(2) : 0}%
               </span>
               {renderChange(summary.count > 0 ? (summary.bounceRateTotal / summary.count) * 100 : 0, compareSummary.count > 0 ? (compareSummary.bounceRateTotal / compareSummary.count) * 100 : 0, true)}
@@ -532,7 +532,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('eventCount')}
           className={cn(
-            "cursor-pointer flex-1 p-4 transition-colors",
+            "cursor-pointer flex-1 p-3 sm:p-4 col-span-2 md:col-span-1 transition-colors",
             activeMetrics.eventCount ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.eventCount ? colors.eventCount : undefined }}

@@ -149,9 +149,10 @@ export function Overview({
           }
         })
         .catch(err => {
-          if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
+          if (err.message === 'UNAUTHORIZED' || err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
             console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
             clearAccessToken()
+            setError("Your Google session has expired. Please click 'Reconnect Google' at the top to restore live data.")
           } else if (err.message.includes("sufficient permission")) {
             setError("You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.")
           } else {
@@ -360,31 +361,31 @@ export function Overview({
         </div>
       )}
       {/* GSC Style Toggle Cards */}
-      <div className="flex flex-col sm:flex-row border rounded-lg overflow-hidden shadow-sm bg-white">
+      <div className="grid grid-cols-2 sm:flex border rounded-lg overflow-hidden shadow-sm bg-white">
         {/* Clicks Card */}
         <div 
           onClick={() => toggleMetric('clicks')}
           className={cn(
-            "cursor-pointer flex-1 p-4 border-b sm:border-b-0 sm:border-r transition-colors",
+            "cursor-pointer flex-1 p-3 sm:p-4 border-b sm:border-b-0 border-r transition-colors",
             activeMetrics.clicks ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.clicks ? colors.clicks : undefined }}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
               activeMetrics.clicks ? "border-white bg-transparent" : "border-gray-400"
             )}>
               {activeMetrics.clicks && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
             </div>
-            <span className={cn("text-sm font-medium", activeMetrics.clicks ? "text-white" : "text-gray-600")}>Total clicks</span>
+            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.clicks ? "text-white" : "text-gray-600")}>Total clicks</span>
           </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.clicks ? "text-white" : "text-gray-900")}>
+          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.clicks ? "text-white" : "text-gray-900")}>
             {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.clicks)}
           </div>
           {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.clicks ? "text-white/80" : "text-muted-foreground")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
+              <span className={cn("text-[10px] sm:text-xs", activeMetrics.clicks ? "text-white/80" : "text-muted-foreground")}>
                 vs {formatCompactNumber(compareSummary.clicks)}
               </span>
               {renderChange(summary.clicks, compareSummary.clicks)}
@@ -396,26 +397,26 @@ export function Overview({
         <div 
           onClick={() => toggleMetric('impressions')}
           className={cn(
-            "cursor-pointer flex-1 p-4 border-b sm:border-b-0 sm:border-r transition-colors",
+            "cursor-pointer flex-1 p-3 sm:p-4 border-b sm:border-b-0 sm:border-r transition-colors",
             activeMetrics.impressions ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.impressions ? colors.impressions : undefined }}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
               activeMetrics.impressions ? "border-white bg-transparent" : "border-gray-400"
             )}>
               {activeMetrics.impressions && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
             </div>
-            <span className={cn("text-sm font-medium", activeMetrics.impressions ? "text-white" : "text-gray-600")}>Total impressions</span>
+            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.impressions ? "text-white" : "text-gray-600")}>Total impressions</span>
           </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.impressions ? "text-white" : "text-gray-900")}>
+          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.impressions ? "text-white" : "text-gray-900")}>
             {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.impressions)}
           </div>
           {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.impressions ? "text-white/80" : "text-muted-foreground")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
+              <span className={cn("text-[10px] sm:text-xs", activeMetrics.impressions ? "text-white/80" : "text-muted-foreground")}>
                 vs {formatCompactNumber(compareSummary.impressions)}
               </span>
               {renderChange(summary.impressions, compareSummary.impressions)}
@@ -427,26 +428,26 @@ export function Overview({
         <div 
           onClick={() => toggleMetric('ctr')}
           className={cn(
-            "cursor-pointer flex-1 p-4 border-b sm:border-b-0 sm:border-r transition-colors",
+            "cursor-pointer flex-1 p-3 sm:p-4 border-r sm:border-r transition-colors",
             activeMetrics.ctr ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.ctr ? colors.ctr : undefined }}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
               activeMetrics.ctr ? "border-white bg-transparent" : "border-gray-400"
             )}>
               {activeMetrics.ctr && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
             </div>
-            <span className={cn("text-sm font-medium", activeMetrics.ctr ? "text-white" : "text-gray-600")}>Average CTR</span>
+            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.ctr ? "text-white" : "text-gray-600")}>Average CTR</span>
           </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.ctr ? "text-white" : "text-gray-900")}>
+          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.ctr ? "text-white" : "text-gray-900")}>
             {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : `${summary.ctr.toFixed(1)}%`}
           </div>
           {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.ctr ? "text-white/80" : "text-muted-foreground")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
+              <span className={cn("text-[10px] sm:text-xs", activeMetrics.ctr ? "text-white/80" : "text-muted-foreground")}>
                 vs {compareSummary.ctr.toFixed(1)}%
               </span>
               {renderChange(summary.ctr, compareSummary.ctr)}
@@ -458,26 +459,26 @@ export function Overview({
         <div 
           onClick={() => toggleMetric('position')}
           className={cn(
-            "cursor-pointer flex-1 p-4 transition-colors",
+            "cursor-pointer flex-1 p-3 sm:p-4 transition-colors",
             activeMetrics.position ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
           )}
           style={{ backgroundColor: activeMetrics.position ? colors.position : undefined }}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
+              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
               activeMetrics.position ? "border-white bg-transparent" : "border-gray-400"
             )}>
               {activeMetrics.position && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
             </div>
-            <span className={cn("text-sm font-medium", activeMetrics.position ? "text-white" : "text-gray-600")}>Average position</span>
+            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.position ? "text-white" : "text-gray-600")}>Average position</span>
           </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.position ? "text-white" : "text-gray-900")}>
+          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.position ? "text-white" : "text-gray-900")}>
             {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : summary.position.toFixed(1)}
           </div>
           {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.position ? "text-white/80" : "text-muted-foreground")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
+              <span className={cn("text-[10px] sm:text-xs", activeMetrics.position ? "text-white/80" : "text-muted-foreground")}>
                 vs {compareSummary.position.toFixed(1)}
               </span>
               {renderChange(summary.position, compareSummary.position, true)}

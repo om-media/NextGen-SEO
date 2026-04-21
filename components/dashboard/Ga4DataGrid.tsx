@@ -282,7 +282,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
     <div className="space-y-6">
       {selectedRowKey && dimension !== 'date' && (
         <Card className="border shadow-sm">
-          <div className="p-4 border-b bg-muted/20 flex justify-between items-center">
+          <div className="p-4 border-b bg-muted/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
               <h3 className="font-semibold text-lg">Historic Trend</h3>
               <p className="text-sm text-muted-foreground">
@@ -393,7 +393,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             <span>Updating data...</span>
           </div>
         )}
-        <div className="rounded-md border relative">
+        <div className="rounded-md border relative overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>

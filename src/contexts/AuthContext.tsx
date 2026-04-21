@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [accessToken, setAccessToken] = useState<string | null>(() => sessionStorage.getItem('gsc_access_token'));
+  const [accessToken, setAccessToken] = useState<string | null>(() => localStorage.getItem('gsc_access_token'));
   const [authError, setAuthError] = useState<Error | null>(null);
 
   if (authError) {
@@ -117,14 +117,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
           setAccessToken(credential.accessToken);
-          sessionStorage.setItem('gsc_access_token', credential.accessToken);
+          localStorage.setItem('gsc_access_token', credential.accessToken);
         }
       } else {
         const result = await signInWithPopup(auth, provider);
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
           setAccessToken(credential.accessToken);
-          sessionStorage.setItem('gsc_access_token', credential.accessToken);
+          localStorage.setItem('gsc_access_token', credential.accessToken);
         }
       }
     } catch (error: any) {
@@ -139,7 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
           setAccessToken(credential.accessToken);
-          sessionStorage.setItem('gsc_access_token', credential.accessToken);
+          localStorage.setItem('gsc_access_token', credential.accessToken);
         }
       }
     }
@@ -156,12 +156,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     await firebaseSignOut(auth);
     setAccessToken(null);
-    sessionStorage.removeItem('gsc_access_token');
+    localStorage.removeItem('gsc_access_token');
   };
 
   const clearAccessToken = () => {
     setAccessToken(null);
-    sessionStorage.removeItem('gsc_access_token');
+    localStorage.removeItem('gsc_access_token');
   };
 
   const unlockSite = async (siteUrl: string) => {

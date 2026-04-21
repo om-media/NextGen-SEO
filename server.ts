@@ -3,9 +3,63 @@ import { createServer as createViteServer } from 'vite';
 import Database from 'better-sqlite3';
 import path from 'path';
 import * as cheerio from 'cheerio';
+import multer from 'multer';
+import fs from 'fs';
+import readline from 'readline';
+import zlib from 'zlib';
+
+const upload = multer({ dest: 'uploads/' });
+
+// In-memory background job tracking
+export const syncJobs = new Map<string, { current: number, total: number, status: 'running' | 'completed' | 'error', message?: string }>();
+
+function getBotType(userAgent: string): string {
+  if (!userAgent) return 'Unknown';
+  const ua = userAgent.toLowerCase();
+  
+  if (ua.includes('googlebot')) return 'Googlebot';
+  if (ua.includes('bingbot')) return 'Bingbot';
+  if (ua.includes('applebot')) return 'Applebot';
+  if (ua.includes('ahrefsbot')) return 'AhrefsBot';
+  if (ua.includes('semrushbot')) return 'SemrushBot';
+  if (ua.includes('yandexbot')) return 'YandexBot';
+  if (ua.includes('baiduspider')) return 'Baiduspider';
+  if (ua.includes('facebookexternalhit')) return 'FacebookBot';
+  if (ua.includes('linkedinbot')) return 'LinkedInBot';
+  if (ua.includes('twitterbot')) return 'TwitterBot';
+  
+  // LLM Bots
+  if (ua.includes('chatgpt-user') || ua.includes('gptbot') || ua.includes('openai')) return 'ChatGPT / OpenAI';
+  if (ua.includes('anthropic-ai') || ua.includes('claudebot')) return 'Claude / Anthropic';
+  if (ua.includes('perplexitybot')) return 'Perplexity';
+  if (ua.includes('cohere-ai')) return 'Cohere';
+  if (ua.includes('omgili') || ua.includes('ccbot')) return 'Generic LLM / Scraper';
+
+  if (ua.includes('bot') || ua.includes('crawler') || ua.includes('spider')) return 'Generic Bot';
+  
+  return 'Human';
+}
+
+// Basic regex for Nginx combined log format
+const NGINX_LOG_REGEX = /^(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d{3})\s+(\d+|-)(?:\s+"([^"]*)")?(?:\s+"([^"]*)")?/;
+
+function parseLogDate(dateStr: string): string {
+  // Try to parse "14/Aug/2023:10:00:00 +0000" to ISO "2023-08-14T10:00:00.000Z"
+  try {
+    const parts = dateStr.split(/[/\s:]/);
+    if (parts.length >= 6) {
+      const [day, monthStr, year, hour, minute, second] = parts;
+      const monthMap: Record<string, string> = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06', Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
+      const month = monthMap[monthStr] || '01';
+      return `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`;
+    }
+  } catch (e) {
+    // fallback
+  }
+  return new Date().toISOString(); 
+}
 
 const db = new Database('sqlite.db');
-db.pragma('journal_mode = WAL');
 
 // Initialize tables
 db.exec(`
@@ -103,6 +157,30 @@ db.exec(`
     position INTEGER,
     rankingUrl TEXT,
     PRIMARY KEY (keywordId, date)
+  );
+
+  CREATE TABLE IF NOT EXISTS server_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    siteUrl TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    ipAddress TEXT,
+    httpMethod TEXT,
+    urlPath TEXT NOT NULL,
+    statusCode INTEGER,
+    userAgent TEXT,
+    botType TEXT,
+    createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_server_logs_site_time ON server_logs(siteUrl, timestamp);
+  CREATE INDEX IF NOT EXISTS idx_server_logs_botType ON server_logs(siteUrl, botType);
+
+  CREATE TABLE IF NOT EXISTS url_inspection_cache (
+    siteUrl TEXT NOT NULL,
+    url TEXT NOT NULL,
+    inspectionResult TEXT,
+    coverageState TEXT,
+    lastInspectionTime TEXT NOT NULL,
+    PRIMARY KEY (siteUrl, url)
   );
 `);
 
@@ -356,6 +434,203 @@ async function startServer() {
       db.prepare('DELETE FROM filters WHERE id = ?').run(req.params.id);
       res.json({ success: true });
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Server Logs APIs
+  app.post('/api/logs/upload', upload.single('logfile'), async (req, res) => {
+    try {
+      const siteUrl = req.body.siteUrl;
+      const file = req.file;
+      
+      if (!siteUrl || !file) {
+        return res.status(400).json({ error: 'Missing siteUrl or file' });
+      }
+
+      let readStream: NodeJS.ReadableStream = fs.createReadStream(file.path);
+      
+      // Support extracting .gz archives on the fly
+      if (file.originalname.toLowerCase().endsWith('.gz') || file.mimetype === 'application/gzip') {
+        readStream = readStream.pipe(zlib.createGunzip());
+      }
+
+      const rl = readline.createInterface({
+        input: readStream,
+        crlfDelay: Infinity
+      });
+
+      const stmt = db.prepare(`
+        INSERT INTO server_logs (siteUrl, timestamp, ipAddress, httpMethod, urlPath, statusCode, userAgent, botType)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      let count = 0;
+      
+      const insertMany = db.transaction((lines: string[]) => {
+        for (const line of lines) {
+          const match = line.match(NGINX_LOG_REGEX);
+          if (match) {
+            const ipAddress = match[1];
+            const dateStr = match[2];
+            const request = match[3] || '';
+            const statusCode = match[4];
+            const userAgent = match[7];
+            
+            const httpMethod = request.split(' ')[0] || '-';
+            const urlPath = request.split(' ')[1] || '-';
+
+            const timestamp = parseLogDate(dateStr);
+            const botType = getBotType(userAgent);
+            stmt.run(siteUrl, timestamp, ipAddress, httpMethod, urlPath, parseInt(statusCode, 10), userAgent || '', botType);
+            count++;
+          }
+        }
+      });
+
+      let currentBatch: string[] = [];
+      for await (const line of rl) {
+        currentBatch.push(line);
+        if (currentBatch.length >= 1000) {
+          insertMany(currentBatch);
+          currentBatch = [];
+        }
+      }
+      if (currentBatch.length > 0) {
+        insertMany(currentBatch);
+      }
+
+      // Cleanup temp file
+      fs.unlinkSync(file.path);
+
+      res.json({ success: true, count });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/logs/webhook', (req, res) => {
+    const { siteUrl, logs } = req.body;
+    if (!siteUrl || !logs || !Array.isArray(logs)) return res.status(400).json({ error: 'Invalid payload' });
+    
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO server_logs (siteUrl, timestamp, ipAddress, httpMethod, urlPath, statusCode, userAgent, botType)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      
+      let count = 0;
+      const insertManyWebhook = db.transaction((lines: string[]) => {
+        for (const line of lines) {
+          const match = line.match(NGINX_LOG_REGEX);
+          if (match) {
+            const ipAddress = match[1];
+            const dateStr = match[2];
+            const request = match[3] || '';
+            const statusCode = match[4];
+            const userAgent = match[7];
+            
+            const httpMethod = request.split(' ')[0] || '-';
+            const urlPath = request.split(' ')[1] || '-';
+
+            const timestamp = parseLogDate(dateStr);
+            const botType = getBotType(userAgent);
+            stmt.run(siteUrl, timestamp, ipAddress, httpMethod, urlPath, parseInt(statusCode, 10), userAgent || '', botType);
+            count++;
+          }
+        }
+      });
+      
+      insertManyWebhook(logs);
+      
+      res.json({ success: true, count });
+    } catch(err: any) {
+        res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/logs/stats', (req, res) => {
+    const { siteUrl, startDate, endDate } = req.query;
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    
+    try {
+      const stats = db.prepare(`
+        SELECT 
+          substr(timestamp, 1, 10) as date,
+          botType,
+          COUNT(*) as hits
+        FROM server_logs
+        WHERE siteUrl = ? AND timestamp >= ? AND timestamp <= ?
+        GROUP BY substr(timestamp, 1, 10), botType
+        ORDER BY date ASC
+      `).all(siteUrl, startDate ? String(startDate) + 'T00:00:00' : '2000-01-01', endDate ? String(endDate) + 'T23:59:59' : '2099-12-31');
+      res.json(stats);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/logs/errors', (req, res) => {
+    const { siteUrl, startDate, endDate } = req.query;
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    
+    try {
+      const errors = db.prepare(`
+        SELECT urlPath, statusCode, botType, COUNT(*) as count
+        FROM server_logs
+        WHERE siteUrl = ? AND timestamp >= ? AND timestamp <= ? AND statusCode >= 400
+        GROUP BY urlPath, statusCode, botType
+        ORDER BY count DESC
+        LIMIT 100
+      `).all(siteUrl, startDate ? String(startDate) + 'T00:00:00' : '2000-01-01', endDate ? String(endDate) + 'T23:59:59' : '2099-12-31');
+      res.json(errors);
+    } catch(err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/logs/insights', (req, res) => {
+    const { siteUrl, startDate, endDate } = req.query;
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    
+    const start = startDate ? String(startDate) + 'T00:00:00' : '2000-01-01';
+    const end = endDate ? String(endDate) + 'T23:59:59' : '2099-12-31';
+
+    try {
+      // 1. Most crawled pages by Googlebot / Bingbot (excluding assets if possible, or just raw)
+      const mostCrawled = db.prepare(`
+        SELECT urlPath, count(*) as count, botType
+        FROM server_logs
+        WHERE siteUrl = ? AND timestamp >= ? AND timestamp <= ? 
+          AND botType IN ('Googlebot', 'Bingbot')
+        GROUP BY urlPath, botType
+        ORDER BY count DESC
+        LIMIT 50
+      `).all(siteUrl, start, end);
+
+      // 2. LLM / AI Bot Traffic
+      const llmTraffic = db.prepare(`
+        SELECT botType, urlPath, count(*) as count
+        FROM server_logs
+        WHERE siteUrl = ? AND timestamp >= ? AND timestamp <= ? 
+          AND botType IN ('ChatGPT / OpenAI', 'Claude / Anthropic', 'Perplexity', 'Cohere', 'Generic LLM / Scraper')
+        GROUP BY botType, urlPath
+        ORDER BY count DESC
+        LIMIT 50
+      `).all(siteUrl, start, end);
+
+      // 3. Efficiency (Status codes for Googlebot)
+      const efficiency = db.prepare(`
+        SELECT statusCode, count(*) as count
+        FROM server_logs
+        WHERE siteUrl = ? AND timestamp >= ? AND timestamp <= ? 
+          AND botType = 'Googlebot'
+        GROUP BY statusCode
+      `).all(siteUrl, start, end);
+
+      res.json({ mostCrawled, llmTraffic, efficiency });
+    } catch(err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -631,7 +906,7 @@ async function startServer() {
   });
 
   app.post('/api/rank-tracking/keywords', (req, res) => {
-    const { siteUrl, keywords, location, device, tags, targetDomain } = req.body;
+    const { siteUrl, keywords, location, device, tags, targetDomain, initialPositions } = req.body;
     if (!siteUrl || !keywords || !Array.isArray(keywords)) return res.status(400).json({ error: 'Invalid payload' });
     
     try {
@@ -640,10 +915,25 @@ async function startServer() {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
       
+      const rankStmt = db.prepare(`
+        INSERT OR REPLACE INTO keyword_rankings (keywordId, date, position, rankingUrl)
+        VALUES (?, ?, ?, ?)
+      `);
+      
+      const today = new Date().toISOString().split('T')[0];
+      
       const insertMany = db.transaction((kws) => {
         for (const kw of kws) {
           const id = Math.random().toString(36).substring(2, 15);
-          stmt.run(id, siteUrl, kw.trim(), location || 'US', device || 'desktop', tags || '', targetDomain || '', new Date().toISOString());
+          const kStr = kw.trim();
+          stmt.run(id, siteUrl, kStr, location || 'US', device || 'desktop', tags || '', targetDomain || '', new Date().toISOString());
+          
+          if (initialPositions !== undefined && initialPositions[kStr] !== undefined) {
+             console.log("Setting initial position for", kStr, initialPositions[kStr]);
+             rankStmt.run(id, today, Math.round(initialPositions[kStr]), null);
+          } else {
+             console.log("No initial position for", kStr, initialPositions);
+          }
         }
       });
       
@@ -823,6 +1113,302 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // --- NEW: Indexing Endpoints ---
+  app.get('/api/indexing/grid', async (req, res) => {
+    const { siteUrl, startDate, endDate, isLive } = req.query;
+    const authHeader = req.headers.authorization;
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    try {
+      let gscPages: any[] = [];
+      const start = startDate ? String(startDate) : '2000-01-01';
+      const end = endDate ? String(endDate) : '2099-12-31';
+
+      if (isLive === 'true' && authHeader) {
+        const token = authHeader.split(' ')[1];
+        try {
+          const gscRes = await fetch(`https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl as string)}/searchAnalytics/query`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              startDate: start,
+              endDate: end,
+              dimensions: ['page'],
+              rowLimit: 5000
+            })
+          });
+          const json = await gscRes.json();
+          if (json.rows) {
+             gscPages = json.rows.map((r: any) => ({
+                 url: r.keys[0],
+                 clicks: r.clicks,
+                 impressions: r.impressions
+             }));
+          }
+        } catch (e) {
+          console.error("GSC Live Fetch Error in Indexing:", e);
+        }
+      } else {
+         gscPages = db.prepare('SELECT page as url, SUM(clicks) as clicks, SUM(impressions) as impressions FROM gsc_page_query_metrics WHERE siteUrl = ? AND date >= ? AND date <= ? GROUP BY page').all(siteUrl, start, end) as any[];
+      }
+
+      const logs = db.prepare(`
+        SELECT urlPath, MAX(timestamp) as lastCrawl 
+        FROM server_logs 
+        WHERE siteUrl = ? 
+          AND botType = 'Googlebot'
+          AND urlPath NOT LIKE '%/.%'
+          AND urlPath NOT LIKE '%.php'
+          AND urlPath NOT LIKE '%.env%'
+          AND urlPath NOT LIKE '%.bak'
+        GROUP BY urlPath
+      `).all(siteUrl) as any[];
+      const inspections = db.prepare('SELECT url, inspectionResult, coverageState, lastInspectionTime FROM url_inspection_cache WHERE siteUrl = ?').all(siteUrl) as any[];
+
+      const urlMap = new Map<string, any>();
+      
+      // Clean siteUrl for absolute URL reconstruction if needed
+      const baseHost = (siteUrl as string).replace(/\/$/, '');
+      const isHttp = baseHost.startsWith('http');
+
+      for (const p of gscPages) {
+        if (p.url.includes('#')) continue;
+        if (p.url.match(/\.(jpg|jpeg|png|gif|svg|webp|pdf|css|js|txt)$/i)) continue;
+        
+        let cleanedUrl = p.url;
+        try {
+           const parsed = new URL(p.url);
+           // Strip parameters to prevent treating www.domain.com/ and www.domain.com/?ref=x as two different indexed pages
+           cleanedUrl = parsed.origin + parsed.pathname;
+        } catch(e) {}
+        
+        // Ensure trailing slash standardization so /blog and /blog/ don't duplicate
+        if (!cleanedUrl.endsWith('/')) {
+           cleanedUrl += '/';
+        }
+        
+        // If we already have the cleaned URL, sum the clicks/impressions rather than making a new entry
+        if (urlMap.has(cleanedUrl)) {
+            const existing = urlMap.get(cleanedUrl);
+            existing.clicks += p.clicks;
+            existing.impressions += p.impressions;
+            urlMap.set(cleanedUrl, existing);
+        } else {
+            urlMap.set(cleanedUrl, { url: cleanedUrl, clicks: p.clicks, impressions: p.impressions, lastCrawl: null, inspectionResult: null, coverageState: null, lastInspectionTime: null });
+        }
+      }
+
+      for (const l of logs) {
+        // Reconstruct full URL if possible so it matches GSC
+        let fullUrl = l.urlPath;
+        if (fullUrl.includes('#') || fullUrl.match(/\.(jpg|jpeg|png|gif|svg|webp|pdf|css|js|txt)$/i)) continue;
+
+        if (isHttp && fullUrl.startsWith('/')) {
+           fullUrl = `${baseHost}${fullUrl}`;
+        } else if (!isHttp && !fullUrl.startsWith('http')) {
+           fullUrl = `https://${baseHost.replace('sc-domain:', '')}${fullUrl.startsWith('/') ? '' : '/'}${fullUrl}`;
+        }
+        
+        try {
+            const parsedLogUrl = new URL(fullUrl);
+            fullUrl = parsedLogUrl.origin + parsedLogUrl.pathname;
+        } catch(e) {}
+        
+        if (!fullUrl.endsWith('/')) {
+           fullUrl += '/';
+        }
+        
+        let cleanDate = l.lastCrawl;
+        if (typeof cleanDate === 'string' && cleanDate.includes('/')) {
+           cleanDate = cleanDate.replace(':', ' ').replace(/\//g, ' ');
+           cleanDate = new Date(cleanDate).toISOString();
+        }
+        
+        if (urlMap.has(fullUrl)) {
+           urlMap.get(fullUrl)!.lastCrawl = cleanDate;
+        } else {
+           urlMap.set(fullUrl, { url: fullUrl, clicks: 0, impressions: 0, lastCrawl: cleanDate, inspectionResult: null, coverageState: null, lastInspectionTime: null });
+        }
+      }
+
+      for (const i of inspections) {
+        let cleanUrl = i.url;
+        try {
+            const parsedInsp = new URL(i.url);
+            cleanUrl = parsedInsp.origin + parsedInsp.pathname;
+        } catch(e) {}
+        
+        if (!cleanUrl.endsWith('/')) {
+           cleanUrl += '/';
+        }
+        
+        if (urlMap.has(cleanUrl)) {
+           const existing = urlMap.get(cleanUrl)!;
+           existing.inspectionResult = i.inspectionResult ? JSON.parse(i.inspectionResult) : null;
+           existing.coverageState = i.coverageState;
+           existing.lastInspectionTime = i.lastInspectionTime;
+        } else {
+           urlMap.set(cleanUrl, { url: cleanUrl, clicks: 0, impressions: 0, lastCrawl: null, inspectionResult: i.inspectionResult ? JSON.parse(i.inspectionResult) : null, coverageState: i.coverageState, lastInspectionTime: i.lastInspectionTime });
+        }
+      }
+
+      res.json(Array.from(urlMap.values()));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/indexing/seed-urls', (req, res) => {
+    const { siteUrl, urls } = req.body;
+    if (!siteUrl || !urls || !Array.isArray(urls)) return res.status(400).json({ error: 'Invalid payload' });
+
+    try {
+      let added = 0;
+      const insert = db.prepare('INSERT OR IGNORE INTO url_inspection_cache (siteUrl, url) VALUES (?, ?)');
+      
+      db.transaction(() => {
+        for (let u of urls) {
+           if (typeof u !== 'string' || !u.startsWith('http')) continue;
+           
+           try {
+              const parsed = new URL(u);
+              u = parsed.origin + parsed.pathname;
+           } catch(e) {}
+           
+           if (!u.endsWith('/')) u += '/';
+           
+           const result = insert.run(siteUrl, u);
+           if (result.changes > 0) added++;
+        }
+      })();
+      
+      res.json({ success: true, added });
+    } catch(err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/indexing/inspect', async (req, res) => {
+    const { siteUrl, inspectionUrl, accessToken } = req.body;
+    if (!siteUrl || !inspectionUrl || !accessToken) return res.status(400).json({ error: 'Missing required fields' });
+    
+    try {
+      const response = await fetch('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect', {
+         method: 'POST',
+         headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+         },
+         body: JSON.stringify({ inspectionUrl, siteUrl, languageCode: 'en-US' })
+      });
+      
+      const data = await response.json();
+      if (!response.ok) {
+         return res.status(response.status).json(data);
+      }
+      
+      // Save to cache
+      const coverageState = data?.inspectionResult?.indexStatusResult?.coverageState || 'Unknown';
+      const resultStr = JSON.stringify(data.inspectionResult || {});
+      const now = new Date().toISOString();
+      
+      db.prepare(`
+        INSERT OR REPLACE INTO url_inspection_cache (siteUrl, url, inspectionResult, coverageState, lastInspectionTime)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(siteUrl, inspectionUrl, resultStr, coverageState, now);
+      
+      res.json({ success: true, coverageState, inspectionResult: data.inspectionResult, lastInspectionTime: now });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/indexing/auto-sync/start', async (req, res) => {
+    const { siteUrl, accessToken, uninspectedUrls } = req.body;
+    if (!siteUrl || !accessToken || !uninspectedUrls || !Array.isArray(uninspectedUrls)) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const existingJob = syncJobs.get(siteUrl);
+    if (existingJob && existingJob.status === 'running') {
+      return res.json({ success: true, message: 'Job already running', alreadyRunning: true });
+    }
+
+    // Start background job
+    syncJobs.set(siteUrl, { current: 0, total: uninspectedUrls.length, status: 'running' });
+    
+    res.json({ success: true, message: 'Sync started in background', alreadyRunning: false });
+
+    // Execute background async task safely
+    (async () => {
+      let current = 0;
+      for (const url of uninspectedUrls) {
+        try {
+          const response = await fetch('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect', {
+             method: 'POST',
+             headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+             },
+             body: JSON.stringify({ inspectionUrl: url, siteUrl, languageCode: 'en-US' })
+          });
+          
+          if (!response.ok) {
+             const errorData = await response.json();
+             // If Quota Exceeded (429), we stop gracefully
+             if (response.status === 429) {
+                console.warn(`GSC Quota exceeded during auth-sync for ${siteUrl}`);
+                syncJobs.set(siteUrl, { current, total: uninspectedUrls.length, status: 'error', message: "Google's 2,000 URL daily limit reached. Remaining URLs paused until tomorrow." });
+                return;
+             }
+             if (response.status === 401 || response.status === 403) {
+                console.warn(`GSC Session Expired or unauthorized during auth-sync for ${siteUrl}`);
+                syncJobs.set(siteUrl, { current, total: uninspectedUrls.length, status: 'error', message: 'Session expired or unauthorized' });
+                return;
+             }
+             console.error(`Inspection failed for ${url}:`, errorData);
+          } else {
+             const data = await response.json();
+             const coverageState = data?.inspectionResult?.indexStatusResult?.coverageState || 'Unknown';
+             const resultStr = JSON.stringify(data.inspectionResult || {});
+             const now = new Date().toISOString();
+             
+             db.prepare(`
+               INSERT OR REPLACE INTO url_inspection_cache (siteUrl, url, inspectionResult, coverageState, lastInspectionTime)
+               VALUES (?, ?, ?, ?, ?)
+             `).run(siteUrl, url, resultStr, coverageState, now);
+          }
+        } catch (e: any) {
+          console.error(`Auto-sync error for ${url}:`, e.message);
+        }
+
+        current++;
+        syncJobs.set(siteUrl, { current, total: uninspectedUrls.length, status: 'running' });
+        
+        // Wait 150ms gracefully so we can process up to 2000 URLs within the 1-hour OAuth token lifetime
+        // (Quota is 600 per minute per property -> 10QPS -> 100ms interval is safe)
+        await new Promise(r => setTimeout(r, 150));
+      }
+
+      // Finish job
+      syncJobs.set(siteUrl, { current, total: uninspectedUrls.length, status: 'completed' });
+    })();
+  });
+
+  app.get('/api/indexing/auto-sync/status', (req, res) => {
+    const { siteUrl } = req.query;
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    
+    const job = syncJobs.get(siteUrl as string);
+    if (!job) {
+      return res.json({ status: 'none' });
+    }
+    
+    res.json(job);
   });
 
   // Background Daily Automated Sync logic

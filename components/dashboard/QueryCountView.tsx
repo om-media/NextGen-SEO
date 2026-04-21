@@ -348,7 +348,7 @@ export function QueryCountView({
       )}
 
       <Card className="overflow-hidden border shadow-sm">
-        <div className="p-4 border-b bg-muted/20 flex justify-between items-center">
+        <div className="p-4 border-b bg-muted/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div>
             <h3 className="font-semibold text-lg">Historic Trend</h3>
             <p className="text-sm text-muted-foreground">
