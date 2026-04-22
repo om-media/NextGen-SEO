@@ -42,10 +42,18 @@ import { Toaster } from "@/components/ui/sonner"
 
 function MainApp() {
   const { user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setTier, setBingApiKey } = useAuth()
-  const [sites, setSites] = useState<GscSite[]>([])
+  const [sites, setSites] = useState<GscSite[]>(() => {
+    const saved = localStorage.getItem('gsc_sites_cache');
+    return saved ? JSON.parse(saved) : [];
+  })
   const [bingSites, setBingSites] = useState<BingSite[]>([])
-  const [ga4Sites, setGa4Sites] = useState<{siteUrl: string, displayName: string}[]>([])
-  const [selectedSite, setSelectedSite] = useState<string>("")
+  const [ga4Sites, setGa4Sites] = useState<{siteUrl: string, displayName: string}[]>(() => {
+    const saved = localStorage.getItem('ga4_sites_cache');
+    return saved ? JSON.parse(saved) : [];
+  })
+  const [selectedSite, setSelectedSite] = useState<string>(() => {
+    return localStorage.getItem('selected_site_cache') || "";
+  })
   const [fetchingSites, setFetchingSites] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [dataSource, setDataSource] = useState<'gsc' | 'bing' | 'ga4'>('gsc')
@@ -120,7 +128,18 @@ function MainApp() {
     return fuzzyMatch || null;
   }
 
-  // Default date range: last 28 days (ending 2 days ago because GSC data is delayed)
+  useEffect(() => {
+    localStorage.setItem('gsc_sites_cache', JSON.stringify(sites));
+  }, [sites]);
+
+  useEffect(() => {
+    localStorage.setItem('ga4_sites_cache', JSON.stringify(ga4Sites));
+  }, [ga4Sites]);
+
+  useEffect(() => {
+    localStorage.setItem('selected_site_cache', selectedSite);
+  }, [selectedSite]);
+
   const [dateRange, setDateRange] = useState<DateRange>({
     from: subDays(new Date(), 30),
     to: subDays(new Date(), 2),
@@ -202,6 +221,16 @@ function MainApp() {
                 const firstUnlocked = fetchedSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
                 setSelectedSite(firstUnlocked?.siteUrl || fetchedSites[0]?.siteUrl || "")
               }
+              
+              // Persist to user profile so they aren't lost on boot if token expires
+              if (user && userProfile) {
+                const knownUrls = fetchedSites.map(s => s.siteUrl);
+                fetch(`/api/users/${user.uid}/known-sites`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ knownSites: knownUrls })
+                }).catch(e => console.error("Failed caching known sites", e));
+              }
             }
           })
           .catch(err => {
@@ -210,14 +239,35 @@ function MainApp() {
               setSessionExpired(true);
               clearAccessToken()
               
-              // Fallback to warehouse-synced / unlocked sites
-              if (userProfile?.unlockedSites && userProfile?.unlockedSites.length > 0) {
-                const offlineSites = userProfile.unlockedSites.map(url => ({ siteUrl: url, permissionLevel: 'warehouse' }));
-                setSites(offlineSites);
-                if (!findMatchingSite(selectedSite, offlineSites)) {
-                  setSelectedSite(offlineSites[0].siteUrl);
-                }
-              }
+              // Fallback to warehouse-synced / offline sites + known sites from profile
+              fetch('/api/warehouse/status')
+                .then(res => res.json())
+                .then((statuses: any[]) => {
+                   let offlineSites = statuses.map(s => ({ siteUrl: s.siteUrl, permissionLevel: 'warehouse' }));
+                   if (userProfile?.unlockedSites) {
+                     userProfile.unlockedSites.forEach(url => {
+                       if (!offlineSites.some(os => os.siteUrl === url)) {
+                         offlineSites.push({ siteUrl: url, permissionLevel: 'warehouse' });
+                       }
+                     });
+                   }
+                   if (userProfile?.knownSites) {
+                     userProfile.knownSites.forEach(url => {
+                       if (!offlineSites.some(os => os.siteUrl === url)) {
+                         offlineSites.push({ siteUrl: url, permissionLevel: 'warehouse' });
+                       }
+                     });
+                   }
+                   setSites(prev => {
+                     const merged = [...prev];
+                     offlineSites.forEach(os => {
+                       if (!merged.some(s => s.siteUrl === os.siteUrl)) {
+                         merged.push(os);
+                       }
+                     });
+                     return merged;
+                   });
+                }).catch(e => console.error("Offline fallback err:", e));
             } else if (err.message === "Failed to fetch") {
               console.error("Network error fetching sites:", err)
               setApiError("Network error: Unable to connect to Google Search Console API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
@@ -228,17 +278,42 @@ function MainApp() {
           })
           .finally(() => setFetchingSites(false))
       } else {
-        // No GSC token, populate with mapped unlocked sites to access local warehouse
-        if (userProfile?.unlockedSites && userProfile?.unlockedSites.length > 0) {
-          const offlineSites = userProfile.unlockedSites.map(url => ({ siteUrl: url, permissionLevel: 'warehouse' }));
-          setSites(offlineSites);
-          if (!findMatchingSite(selectedSite, offlineSites)) {
-            setSelectedSite(offlineSites[0].siteUrl);
-          }
-        } else {
-          setSites([]);
-          setSelectedSite("");
-        }
+        // No GSC token, populate with offline sites to access local warehouse
+        fetch('/api/warehouse/status')
+          .then(res => res.json())
+          .then((statuses: any[]) => {
+             let offlineSites = statuses.map(s => ({ siteUrl: s.siteUrl, permissionLevel: 'warehouse' }));
+             if (userProfile?.unlockedSites) {
+               userProfile.unlockedSites.forEach(url => {
+                 if (!offlineSites.some(os => os.siteUrl === url)) {
+                   offlineSites.push({ siteUrl: url, permissionLevel: 'warehouse' });
+                 }
+               });
+             }
+             if (userProfile?.knownSites) {
+               userProfile.knownSites.forEach(url => {
+                 if (!offlineSites.some(os => os.siteUrl === url)) {
+                   offlineSites.push({ siteUrl: url, permissionLevel: 'warehouse' });
+                 }
+               });
+             }
+             if (offlineSites.length > 0) {
+               setSessionExpired(true);
+             }
+             setSites(prev => {
+               const merged = [...prev];
+               offlineSites.forEach(os => {
+                 if (!merged.some(s => s.siteUrl === os.siteUrl)) {
+                   merged.push(os);
+                 }
+               });
+               return merged;
+             });
+          }).catch(e => {
+            console.error("Offline fallback err:", e);
+            setSites([]);
+            setSelectedSite("");
+          });
       }
     } else if (dataSource === 'bing' && user) {
       if (!userProfile?.bingApiKey) {
@@ -586,7 +661,7 @@ function MainApp() {
                 </div>
               </div>
 
-              {!accessToken && ((dataSource === 'ga4') || (dataSource === 'gsc' && sites.length === 0)) ? (
+              {!accessToken && ((dataSource === 'gsc' && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) ? (
                 <div className="flex flex-col items-center justify-center p-12 text-center border rounded-lg bg-card shadow-sm space-y-6 mt-8">
                   <div className="bg-primary/10 p-4 rounded-full">
                     <BarChart3 className="h-12 w-12 text-primary" />
@@ -594,9 +669,9 @@ function MainApp() {
                   <div className="space-y-2 max-w-md">
                     {sessionExpired ? (
                       <>
-                        <h2 className="text-2xl font-bold tracking-tight">Session Expired</h2>
+                        <h2 className="text-2xl font-bold tracking-tight">Offline & Empty</h2>
                         <p className="text-muted-foreground">
-                          Your Google API access token has expired. For security reasons, we require you to reconnect to immediately resume viewing your dashboard.
+                          Your Google API access token has expired securely. We attempted to fall back to Offline Mode, but we don't have any cached data available for your current sites. 
                         </p>
                       </>
                     ) : (
@@ -609,11 +684,25 @@ function MainApp() {
                     )}
                   </div>
                   <Button onClick={signInWithGoogle} size="lg" className="px-8">
-                    {sessionExpired ? "Reconnect Google Account" : "Connect Google Account"}
+                    Connect Google Account
                   </Button>
                 </div>
               ) : (
                 <>
+                  {(!accessToken || sessionExpired) && ((dataSource === 'gsc' && sites.length > 0) || (dataSource === 'ga4' && ga4Sites.length > 0)) && (
+                    <div className="bg-amber-500/10 border border-amber-500/20 text-amber-600 rounded-lg p-3 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="h-5 w-5" />
+                        <div className="text-sm">
+                          <strong>Live API Disconnected</strong> - Your 1-hour Google Cloud security session expired. You are currently viewing offline Cached & Server Log Data.
+                        </div>
+                      </div>
+                      <Button onClick={signInWithGoogle} variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-700 hover:bg-amber-500/20">
+                        Reconnect Google
+                      </Button>
+                    </div>
+                  )}
+
                   {apiError && (
                     <div className="p-6 border border-destructive/50 bg-destructive/10 rounded-lg flex flex-col items-start space-y-4">
                       <div className="flex items-center gap-2 text-destructive font-semibold">
@@ -648,7 +737,7 @@ function MainApp() {
                     </div>
                   )}
 
-                  {!selectedSite && !fetchingSites && !apiError && (
+                  {!selectedSite && !fetchingSites && !apiError && (accessToken || dataSource === 'bing') && (
                     <div className="p-8 text-center border rounded-lg bg-card flex flex-col items-center justify-center space-y-3">
                       <AlertCircle className="h-10 w-10 text-muted-foreground" />
                       <h3 className="text-lg font-medium">No properties found</h3>

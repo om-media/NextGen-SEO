@@ -83,7 +83,10 @@ db.exec(`
     email TEXT,
     tier TEXT,
     unlockedSites TEXT,
-    createdAt TEXT
+    createdAt TEXT,
+    bingApiKey TEXT,
+    gscRefreshToken TEXT,
+    knownSites TEXT
   );
   
   CREATE TABLE IF NOT EXISTS annotations (
@@ -212,6 +215,7 @@ async function startServer() {
       const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
       if (user) {
         user.unlockedSites = JSON.parse(user.unlockedSites || '[]');
+        user.knownSites = JSON.parse(user.knownSites || '[]');
         
         // Ensure tier limit is respected
         const limit = user.tier === 'free' ? 1 : user.tier === 'pro' ? 3 : Infinity;
@@ -285,6 +289,16 @@ async function startServer() {
     try {
       db.prepare('UPDATE users SET bingApiKey = ? WHERE id = ?').run(bingApiKey, req.params.id);
       res.json({ success: true, bingApiKey });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/users/:id/known-sites', (req, res) => {
+    const { knownSites } = req.body;
+    try {
+      db.prepare('UPDATE users SET knownSites = ? WHERE id = ?').run(JSON.stringify(knownSites || []), req.params.id);
+      res.json({ success: true, knownSites });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -724,8 +738,26 @@ async function startServer() {
         const status = db.prepare('SELECT * FROM warehouse_sync_status WHERE siteUrl = ?').get(siteUrl);
         res.json(status || { siteUrl, status: 'uninitialized' });
       } else {
-        const statuses = db.prepare('SELECT * FROM warehouse_sync_status').all();
-        res.json(statuses);
+        // Aggressively find ALL known site URLs across any relevant tables to guarantee offline access
+        let allSites = new Set<string>();
+        
+        const statuses = db.prepare('SELECT siteUrl FROM warehouse_sync_status').all() as any[];
+        statuses.forEach(s => allSites.add(s.siteUrl));
+        
+        const queries = db.prepare('SELECT DISTINCT siteUrl FROM gsc_site_metrics').all() as any[];
+        queries.forEach(s => allSites.add(s.siteUrl));
+        
+        const logs = db.prepare('SELECT DISTINCT siteUrl FROM server_logs').all() as any[];
+        logs.forEach(s => allSites.add(s.siteUrl));
+        
+        const caches = db.prepare('SELECT DISTINCT siteUrl FROM url_inspection_cache').all() as any[];
+        caches.forEach(s => allSites.add(s.siteUrl));
+        
+        const keywords = db.prepare('SELECT DISTINCT siteUrl FROM tracked_keywords').all() as any[];
+        keywords.forEach(s => allSites.add(s.siteUrl));
+
+        const result = Array.from(allSites).map(url => ({ siteUrl: url }));
+        res.json(result);
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1365,10 +1397,25 @@ async function startServer() {
                 syncJobs.set(siteUrl, { current, total: uninspectedUrls.length, status: 'error', message: "Google's 2,000 URL daily limit reached. Remaining URLs paused until tomorrow." });
                 return;
              }
-             if (response.status === 401 || response.status === 403) {
-                console.warn(`GSC Session Expired or unauthorized during auth-sync for ${siteUrl}`);
-                syncJobs.set(siteUrl, { current, total: uninspectedUrls.length, status: 'error', message: 'Session expired or unauthorized' });
+             if (response.status === 401) {
+                console.warn(`GSC Session Expired during auth-sync for ${siteUrl}:`, errorData);
+                syncJobs.set(siteUrl, { current, total: uninspectedUrls.length, status: 'error', message: `API Error: Session expired or invalid token.` });
                 return;
+             }
+             
+             if (response.status === 403) {
+                 const apiMsg = errorData?.error?.message || '';
+                 const reason = errorData?.error?.errors?.[0]?.reason || '';
+                 
+                 // Abort if quota exceeded
+                 if (reason.includes('rateLimitExceeded') || apiMsg.toLowerCase().includes('quota')) {
+                    syncJobs.set(siteUrl, { current, total: uninspectedUrls.length, status: 'error', message: `API Quota Exceeded: ${apiMsg}` });
+                    return;
+                 }
+                 
+                 // If it's a 403 because it's an outside URL or permission denied for this specific URL, skip it and keep going!
+                 console.warn(`Skipping ${url} due to 403 Permission Denied:`, apiMsg);
+                 // We don't return here, we let it skip and continue the loop
              }
              console.error(`Inspection failed for ${url}:`, errorData);
           } else {

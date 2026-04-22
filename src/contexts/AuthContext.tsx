@@ -6,6 +6,7 @@ export interface UserProfile {
   email: string;
   tier: 'free' | 'pro' | 'enterprise';
   unlockedSites: string[];
+  knownSites?: string[];
   bingApiKey?: string;
 }
 

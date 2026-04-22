@@ -413,10 +413,10 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
             variant="outline" 
             size="sm" 
             onClick={() => triggerBackgroundSync(data)}
-            disabled={isAutoSyncing || !data.some(r => !r.inspectionResult || (r.lastCrawl && r.lastInspectionTime && new Date(r.lastCrawl).getTime() > new Date(r.lastInspectionTime).getTime()))}
+            disabled={!accessToken || isAutoSyncing || (!data.some(r => !r.inspectionResult || (r.lastCrawl && r.lastInspectionTime && new Date(r.lastCrawl).getTime() > new Date(r.lastInspectionTime).getTime())))}
           >
             {isAutoSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-            Sync Outdated URLs
+            {accessToken ? "Sync Outdated URLs" : "Reconnect to Sync"}
           </Button>
           <div className="flex items-center space-x-2">
             <Switch 
