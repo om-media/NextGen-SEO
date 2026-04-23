@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useAuth } from "@/src/contexts/AuthContext"
+import { authFetch } from "@/src/lib/authFetch"
 
 export function GlobalSyncPoller({ siteUrl }: { siteUrl: string | null }) {
   const { accessToken } = useAuth()
@@ -14,7 +15,7 @@ export function GlobalSyncPoller({ siteUrl }: { siteUrl: string | null }) {
 
     const pollStatus = async () => {
       try {
-        const res = await fetch(`/api/indexing/auto-sync/status?siteUrl=${encodeURIComponent(siteUrl)}`);
+        const res = await authFetch(`/api/indexing/auto-sync/status?siteUrl=${encodeURIComponent(siteUrl)}`);
         const result = await res.json();
         
         if (!mounted) return;

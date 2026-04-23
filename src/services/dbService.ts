@@ -1,4 +1,5 @@
 import { auth } from '../firebase';
+import { authFetch } from '../lib/authFetch';
 
 export interface SavedFilter {
   id?: string;
@@ -21,7 +22,7 @@ export const saveFilter = async (filter: Omit<SavedFilter, 'id' | 'createdAt' | 
       createdAt: new Date().toISOString()
     };
     
-    const res = await fetch('/api/filters', {
+    const res = await authFetch('/api/filters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newFilter)
@@ -39,7 +40,7 @@ export const getFilters = async (projectId: string) => {
   try {
     if (!auth.currentUser) throw new Error("Not authenticated");
     
-    const res = await fetch(`/api/filters?ownerId=${auth.currentUser.uid}&projectId=${encodeURIComponent(projectId)}`);
+    const res = await authFetch(`/api/filters?projectId=${encodeURIComponent(projectId)}`);
     if (!res.ok) throw new Error('Failed to fetch filters');
     
     const filters = await res.json();
@@ -53,7 +54,7 @@ export const getFilters = async (projectId: string) => {
 export const deleteFilter = async (filterId: string) => {
   try {
     if (!auth.currentUser) throw new Error("Not authenticated");
-    const res = await fetch(`/api/filters/${filterId}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/filters/${filterId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete filter');
   } catch (error) {
     console.error(error);

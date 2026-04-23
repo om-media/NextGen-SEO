@@ -1,3 +1,5 @@
+import { authFetch } from "../lib/authFetch";
+
 export interface BingSite {
   siteUrl: string;
 }
@@ -12,14 +14,10 @@ export interface BingQueryStat {
 }
 
 export class BingApiService {
-  private userId: string;
-
-  constructor(userId: string) {
-    this.userId = userId;
-  }
+  constructor() {}
 
   async getSites(): Promise<BingSite[]> {
-    const response = await fetch(`/api/bing/sites?userId=${this.userId}`);
+    const response = await authFetch(`/api/bing/sites`);
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.error || 'Failed to fetch Bing sites');
@@ -31,7 +29,7 @@ export class BingApiService {
   }
 
   async getQueryStats(siteUrl: string): Promise<BingQueryStat[]> {
-    const response = await fetch(`/api/bing/stats?userId=${this.userId}&siteUrl=${encodeURIComponent(siteUrl)}`);
+    const response = await authFetch(`/api/bing/stats?siteUrl=${encodeURIComponent(siteUrl)}`);
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.error || 'Failed to fetch Bing query stats');

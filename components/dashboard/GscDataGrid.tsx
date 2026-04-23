@@ -13,10 +13,22 @@ import { saveFilter } from "@/src/services/dbService"
 import { generateGscInsights } from "@/src/services/aiService"
 import { format, subDays } from "date-fns"
 import { DateRange } from "react-day-picker"
-import Markdown from "react-markdown"
 import { Overview } from "./Overview"
-
-type SortColumn = 'key' | 'intent' | 'clicks' | 'impressions' | 'ctr' | 'position' | null;
+import { authFetch } from "@/src/lib/authFetch"
+import { GscAiInsightsDialog } from "./GscAiInsightsDialog"
+import {
+  classifyIntent,
+  filterGridData,
+  getGridSearchPlaceholder,
+  getGridTitle,
+  getGridTitleWithCount,
+  hasActiveGridFilters,
+  sortGridData,
+  type GridFilters,
+  type GridRow,
+  type SortColumn,
+} from "./gscGridUtils"
+import { useRankTrackerKeywords } from "./useRankTrackerKeywords"
 
 export function GscDataGrid({ 
   siteUrl, 
@@ -38,7 +50,7 @@ export function GscDataGrid({
   const [searchTerm, setSearchTerm] = useState("")
   const [intentFilter, setIntentFilter] = useState("all")
   const { accessToken, userProfile, clearAccessToken } = useAuth()
-  const [data, setData] = useState<(GscSearchAnalyticsRow & { compareClicks?: number, compareImpressions?: number, compareCtr?: number, comparePosition?: number })[]>([])
+  const [data, setData] = useState<GridRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
@@ -72,56 +84,11 @@ export function GscDataGrid({
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 100
 
-  // Added keywords state for visual feedback
-  const [addedKeywords, setAddedKeywords] = useState<Set<string>>(new Set())
-  const [addingKeywords, setAddingKeywords] = useState<Set<string>>(new Set())
-
-  useEffect(() => {
-    if (siteUrl && !hideTrackerButton && dimension === 'query') {
-      fetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            setAddedKeywords(new Set(data.map(k => k.keyword)));
-          }
-        })
-        .catch(console.error);
-    }
-  }, [siteUrl, hideTrackerButton, dimension]);
-
-  const handleAddToTracker = async (keyword: string, initialPosition: number) => {
-    try {
-       setAddingKeywords(prev => new Set(prev).add(keyword))
-       // Target Domain logic from RankTrackerView
-       const defaultDomain = siteUrl.replace(/^https?:\/\//, '').replace(/^sc-domain:/, '').split('/')[0];
-       
-       const res = await fetch('/api/rank-tracking/keywords', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          siteUrl,
-          keywords: [keyword],
-          location: 'US', // default
-          device: 'desktop', // default
-          targetDomain: defaultDomain,
-          initialPositions: {
-            [keyword]: initialPosition
-          }
-        })
-      })
-      if (res.ok) {
-        setAddedKeywords(prev => new Set(prev).add(keyword))
-      }
-    } catch (e) {
-      console.error("Failed to add keyword to rank tracker:", e);
-    } finally {
-      setAddingKeywords(prev => {
-        const next = new Set(prev)
-        next.delete(keyword)
-        return next
-      })
-    }
-  }
+  const { addKeywordToTracker, addedKeywords, addingKeywords } = useRankTrackerKeywords({
+    dimension,
+    hideTrackerButton,
+    siteUrl,
+  })
 
   // Reset page when filters change
   useEffect(() => {
@@ -143,7 +110,7 @@ export function GscDataGrid({
       const endDate = format(dateRange.to, 'yyyy-MM-dd')
 
       const fetchWarehouseData = async (start: string, end: string) => {
-        const res = await fetch('/api/warehouse/query', {
+        const res = await authFetch('/api/warehouse/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: [dimension] })
@@ -219,86 +186,18 @@ export function GscDataGrid({
     }
   }, [accessToken, siteUrl, dimension, dateRange, isCompareMode, compareDateRange, clearAccessToken, useLiveData])
 
-  // Improved intent classification based on query keywords
-  const classifyIntent = (query: string) => {
-    const q = query.toLowerCase()
-    
-    // Attempt to extract brand name to detect navigational queries accurately
-    let brand = "";
-    try {
-      const cleanUrl = siteUrl.replace('sc-domain:', '').replace('https://', '').replace('http://', '').replace('www.', '');
-      brand = cleanUrl.split('.')[0].toLowerCase();
-    } catch(e) {}
-
-    // 1. Explicit Navigational (user knows EXACTLY where they want to go within the site)
-    const navWords = ["login", "signin", "sign up", "contact", "support", "dashboard", "portal"];
-    if (navWords.some(w => q.includes(w))) return "Navigational";
-
-    // 2. Commercial intent (user is looking to buy, compare, or evaluate)
-    const commercialWords = ["buy", "price", "cheap", "software", "tool", "review", "vs", "compare", "best", "top", "discount", "coupon", "order", "purchase", "hire", "services", "cost", "pricing", "deal", "app", "platform"];
-    if (commercialWords.some(w => q.includes(w))) return "Commercial";
-
-    // 3. Informational intent (user is looking for knowledge)
-    const informationalWords = ["how", "what", "guide", "tutorial", "why", "when", "where", "who", "tips", "ideas", "examples", "learn", "meaning", "definition", "can", "is", "does", "ways", "benefits", "history", "news", "free"];
-    if (informationalWords.some(w => q.includes(w))) return "Informational";
-
-    // 4. Brand presence as fallback (if no other intent words are found, it's just the brand -> Navigational)
-    if (brand && (q === brand || q.includes(brand) || q.includes(brand.replace(/-/g, ' ')))) {
-        return "Navigational";
-    }
-
-    // 5. Fallback for most long-tail and broad queries
-    return "Informational"
+  const gridFilters: GridFilters = {
+    intentFilter,
+    isQuestionOnly,
+    maxPosition,
+    minClicks,
+    minImpressions,
+    minWords,
+    searchTerm,
   }
 
-  const filteredData = data.filter(row => {
-    const matchesSearch = row.keys[0].toLowerCase().includes(searchTerm.toLowerCase())
-    if (!matchesSearch) return false
-    
-    if (dimension === 'query') {
-      if (intentFilter !== 'all') {
-        const intent = classifyIntent(row.keys[0]).toLowerCase()
-        if (intent !== intentFilter) return false
-      }
-      
-      if (isQuestionOnly) {
-        const q = row.keys[0].toLowerCase()
-        const firstWord = q.trim().split(/\s+/)[0]
-        const questionWords = ["who", "what", "where", "when", "why", "how", "is", "are", "do", "does", "can", "could", "should", "would"]
-        if (!questionWords.includes(firstWord) && !q.includes("?")) return false
-      }
-      
-      if (minWords !== "") {
-        const wordCount = row.keys[0].trim().split(/\s+/).length
-        if (wordCount < minWords) return false
-      }
-    }
-
-    if (minClicks !== "" && row.clicks < minClicks) return false
-    if (minImpressions !== "" && row.impressions < minImpressions) return false
-    if (maxPosition !== "" && row.position > maxPosition) return false
-
-    return true
-  })
-
-  const sortedData = [...filteredData].sort((a, b) => {
-    if (!sortColumn) return 0;
-    
-    let valA: any = a[sortColumn as keyof typeof a];
-    let valB: any = b[sortColumn as keyof typeof b];
-
-    if (sortColumn === 'key') {
-      valA = a.keys[0];
-      valB = b.keys[0];
-    } else if (sortColumn === 'intent') {
-      valA = classifyIntent(a.keys[0]);
-      valB = classifyIntent(b.keys[0]);
-    }
-
-    if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
-    if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
-    return 0;
-  })
+  const filteredData = filterGridData(data, dimension, gridFilters, siteUrl)
+  const sortedData = sortGridData(filteredData, sortColumn, sortDirection, siteUrl)
 
   const totalPages = Math.ceil(filteredData.length / pageSize)
 
@@ -314,22 +213,6 @@ export function GscDataGrid({
   const renderSortIcon = (column: SortColumn) => {
     if (sortColumn !== column) return <ArrowUpDown className="ml-2 h-4 w-4 text-muted-foreground opacity-50" />
     return sortDirection === 'asc' ? <ArrowUp className="ml-2 h-4 w-4" /> : <ArrowDown className="ml-2 h-4 w-4" />
-  }
-
-  const getTitle = () => {
-    if (dimension === 'page') return 'Top Pages'
-    if (dimension === 'country') return 'Top Countries'
-    return 'Search Queries'
-  }
-
-  const getTitleWithCount = () => {
-    return `${getTitle()} (${sortedData.length})`
-  }
-
-  const getSearchPlaceholder = () => {
-    if (dimension === 'page') return 'Filter pages...'
-    if (dimension === 'country') return 'Filter countries...'
-    return 'Filter queries...'
   }
 
   const handleSaveFilter = async () => {
@@ -434,52 +317,18 @@ export function GscDataGrid({
       <Card className="mt-6">
         <CardHeader>
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <CardTitle className="leading-tight">{getTitleWithCount()}</CardTitle>
+          <CardTitle className="leading-tight">{getGridTitleWithCount(dimension, sortedData.length)}</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            <Dialog open={isAiDialogOpen} onOpenChange={(open) => {
-              setIsAiDialogOpen(open)
-              if (open && !aiInsights) {
-                handleGenerateInsights()
-              }
-            }}>
-              <DialogTrigger render={<Button size="sm" variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200" />}>
-                <Sparkles className="w-4 h-4 mr-2 text-indigo-500" />
-                Analyze with AI
-              </DialogTrigger>
-              <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-indigo-500" />
-                    AI SEO Insights
-                  </DialogTitle>
-                  <DialogDescription className="italic">
-                    Analysis based on your current filters and sorting for {getTitle().toLowerCase()}.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="py-4">
-                  {isGeneratingAi ? (
-                    <div className="flex flex-col items-center justify-center py-8 space-y-4">
-                      <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-                      <p className="text-sm text-muted-foreground">Analyzing data and generating insights...</p>
-                    </div>
-                  ) : aiError ? (
-                    <div className="p-4 bg-destructive/10 text-destructive rounded-md text-sm">
-                      {aiError}
-                    </div>
-                  ) : aiInsights ? (
-                    <div className="prose prose-sm max-w-none dark:prose-invert">
-                      <Markdown>{aiInsights}</Markdown>
-                    </div>
-                  ) : null}
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => handleGenerateInsights()} disabled={isGeneratingAi}>
-                    Regenerate
-                  </Button>
-                  <Button onClick={() => setIsAiDialogOpen(false)}>Close</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <GscAiInsightsDialog
+              description={`Analysis based on your current filters and sorting for ${getGridTitle(dimension).toLowerCase()}.`}
+              error={aiError}
+              insights={aiInsights}
+              isGenerating={isGeneratingAi}
+              onGenerate={handleGenerateInsights}
+              onOpenChange={setIsAiDialogOpen}
+              open={isAiDialogOpen}
+              title="AI SEO Insights"
+            />
             <Button variant="outline" size="sm">
               <Download className="w-4 h-4 mr-2" />
               Export
@@ -541,7 +390,7 @@ export function GscDataGrid({
             <div className="relative w-full sm:flex-1">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder={getSearchPlaceholder()}
+                placeholder={getGridSearchPlaceholder(dimension)}
                 className="pl-8"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -636,7 +485,7 @@ export function GscDataGrid({
           </div>
           
           {/* Active Filters Bar */}
-          {(searchTerm || (dimension === 'query' && intentFilter !== 'all') || minClicks !== "" || minImpressions !== "" || maxPosition !== "" || isQuestionOnly || minWords !== "") && (
+          {hasActiveGridFilters(dimension, gridFilters) && (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground">Active filters:</span>
               {searchTerm && (
@@ -700,7 +549,7 @@ export function GscDataGrid({
               <TableRow>
                 <TableHead className="w-[300px] cursor-pointer hover:bg-muted/50 select-none" onClick={() => handleSort('key')}>
                   <div className="flex items-center">
-                    {getTitle()}
+                    {getGridTitle(dimension)}
                     {renderSortIcon('key')}
                   </div>
                 </TableHead>
@@ -763,7 +612,7 @@ export function GscDataGrid({
               ) : (
                 sortedData.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((row, i) => {
                   const key = row.keys[0]
-                  const intent = dimension === 'query' ? classifyIntent(key) : null
+                  const intent = dimension === 'query' ? classifyIntent(key, siteUrl) : null
                   return (
                     <TableRow 
                       key={i}
@@ -790,7 +639,7 @@ export function GscDataGrid({
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (!addedKeywords.has(key) && !addingKeywords.has(key)) {
-                                    handleAddToTracker(key, row.position);
+                                    addKeywordToTracker(key, row.position);
                                   }
                                 }}
                               >

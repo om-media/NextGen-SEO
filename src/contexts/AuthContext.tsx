@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, linkWithPopup } from 'firebase/auth';
 import { auth } from '../firebase';
+import { authFetch } from '../lib/authFetch';
 
 export interface UserProfile {
   email: string;
@@ -21,7 +22,6 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   clearAccessToken: () => void;
   unlockSite: (siteUrl: string) => Promise<void>;
-  setTier: (tier: 'free' | 'pro' | 'enterprise') => Promise<void>;
   setBingApiKey: (key: string) => Promise<void>;
 }
 
@@ -31,7 +31,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [accessToken, setAccessToken] = useState<string | null>(() => localStorage.getItem('gsc_access_token'));
+  // Keep Google API access tokens in memory only so they naturally expire with the session.
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [authError, setAuthError] = useState<Error | null>(null);
 
   if (authError) {
@@ -55,7 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const fetchOrInitializeProfile = async () => {
       try {
-        const res = await fetch(`/api/users/${user.uid}`);
+        const res = await authFetch(`/api/users/${user.uid}`);
         if (res.ok) {
           const contentType = res.headers.get("content-type");
           if (contentType && contentType.indexOf("application/json") !== -1) {
@@ -73,7 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             unlockedSites: [],
             createdAt: new Date().toISOString()
           };
-          const createRes = await fetch('/api/users', {
+          const createRes = await authFetch('/api/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newUser)
@@ -118,14 +119,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
           setAccessToken(credential.accessToken);
-          localStorage.setItem('gsc_access_token', credential.accessToken);
         }
       } else {
         const result = await signInWithPopup(auth, provider);
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
           setAccessToken(credential.accessToken);
-          localStorage.setItem('gsc_access_token', credential.accessToken);
         }
       }
     } catch (error: any) {
@@ -140,7 +139,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
           setAccessToken(credential.accessToken);
-          localStorage.setItem('gsc_access_token', credential.accessToken);
         }
       }
     }
@@ -157,12 +155,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     await firebaseSignOut(auth);
     setAccessToken(null);
-    localStorage.removeItem('gsc_access_token');
   };
 
   const clearAccessToken = () => {
     setAccessToken(null);
-    localStorage.removeItem('gsc_access_token');
   };
 
   const unlockSite = async (siteUrl: string) => {
@@ -181,7 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const res = await fetch(`/api/users/${user.uid}/unlock`, {
+      const res = await authFetch(`/api/users/${user.uid}/unlock`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ siteUrl })
@@ -203,27 +199,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const setTier = async (tier: 'free' | 'pro' | 'enterprise') => {
-    if (!user) return;
-    try {
-      const res = await fetch(`/api/users/${user.uid}/tier`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tier })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUserProfile(prev => prev ? { ...prev, tier, unlockedSites: data.unlockedSites || prev.unlockedSites } : null);
-      }
-    } catch (error) {
-      console.error("Failed to update tier:", error);
-    }
-  };
-
   const setBingApiKey = async (bingApiKey: string) => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/users/${user.uid}/bing-key`, {
+      const res = await authFetch(`/api/users/${user.uid}/bing-key`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bingApiKey })
@@ -237,7 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, userProfile, loading, accessToken, signInWithGoogle, registerWithEmail, loginWithEmail, signOut, clearAccessToken, unlockSite, setTier, setBingApiKey }}>
+    <AuthContext.Provider value={{ user, userProfile, loading, accessToken, signInWithGoogle, registerWithEmail, loginWithEmail, signOut, clearAccessToken, unlockSite, setBingApiKey }}>
       {children}
     </AuthContext.Provider>
   );

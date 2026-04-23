@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts"
 import { Upload, Server, AlertCircle, Loader2, Bot } from "lucide-react"
+import { authFetch } from "@/src/lib/authFetch"
 
 interface LogAnalyzerViewProps {
   siteUrl: string | undefined
@@ -27,9 +28,9 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
     const endDate = dateRange.to ? dateRange.to.toISOString().split('T')[0] : startDate;
     
     try {
-      const statsRes = await fetch(`/api/logs/stats?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${startDate}&endDate=${endDate}`)
-      const errorsRes = await fetch(`/api/logs/errors?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${startDate}&endDate=${endDate}`)
-      const insightsRes = await fetch(`/api/logs/insights?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${startDate}&endDate=${endDate}`)
+      const statsRes = await authFetch(`/api/logs/stats?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${startDate}&endDate=${endDate}`)
+      const errorsRes = await authFetch(`/api/logs/errors?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${startDate}&endDate=${endDate}`)
+      const insightsRes = await authFetch(`/api/logs/insights?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${startDate}&endDate=${endDate}`)
       
       if (statsRes.ok) {
         const statsData = await statsRes.json()
@@ -65,7 +66,7 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
     formData.append('siteUrl', siteUrl)
 
     try {
-      const res = await fetch('/api/logs/upload', {
+      const res = await authFetch('/api/logs/upload', {
         method: 'POST',
         body: formData
       })

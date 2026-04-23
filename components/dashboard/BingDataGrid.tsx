@@ -29,7 +29,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
       setLoading(true)
       setError(null)
       try {
-        const bingService = new BingApiService(user.uid)
+        const bingService = new BingApiService()
         const stats = await bingService.getQueryStats(siteUrl)
         setData(stats)
         setCurrentPage(1)
@@ -42,7 +42,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
     }
 
     fetchData()
-  }, [user, siteUrl])
+  }, [user, siteUrl, userProfile?.bingApiKey])
 
   const totals = useMemo(() => {
     if (!data.length) return { clicks: 0, impressions: 0, ctr: 0, position: 0 }

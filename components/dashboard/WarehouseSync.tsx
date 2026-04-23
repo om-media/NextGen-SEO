@@ -6,6 +6,7 @@ import { GscApiService } from "@/src/services/gscService"
 import { subDays, format } from "date-fns"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
+import { authFetch } from "@/src/lib/authFetch"
 
 export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
   const { accessToken, userProfile } = useAuth()
@@ -23,7 +24,7 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch(`/api/warehouse/status?siteUrl=${encodeURIComponent(siteUrl)}`)
+      const res = await authFetch(`/api/warehouse/status?siteUrl=${encodeURIComponent(siteUrl)}`)
       const data = await res.json()
       setSyncStatus(data)
     } catch (err) {
@@ -62,7 +63,7 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
         // 1. Site-level metrics
         const siteRows = await gscService.querySearchAnalytics(siteUrl, startDateStr, endDateStr, ['date'], undefined, true)
         if (siteRows && siteRows.length > 0) {
-          await fetch('/api/warehouse/ingest/site', {
+          await authFetch('/api/warehouse/ingest/site', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ siteUrl, rows: siteRows })
@@ -72,7 +73,7 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
         // 2. Query-level metrics
         const queryRows = await gscService.querySearchAnalytics(siteUrl, startDateStr, endDateStr, ['date', 'query'], undefined, true)
         if (queryRows && queryRows.length > 0) {
-          await fetch('/api/warehouse/ingest/query', {
+          await authFetch('/api/warehouse/ingest/query', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ siteUrl, rows: queryRows })
@@ -82,7 +83,7 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
         // 3. Page+Query-level metrics
         const pageQueryRows = await gscService.querySearchAnalytics(siteUrl, startDateStr, endDateStr, ['date', 'page', 'query'], undefined, true)
         if (pageQueryRows && pageQueryRows.length > 0) {
-          await fetch('/api/warehouse/ingest/page_query', {
+          await authFetch('/api/warehouse/ingest/page_query', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ siteUrl, rows: pageQueryRows })
@@ -104,7 +105,7 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
         status: 'synced'
       }
       
-      await fetch('/api/warehouse/status', {
+      await authFetch('/api/warehouse/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(completedStatus)

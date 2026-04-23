@@ -1,0 +1,351 @@
+import type { Express } from 'express';
+import type Database from 'better-sqlite3';
+import { requireAuth } from '../auth.js';
+import type { AuthedRequest } from '../types.js';
+import { asTrimmedString, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
+
+type SyncJob = {
+  current: number;
+  total: number;
+  status: 'running' | 'completed' | 'error';
+  message?: string;
+};
+
+export function registerIndexingRoutes(
+  app: Express,
+  db: Database.Database,
+  syncJobs: Map<string, SyncJob>,
+  getSyncJobKey: (ownerId: string, siteUrl: string) => string,
+) {
+  app.get('/api/indexing/grid', requireAuth, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const siteUrl = asTrimmedString(req.query.siteUrl);
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
+    const isLive = req.query.isLive;
+    const authHeader = req.headers.authorization;
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    if (startDate !== undefined && !isIsoDateString(startDate)) return res.status(400).json({ error: 'Invalid startDate' });
+    if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
+    if (isLive !== undefined && isLive !== 'true' && isLive !== 'false') return res.status(400).json({ error: 'Invalid isLive flag' });
+    try {
+      let gscPages: any[] = [];
+      const start = startDate ? String(startDate) : '2000-01-01';
+      const end = endDate ? String(endDate) : '2099-12-31';
+
+      if (isLive === 'true' && authHeader) {
+        const token = authHeader.split(' ')[1];
+        try {
+          const gscRes = await fetch(`https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              startDate: start,
+              endDate: end,
+              dimensions: ['page'],
+              rowLimit: 5000,
+            }),
+          });
+          const json = await gscRes.json();
+          if (json.rows) {
+            gscPages = json.rows.map((r: any) => ({
+              url: r.keys[0],
+              clicks: r.clicks,
+              impressions: r.impressions,
+            }));
+          }
+        } catch (e) {
+          console.error('GSC Live Fetch Error in Indexing:', e);
+        }
+      } else {
+        gscPages = db.prepare(
+          'SELECT page as url, SUM(clicks) as clicks, SUM(impressions) as impressions FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? GROUP BY page',
+        ).all(ownerId, siteUrl, start, end) as any[];
+      }
+
+      const logs = db.prepare(`
+        SELECT urlPath, MAX(timestamp) as lastCrawl
+        FROM server_logs
+        WHERE ownerId = ? AND siteUrl = ?
+          AND botType = 'Googlebot'
+          AND urlPath NOT LIKE '%/.%'
+          AND urlPath NOT LIKE '%.php'
+          AND urlPath NOT LIKE '%.env%'
+          AND urlPath NOT LIKE '%.bak'
+        GROUP BY urlPath
+      `).all(ownerId, siteUrl) as any[];
+      const inspections = db.prepare(
+        'SELECT url, inspectionResult, coverageState, lastInspectionTime FROM url_inspection_cache WHERE ownerId = ? AND siteUrl = ?',
+      ).all(ownerId, siteUrl) as any[];
+
+      const urlMap = new Map<string, any>();
+      const baseHost = siteUrl.replace(/\/$/, '');
+      const isHttp = baseHost.startsWith('http');
+
+      for (const p of gscPages) {
+        if (p.url.includes('#')) continue;
+        if (p.url.match(/\.(jpg|jpeg|png|gif|svg|webp|pdf|css|js|txt)$/i)) continue;
+
+        let cleanedUrl = p.url;
+        try {
+          const parsed = new URL(p.url);
+          cleanedUrl = parsed.origin + parsed.pathname;
+        } catch {}
+
+        if (!cleanedUrl.endsWith('/')) {
+          cleanedUrl += '/';
+        }
+
+        if (urlMap.has(cleanedUrl)) {
+          const existing = urlMap.get(cleanedUrl);
+          existing.clicks += p.clicks;
+          existing.impressions += p.impressions;
+          urlMap.set(cleanedUrl, existing);
+        } else {
+          urlMap.set(cleanedUrl, {
+            url: cleanedUrl,
+            clicks: p.clicks,
+            impressions: p.impressions,
+            lastCrawl: null,
+            inspectionResult: null,
+            coverageState: null,
+            lastInspectionTime: null,
+          });
+        }
+      }
+
+      for (const l of logs) {
+        let fullUrl = l.urlPath;
+        if (fullUrl.includes('#') || fullUrl.match(/\.(jpg|jpeg|png|gif|svg|webp|pdf|css|js|txt)$/i)) continue;
+
+        if (isHttp && fullUrl.startsWith('/')) {
+          fullUrl = `${baseHost}${fullUrl}`;
+        } else if (!isHttp && !fullUrl.startsWith('http')) {
+          fullUrl = `https://${baseHost.replace('sc-domain:', '')}${fullUrl.startsWith('/') ? '' : '/'}${fullUrl}`;
+        }
+
+        try {
+          const parsedLogUrl = new URL(fullUrl);
+          fullUrl = parsedLogUrl.origin + parsedLogUrl.pathname;
+        } catch {}
+
+        if (!fullUrl.endsWith('/')) {
+          fullUrl += '/';
+        }
+
+        let cleanDate = l.lastCrawl;
+        if (typeof cleanDate === 'string' && cleanDate.includes('/')) {
+          cleanDate = cleanDate.replace(':', ' ').replace(/\//g, ' ');
+          cleanDate = new Date(cleanDate).toISOString();
+        }
+
+        if (urlMap.has(fullUrl)) {
+          urlMap.get(fullUrl)!.lastCrawl = cleanDate;
+        } else {
+          urlMap.set(fullUrl, {
+            url: fullUrl,
+            clicks: 0,
+            impressions: 0,
+            lastCrawl: cleanDate,
+            inspectionResult: null,
+            coverageState: null,
+            lastInspectionTime: null,
+          });
+        }
+      }
+
+      for (const i of inspections) {
+        let cleanUrl = i.url;
+        try {
+          const parsedInsp = new URL(i.url);
+          cleanUrl = parsedInsp.origin + parsedInsp.pathname;
+        } catch {}
+
+        if (!cleanUrl.endsWith('/')) {
+          cleanUrl += '/';
+        }
+
+        if (urlMap.has(cleanUrl)) {
+          const existing = urlMap.get(cleanUrl)!;
+          existing.inspectionResult = i.inspectionResult ? JSON.parse(i.inspectionResult) : null;
+          existing.coverageState = i.coverageState;
+          existing.lastInspectionTime = i.lastInspectionTime;
+        } else {
+          urlMap.set(cleanUrl, {
+            url: cleanUrl,
+            clicks: 0,
+            impressions: 0,
+            lastCrawl: null,
+            inspectionResult: i.inspectionResult ? JSON.parse(i.inspectionResult) : null,
+            coverageState: i.coverageState,
+            lastInspectionTime: i.lastInspectionTime,
+          });
+        }
+      }
+
+      res.json(Array.from(urlMap.values()));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/indexing/seed-urls', requireAuth, (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const { siteUrl, urls } = req.body;
+    if (!isNonEmptyString(siteUrl) || !isStringArray(urls)) return res.status(400).json({ error: 'Invalid payload' });
+
+    try {
+      let added = 0;
+      const insert = db.prepare('INSERT OR IGNORE INTO url_inspection_cache (ownerId, siteUrl, url, lastInspectionTime) VALUES (?, ?, ?, ?)');
+
+      db.transaction(() => {
+        for (let u of urls) {
+          if (typeof u !== 'string' || !u.startsWith('http')) continue;
+
+          try {
+            const parsed = new URL(u);
+            u = parsed.origin + parsed.pathname;
+          } catch {}
+
+          if (!u.endsWith('/')) u += '/';
+
+          const result = insert.run(ownerId, siteUrl, u, new Date(0).toISOString());
+          if (result.changes > 0) added++;
+        }
+      })();
+
+      res.json({ success: true, added });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/indexing/inspect', requireAuth, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const { siteUrl, inspectionUrl } = req.body;
+    const authHeader = req.headers.authorization;
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!isNonEmptyString(siteUrl) || !isNonEmptyString(inspectionUrl) || !accessToken) return res.status(400).json({ error: 'Missing required fields' });
+
+    try {
+      const response = await fetch('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ inspectionUrl, siteUrl, languageCode: 'en-US' }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(data);
+      }
+
+      const coverageState = data?.inspectionResult?.indexStatusResult?.coverageState || 'Unknown';
+      const resultStr = JSON.stringify(data.inspectionResult || {});
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        INSERT OR REPLACE INTO url_inspection_cache (ownerId, siteUrl, url, inspectionResult, coverageState, lastInspectionTime)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(ownerId, siteUrl, inspectionUrl, resultStr, coverageState, now);
+
+      res.json({ success: true, coverageState, inspectionResult: data.inspectionResult, lastInspectionTime: now });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/indexing/auto-sync/start', requireAuth, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const { siteUrl, uninspectedUrls } = req.body;
+    const authHeader = req.headers.authorization;
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!isNonEmptyString(siteUrl) || !accessToken || !isStringArray(uninspectedUrls)) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const jobKey = getSyncJobKey(ownerId, siteUrl);
+    const existingJob = syncJobs.get(jobKey);
+    if (existingJob && existingJob.status === 'running') {
+      return res.json({ success: true, message: 'Job already running', alreadyRunning: true });
+    }
+
+    syncJobs.set(jobKey, { current: 0, total: uninspectedUrls.length, status: 'running' });
+    res.json({ success: true, message: 'Sync started in background', alreadyRunning: false });
+
+    (async () => {
+      let current = 0;
+      for (const url of uninspectedUrls) {
+        try {
+          const response = await fetch('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ inspectionUrl: url, siteUrl, languageCode: 'en-US' }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            if (response.status === 429) {
+              console.warn(`GSC Quota exceeded during auth-sync for ${siteUrl}`);
+              syncJobs.set(jobKey, { current, total: uninspectedUrls.length, status: 'error', message: "Google's 2,000 URL daily limit reached. Remaining URLs paused until tomorrow." });
+              return;
+            }
+            if (response.status === 401) {
+              console.warn(`GSC Session Expired during auth-sync for ${siteUrl}:`, errorData);
+              syncJobs.set(jobKey, { current, total: uninspectedUrls.length, status: 'error', message: 'API Error: Session expired or invalid token.' });
+              return;
+            }
+            if (response.status === 403) {
+              const apiMsg = errorData?.error?.message || '';
+              const reason = errorData?.error?.errors?.[0]?.reason || '';
+              if (reason.includes('rateLimitExceeded') || apiMsg.toLowerCase().includes('quota')) {
+                syncJobs.set(jobKey, { current, total: uninspectedUrls.length, status: 'error', message: `API Quota Exceeded: ${apiMsg}` });
+                return;
+              }
+              console.warn(`Skipping ${url} due to 403 Permission Denied:`, apiMsg);
+            }
+            console.error(`Inspection failed for ${url}:`, errorData);
+          } else {
+            const data = await response.json();
+            const coverageState = data?.inspectionResult?.indexStatusResult?.coverageState || 'Unknown';
+            const resultStr = JSON.stringify(data.inspectionResult || {});
+            const now = new Date().toISOString();
+
+            db.prepare(`
+              INSERT OR REPLACE INTO url_inspection_cache (ownerId, siteUrl, url, inspectionResult, coverageState, lastInspectionTime)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `).run(ownerId, siteUrl, url, resultStr, coverageState, now);
+          }
+        } catch (e: any) {
+          console.error(`Auto-sync error for ${url}:`, e.message);
+        }
+
+        current++;
+        syncJobs.set(jobKey, { current, total: uninspectedUrls.length, status: 'running' });
+        await new Promise((r) => setTimeout(r, 150));
+      }
+
+      syncJobs.set(jobKey, { current, total: uninspectedUrls.length, status: 'completed' });
+    })();
+  });
+
+  app.get('/api/indexing/auto-sync/status', requireAuth, (req: AuthedRequest, res) => {
+    const siteUrl = asTrimmedString(req.query.siteUrl);
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+
+    const job = syncJobs.get(getSyncJobKey(req.authUser!.uid, siteUrl));
+    if (!job) {
+      return res.json({ status: 'none' });
+    }
+
+    res.json(job);
+  });
+}

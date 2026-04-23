@@ -1,3 +1,5 @@
+import { authFetch } from "../lib/authFetch";
+
 export interface Annotation {
   id: string;
   userId: string;
@@ -24,7 +26,7 @@ export class AnnotationsService {
     if (siteUrl) {
       url.searchParams.append('siteUrl', siteUrl);
     }
-    const response = await fetch(url.toString());
+    const response = await authFetch(url.toString());
     if (!response.ok) {
       throw new Error('Failed to fetch annotations');
     }
@@ -33,7 +35,7 @@ export class AnnotationsService {
   }
 
   static async addAnnotation(userId: string, annotation: Partial<Annotation>): Promise<void> {
-    const response = await fetch(`/api/annotations/${userId}`, {
+    const response = await authFetch(`/api/annotations/${userId}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -46,7 +48,7 @@ export class AnnotationsService {
   }
 
   static async deleteAnnotation(userId: string, annotationId: string): Promise<void> {
-    const response = await fetch(`/api/annotations/${userId}/${annotationId}`, {
+    const response = await authFetch(`/api/annotations/${userId}/${annotationId}`, {
       method: 'DELETE',
     });
     if (!response.ok) {

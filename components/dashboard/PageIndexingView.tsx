@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { AlertCircle, CheckCircle2, ShieldAlert, Loader2, RefreshCw, ChevronDown, ChevronRight, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/src/lib/authFetch";
 
 import { DateRange } from "react-day-picker";
 import { toast } from "sonner";
@@ -45,7 +46,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
 
     const pollStatus = async () => {
       try {
-        const res = await fetch(`/api/indexing/auto-sync/status?siteUrl=${encodeURIComponent(siteUrl)}`);
+        const res = await authFetch(`/api/indexing/auto-sync/status?siteUrl=${encodeURIComponent(siteUrl)}`);
         const result = await res.json();
         
         if (!mounted) return;
@@ -102,14 +103,13 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
 
     processingRef.current = true;
     try {
-      const res = await fetch('/api/indexing/auto-sync/start', {
+      const res = await authFetch('/api/indexing/auto-sync/start', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           siteUrl,
-          accessToken,
           uninspectedUrls
         })
       });
@@ -136,11 +136,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
       const start = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : format(subDays(new Date(), 28), 'yyyy-MM-dd');
       const end = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd');
 
-      const res = await fetch(`/api/indexing/grid?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${start}&endDate=${end}&isLive=${isLive}`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
-      });
+      const res = await authFetch(`/api/indexing/grid?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${start}&endDate=${end}&isLive=${isLive}`);
       const json = await res.json();
       setData(json);
       
@@ -180,7 +176,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
       toast("Processing CSV...", { description: `Found ${urls.length} target URLs to seed.` });
 
       try {
-        const res = await fetch('/api/indexing/seed-urls', {
+        const res = await authFetch('/api/indexing/seed-urls', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ siteUrl, urls })
@@ -207,10 +203,10 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
     if (!accessToken) return;
     setInspectingParams(prev => ({ ...prev, [url]: true }));
     try {
-      const res = await fetch("/api/indexing/inspect", {
+      const res = await authFetch("/api/indexing/inspect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ siteUrl, inspectionUrl: url, accessToken })
+        body: JSON.stringify({ siteUrl, inspectionUrl: url })
       });
       const result = await res.json();
       if (!res.ok) {

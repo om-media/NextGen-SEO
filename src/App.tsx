@@ -1,30 +1,13 @@
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/layout/AppSidebar"
-import { Overview } from "@/components/dashboard/Overview"
-import { GscDataGrid } from "@/components/dashboard/GscDataGrid"
-import { QueryCountView } from "@/components/dashboard/QueryCountView"
-import { Ga4DataGrid } from "@/components/dashboard/Ga4DataGrid"
-import { Ga4Overview } from "@/components/dashboard/Ga4Overview"
-import { Ga4LlmTraffic } from "@/components/dashboard/Ga4LlmTraffic"
-import { Ga4Demographics } from "@/components/dashboard/Ga4Demographics"
-import { BingDataGrid } from "@/components/dashboard/BingDataGrid"
 import { WarehouseSync } from "@/components/dashboard/WarehouseSync"
-import { LogAnalyzerView } from "@/components/dashboard/LogAnalyzerView"
-import { PageIndexingView } from "@/components/dashboard/PageIndexingView"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Button, buttonVariants } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuGroup, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuPortal, DropdownMenuSubContent } from "@/components/ui/dropdown-menu"
+import { Button } from "@/components/ui/button"
 import { AuthProvider, useAuth } from "./contexts/AuthContext"
-import { BarChart3, LogOut, AlertCircle, ExternalLink, Lock, Settings2 } from "lucide-react"
+import { BarChart3 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { GscApiService, GscSite } from "./services/gscService"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { DatePicker } from "@/components/ui/date-picker"
 import { subDays, differenceInDays } from "date-fns"
 import { DateRange } from "react-day-picker"
-
-import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -34,14 +17,22 @@ import { BingApiService, BingSite } from "./services/bingService"
 import { Ga4ApiService } from "./services/ga4Service"
 import { Input } from "@/components/ui/input"
 import { AnnotationsService, Annotation } from "./services/annotationsService"
-import { AnnotationsSettings } from "@/components/dashboard/AnnotationsSettings"
 import { GlobalSyncPoller } from "./components/dashboard/GlobalSyncPoller"
 
-import { RankTrackerView } from "./components/dashboard/RankTrackerView"
 import { Toaster } from "@/components/ui/sonner"
+import { AppContent } from "./components/app/AppContent"
+import { AppHeader } from "./components/app/AppHeader"
+import { AppStatusPanels } from "./components/app/AppStatusPanels"
+import { AppToolbar } from "./components/app/AppToolbar"
+import { SettingsDialog } from "./components/app/SettingsDialog"
+import { UnlockSiteDialog } from "./components/app/UnlockSiteDialog"
+import { getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
+import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownSites } from "./lib/siteData"
+
+type DataSource = 'gsc' | 'bing' | 'ga4'
 
 function MainApp() {
-  const { user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setTier, setBingApiKey } = useAuth()
+  const { user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setBingApiKey } = useAuth()
   const [sites, setSites] = useState<GscSite[]>(() => {
     const saved = localStorage.getItem('gsc_sites_cache');
     return saved ? JSON.parse(saved) : [];
@@ -56,7 +47,7 @@ function MainApp() {
   })
   const [fetchingSites, setFetchingSites] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
-  const [dataSource, setDataSource] = useState<'gsc' | 'bing' | 'ga4'>('gsc')
+  const [dataSource, setDataSource] = useState<DataSource>('gsc')
   
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [tempBingKey, setTempBingKey] = useState("")
@@ -92,41 +83,6 @@ function MainApp() {
   useEffect(() => {
     fetchAnnotations();
   }, [selectedSite, user?.uid])
-
-  const findMatchingSite = (targetUrl: string, availableSites: any[]) => {
-    if (!targetUrl) return null;
-    const cleanUrl = (url: string) => url?.replace(/^(https?:\/\/|sc-domain:)/, '').replace(/\/$/, '').toLowerCase() || '';
-    
-    let targetClean = cleanUrl(targetUrl);
-    
-    // Reverse-lookup if switching FROM GA4 to GSC to preserve selection
-    if (targetUrl.startsWith('properties/')) {
-        const ga4Match = ga4Sites.find(s => s.siteUrl === targetUrl);
-        if (ga4Match && ga4Match.displayName) {
-            targetClean = cleanUrl(ga4Match.displayName);
-        }
-    }
-
-    const exactMatch = availableSites.find(s => s.siteUrl === targetUrl);
-    if (exactMatch) return exactMatch;
-
-    const fuzzyMatch = availableSites.find(s => {
-      const siteClean = cleanUrl(s.siteUrl);
-      if (siteClean === targetClean) return true;
-      
-      // For GA4, siteUrl is 'properties/123', so we check displayName
-      if (s.displayName) {
-        const displayClean = cleanUrl(s.displayName);
-        if (displayClean.includes(targetClean) || targetClean.includes(displayClean)) return true;
-      }
-      
-      // Check if GSC matches GA4 displayName
-      if (siteClean.includes(targetClean) || targetClean.includes(siteClean)) return true;
-      
-      return false;
-    });
-    return fuzzyMatch || null;
-  }
 
   useEffect(() => {
     localStorage.setItem('gsc_sites_cache', JSON.stringify(sites));
@@ -212,62 +168,36 @@ function MainApp() {
         const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
         gscService.getSites()
           .then(fetchedSites => {
+            setSessionExpired(false)
             setSites(fetchedSites)
             if (fetchedSites.length > 0) {
-              const match = findMatchingSite(selectedSite, fetchedSites);
-              if (match) {
-                setSelectedSite(match.siteUrl);
-              } else {
-                const firstUnlocked = fetchedSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-                setSelectedSite(firstUnlocked?.siteUrl || fetchedSites[0]?.siteUrl || "")
-              }
+              setSelectedSite(getPreferredSiteUrl(
+                selectedSite,
+                fetchedSites,
+                userProfile?.unlockedSites || [],
+                userProfile?.tier,
+                ga4Sites as SiteLike[],
+              ))
               
               // Persist to user profile so they aren't lost on boot if token expires
               if (user && userProfile) {
                 const knownUrls = fetchedSites.map(s => s.siteUrl);
-                fetch(`/api/users/${user.uid}/known-sites`, {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ knownSites: knownUrls })
-                }).catch(e => console.error("Failed caching known sites", e));
+                persistKnownSites(user.uid, knownUrls).catch(e => console.error("Failed caching known sites", e));
               }
             }
           })
           .catch(err => {
-            if (err.message === 'UNAUTHORIZED' || err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
+            if (isGoogleAuthError(err.message)) {
               console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
               setSessionExpired(true);
               clearAccessToken()
               
               // Fallback to warehouse-synced / offline sites + known sites from profile
-              fetch('/api/warehouse/status')
-                .then(res => res.json())
-                .then((statuses: any[]) => {
-                   let offlineSites = statuses.map(s => ({ siteUrl: s.siteUrl, permissionLevel: 'warehouse' }));
-                   if (userProfile?.unlockedSites) {
-                     userProfile.unlockedSites.forEach(url => {
-                       if (!offlineSites.some(os => os.siteUrl === url)) {
-                         offlineSites.push({ siteUrl: url, permissionLevel: 'warehouse' });
-                       }
-                     });
-                   }
-                   if (userProfile?.knownSites) {
-                     userProfile.knownSites.forEach(url => {
-                       if (!offlineSites.some(os => os.siteUrl === url)) {
-                         offlineSites.push({ siteUrl: url, permissionLevel: 'warehouse' });
-                       }
-                     });
-                   }
-                   setSites(prev => {
-                     const merged = [...prev];
-                     offlineSites.forEach(os => {
-                       if (!merged.some(s => s.siteUrl === os.siteUrl)) {
-                         merged.push(os);
-                       }
-                     });
-                     return merged;
-                   });
-                }).catch(e => console.error("Offline fallback err:", e));
+              fetchOfflineGscSites(userProfile)
+                .then((offlineSites) => {
+                  setSites(prev => mergeUniqueSites(prev, offlineSites));
+                })
+                .catch(e => console.error("Offline fallback err:", e));
             } else if (err.message === "Failed to fetch") {
               console.error("Network error fetching sites:", err)
               setApiError("Network error: Unable to connect to Google Search Console API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
@@ -279,36 +209,12 @@ function MainApp() {
           .finally(() => setFetchingSites(false))
       } else {
         // No GSC token, populate with offline sites to access local warehouse
-        fetch('/api/warehouse/status')
-          .then(res => res.json())
-          .then((statuses: any[]) => {
-             let offlineSites = statuses.map(s => ({ siteUrl: s.siteUrl, permissionLevel: 'warehouse' }));
-             if (userProfile?.unlockedSites) {
-               userProfile.unlockedSites.forEach(url => {
-                 if (!offlineSites.some(os => os.siteUrl === url)) {
-                   offlineSites.push({ siteUrl: url, permissionLevel: 'warehouse' });
-                 }
-               });
-             }
-             if (userProfile?.knownSites) {
-               userProfile.knownSites.forEach(url => {
-                 if (!offlineSites.some(os => os.siteUrl === url)) {
-                   offlineSites.push({ siteUrl: url, permissionLevel: 'warehouse' });
-                 }
-               });
-             }
+        fetchOfflineGscSites(userProfile)
+          .then((offlineSites) => {
              if (offlineSites.length > 0) {
                setSessionExpired(true);
              }
-             setSites(prev => {
-               const merged = [...prev];
-               offlineSites.forEach(os => {
-                 if (!merged.some(s => s.siteUrl === os.siteUrl)) {
-                   merged.push(os);
-                 }
-               });
-               return merged;
-             });
+             setSites(prev => mergeUniqueSites(prev, offlineSites));
           }).catch(e => {
             console.error("Offline fallback err:", e);
             setSites([]);
@@ -323,18 +229,18 @@ function MainApp() {
       }
       setFetchingSites(true)
       setApiError(null)
-      const bingService = new BingApiService(user.uid)
+      const bingService = new BingApiService()
       bingService.getSites()
         .then(fetchedSites => {
           setBingSites(fetchedSites)
           if (fetchedSites.length > 0) {
-            const match = findMatchingSite(selectedSite, fetchedSites);
-            if (match) {
-              setSelectedSite(match.siteUrl);
-            } else {
-              const firstUnlocked = fetchedSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-              setSelectedSite(firstUnlocked?.siteUrl || fetchedSites[0]?.siteUrl || "")
-            }
+            setSelectedSite(getPreferredSiteUrl(
+              selectedSite,
+              fetchedSites,
+              userProfile?.unlockedSites || [],
+              userProfile?.tier,
+              ga4Sites as SiteLike[],
+            ))
           }
         })
         .catch(err => {
@@ -348,19 +254,20 @@ function MainApp() {
       const ga4Service = new Ga4ApiService(accessToken)
       ga4Service.getProperties()
         .then(fetchedSites => {
+          setSessionExpired(false)
           setGa4Sites(fetchedSites)
           if (fetchedSites.length > 0) {
-            const match = findMatchingSite(selectedSite, fetchedSites);
-            if (match) {
-              setSelectedSite(match.siteUrl);
-            } else {
-              const firstUnlocked = fetchedSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-              setSelectedSite(firstUnlocked?.siteUrl || fetchedSites[0]?.siteUrl || "")
-            }
+            setSelectedSite(getPreferredSiteUrl(
+              selectedSite,
+              fetchedSites,
+              userProfile?.unlockedSites || [],
+              userProfile?.tier,
+              ga4Sites as SiteLike[],
+            ))
           }
         })
         .catch(err => {
-          if (err.message === 'UNAUTHORIZED' || err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token") || err.message.includes("insufficient authentication scopes")) {
+          if (isGoogleAuthError(err.message) || isGa4ScopeError(err.message)) {
             console.warn("GA4 Access token expired or missing scopes. Prompting re-authentication.");
             setSessionExpired(true);
             clearAccessToken()
@@ -421,6 +328,26 @@ function MainApp() {
     setShowSettingsModal(false);
   };
 
+  const currentSites = dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : ga4Sites;
+
+  const switchDataSource = (nextSource: DataSource, availableSites: SiteLike[]) => {
+    if (dataSource === nextSource) {
+      return;
+    }
+
+    setDataSource(nextSource);
+
+    if (availableSites.length > 0) {
+      setSelectedSite(getPreferredSiteUrl(
+        selectedSite,
+        availableSites,
+        userProfile?.unlockedSites || [],
+        userProfile?.tier,
+        ga4Sites as SiteLike[],
+      ));
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
@@ -442,505 +369,106 @@ function MainApp() {
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />
         <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
-          <header className="sticky top-0 z-10 flex min-h-14 flex-wrap items-center gap-4 border-b bg-background px-4 py-2 sm:px-6">
-            <SidebarTrigger />
-            <div className="flex flex-1 items-center gap-4 min-w-0 overflow-x-auto pb-1 sm:pb-0 hide-scrollbars">
-              <h1 className="text-lg font-semibold hidden sm:block whitespace-nowrap">{activeMenu}</h1>
-              
-              {/* Only show source toggles if we are on Dashboard */}
-              {activeMenu === "Dashboard" && (
-                <div className="flex items-center gap-1 sm:gap-2 border rounded-md p-1 bg-muted/30 whitespace-nowrap shrink-0">
-                  <Button 
-                    variant={dataSource === 'gsc' ? 'secondary' : 'ghost'} 
-                    size="sm" 
-                    className="h-7"
-                    onClick={() => {
-                      if (dataSource !== 'gsc') {
-                        setDataSource('gsc');
-                        if (sites.length > 0) {
-                          const match = findMatchingSite(selectedSite, sites);
-                          if (match) {
-                            setSelectedSite(match.siteUrl);
-                          } else {
-                            const firstUnlocked = sites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-                            setSelectedSite(firstUnlocked?.siteUrl || sites[0]?.siteUrl || "");
-                          }
-                        }
-                      }
-                    }}
-                  >
-                    Google Search Console
-                  </Button>
-                  <Button 
-                    variant={dataSource === 'bing' ? 'secondary' : 'ghost'} 
-                    size="sm" 
-                    className="h-7"
-                    onClick={() => {
-                      if (dataSource !== 'bing') {
-                        setDataSource('bing');
-                        if (bingSites.length > 0) {
-                          const match = findMatchingSite(selectedSite, bingSites);
-                          if (match) {
-                            setSelectedSite(match.siteUrl);
-                          } else {
-                            const firstUnlocked = bingSites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-                            setSelectedSite(firstUnlocked?.siteUrl || bingSites[0]?.siteUrl || "");
-                          }
-                        }
-                      }
-                    }}
-                  >
-                    Bing Webmaster
-                  </Button>
-                  <Button 
-                    variant={dataSource === 'ga4' ? 'secondary' : 'ghost'} 
-                    size="sm" 
-                    className="h-7"
-                    onClick={() => {
-                      if (dataSource !== 'ga4') {
-                        setDataSource('ga4');
-                        if (ga4Sites.length > 0) {
-                          const match = findMatchingSite(selectedSite, ga4Sites);
-                          if (match) {
-                            setSelectedSite(match.siteUrl);
-                          } else {
-                            const firstUnlocked = ga4Sites.find(s => userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(s.siteUrl));
-                            setSelectedSite(firstUnlocked?.siteUrl || ga4Sites[0]?.siteUrl || "");
-                          }
-                        }
-                      }
-                    }}
-                  >
-                    Google Analytics 4
-                  </Button>
-                </div>
-              )}
-              {(dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : ga4Sites).length > 0 && (
-                <Select value={selectedSite} onValueChange={handleSiteSelect}>
-                  <SelectTrigger className="w-[180px] sm:w-[250px] shrink-0 h-8 bg-muted/50 border-none">
-                    <SelectValue placeholder="Select a property" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : ga4Sites).map(site => {
-                      const isUnlocked = userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(site.siteUrl);
-                      const displayName = 'displayName' in site ? (site as any).displayName : site.siteUrl.replace('https://', '').replace('http://', '').replace('sc-domain:', '');
-                      return (
-                        <SelectItem key={site.siteUrl} value={site.siteUrl}>
-                          <div className="flex items-center justify-between w-full">
-                            <span>{displayName}</span>
-                            {!isUnlocked && <Lock className="h-3 w-3 text-muted-foreground ml-2" />}
-                          </div>
-                        </SelectItem>
-                      )
-                    })}
-                  </SelectContent>
-                </Select>
-              )}
-              {dataSource === 'gsc' && !accessToken && (
-                <Button onClick={signInWithGoogle} variant="outline" size="sm" className="h-8 border-yellow-500 text-yellow-600 hover:bg-yellow-50/50 hover:text-yellow-700">
-                  <AlertCircle className="w-4 h-4 mr-2" />
-                  Reconnect Google
-                </Button>
-              )}
-            </div>
-            <div className="flex items-center gap-4">
-              <DropdownMenu>
-                <DropdownMenuTrigger render={<button className="inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 h-8 w-8 relative" />}>
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={user.photoURL || ""} alt={user.displayName || "User"} />
-                    <AvatarFallback>{user.displayName?.charAt(0) || "U"}</AvatarFallback>
-                  </Avatar>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56" align="end">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel className="font-normal">
-                      <div className="flex flex-col space-y-1">
-                        <p className="text-sm font-medium leading-none">{user.displayName}</p>
-                        <p className="text-xs leading-none text-muted-foreground">
-                          {user.email}
-                        </p>
-                      </div>
-                    </DropdownMenuLabel>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => {
-                    setTempBingKey(userProfile?.bingApiKey || "");
-                    setShowSettingsModal(true);
-                  }} className="cursor-pointer">
-                    <Settings2 className="mr-2 h-4 w-4" />
-                    <span>Settings</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuGroup>
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>
-                        <Settings2 className="mr-2 h-4 w-4" />
-                        <span>Test Tiers</span>
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuPortal>
-                        <DropdownMenuSubContent>
-                          <DropdownMenuItem onClick={() => setTier('free')}>
-                            Free Tier (1 site)
-                            {userProfile?.tier === 'free' && " ✓"}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setTier('pro')}>
-                            Pro Tier (3 sites)
-                            {userProfile?.tier === 'pro' && " ✓"}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setTier('enterprise')}>
-                            Enterprise (Unlimited)
-                            {userProfile?.tier === 'enterprise' && " ✓"}
-                          </DropdownMenuItem>
-                        </DropdownMenuSubContent>
-                      </DropdownMenuPortal>
-                    </DropdownMenuSub>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={signOut} className="text-destructive focus:text-destructive cursor-pointer">
-                    <LogOut className="mr-2 h-4 w-4" />
-                    <span>Log out</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </header>
+          <AppHeader
+            accessToken={accessToken}
+            activeMenu={activeMenu}
+            currentSites={currentSites}
+            dataSource={dataSource}
+            onOpenSettings={() => {
+              setTempBingKey(userProfile?.bingApiKey || "");
+              setShowSettingsModal(true);
+            }}
+            onSelectSite={handleSiteSelect}
+            onSignInWithGoogle={signInWithGoogle}
+            onSignOut={signOut}
+            onSwitchDataSource={(nextSource) => {
+              const availableSites = nextSource === 'gsc' ? sites : nextSource === 'bing' ? bingSites : ga4Sites;
+              switchDataSource(nextSource, availableSites);
+            }}
+            selectedSite={selectedSite}
+            user={user}
+            userProfile={userProfile}
+          />
           <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-auto">
             <div className="max-w-7xl mx-auto space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold tracking-tight">Welcome back, {user.displayName?.split(' ')[0]}!</h2>
-                  <p className="text-muted-foreground">
-                    Here's an overview of your search performance.
-                  </p>
-                </div>
-                <div className="flex flex-col items-start sm:items-end gap-2 w-full mt-4 sm:mt-0 sm:w-auto">
-                  <div className="flex flex-wrap items-center gap-3 w-full sm:justify-end">
-                    <AnnotationsSettings 
-                      currentSiteUrl={selectedSite} 
-                      annotations={annotations} 
-                      onAnnotationsChange={fetchAnnotations}
-                      showSystemAnnotations={showSystemAnnotations}
-                      setShowSystemAnnotations={setShowSystemAnnotations}
-                      showUserAnnotations={showUserAnnotations}
-                      setShowUserAnnotations={setShowUserAnnotations}
-                    />
-                    {dataSource === 'gsc' && (
-                      <div className="flex items-center gap-3">
-                        <WarehouseSync siteUrl={selectedSite} />
-                        <div className="flex items-center space-x-2">
-                          <Switch 
-                            id="warehouse-mode" 
-                            checked={useLiveData}
-                            onCheckedChange={setUseLiveData}
-                          />
-                          <Label htmlFor="warehouse-mode" className="text-sm font-medium cursor-pointer whitespace-nowrap">Live Data</Label>
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex items-center space-x-2">
-                      <Switch 
-                        id="compare-mode" 
-                        checked={isCompareMode}
-                        onCheckedChange={setIsCompareMode}
-                      />
-                      <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">Compare</Label>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1 sm:gap-2 bg-card border rounded-md p-1">
-                      <DatePicker date={dateRange.from} setDate={handleFromDateChange} label="From" />
-                      <span className="text-muted-foreground text-sm font-medium px-1 sm:px-2">to</span>
-                      <DatePicker date={dateRange.to} setDate={handleToDateChange} label="To" />
-                    </div>
-                  </div>
-                  {isCompareMode && (
-                    <div className="flex flex-wrap items-center gap-1 sm:gap-2 bg-muted/30 border border-dashed rounded-md p-1 self-start sm:self-end">
-                      <span className="text-muted-foreground text-sm font-medium px-1 sm:px-2">vs</span>
-                      <DatePicker date={compareDateRange.from} setDate={handleCompareFromDateChange} label="Compare From" />
-                      <span className="text-muted-foreground text-sm font-medium px-1 sm:px-2">to</span>
-                      <DatePicker date={compareDateRange.to} setDate={handleCompareToDateChange} label="Compare To" />
-                    </div>
-                  )}
-                </div>
-              </div>
+              <AppToolbar
+                annotations={annotations}
+                compareDateRange={compareDateRange}
+                currentSiteUrl={selectedSite}
+                dataSource={dataSource}
+                dateRange={dateRange}
+                firstName={user.displayName?.split(' ')[0]}
+                isCompareMode={isCompareMode}
+                onAnnotationsChange={fetchAnnotations}
+                onCompareFromDateChange={handleCompareFromDateChange}
+                onCompareToDateChange={handleCompareToDateChange}
+                onFromDateChange={handleFromDateChange}
+                onToDateChange={handleToDateChange}
+                setIsCompareMode={setIsCompareMode}
+                setShowSystemAnnotations={setShowSystemAnnotations}
+                setShowUserAnnotations={setShowUserAnnotations}
+                setUseLiveData={setUseLiveData}
+                showSystemAnnotations={showSystemAnnotations}
+                showUserAnnotations={showUserAnnotations}
+                useLiveData={useLiveData}
+              />
 
-              {!accessToken && ((dataSource === 'gsc' && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) ? (
-                <div className="flex flex-col items-center justify-center p-12 text-center border rounded-lg bg-card shadow-sm space-y-6 mt-8">
-                  <div className="bg-primary/10 p-4 rounded-full">
-                    <BarChart3 className="h-12 w-12 text-primary" />
-                  </div>
-                  <div className="space-y-2 max-w-md">
-                    {sessionExpired ? (
-                      <>
-                        <h2 className="text-2xl font-bold tracking-tight">Offline & Empty</h2>
-                        <p className="text-muted-foreground">
-                          Your Google API access token has expired securely. We attempted to fall back to Offline Mode, but we don't have any cached data available for your current sites. 
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <h2 className="text-2xl font-bold tracking-tight">Connect your data</h2>
-                        <p className="text-muted-foreground">
-                          To view your Google Search Console and Google Analytics 4 performance, you need to connect your Google account. We only request read-only access.
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <Button onClick={signInWithGoogle} size="lg" className="px-8">
-                    Connect Google Account
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  {(!accessToken || sessionExpired) && ((dataSource === 'gsc' && sites.length > 0) || (dataSource === 'ga4' && ga4Sites.length > 0)) && (
-                    <div className="bg-amber-500/10 border border-amber-500/20 text-amber-600 rounded-lg p-3 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-                      <div className="flex items-center gap-2">
-                        <AlertCircle className="h-5 w-5" />
-                        <div className="text-sm">
-                          <strong>Live API Disconnected</strong> - Your 1-hour Google Cloud security session expired. You are currently viewing offline Cached & Server Log Data.
-                        </div>
-                      </div>
-                      <Button onClick={signInWithGoogle} variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-700 hover:bg-amber-500/20">
-                        Reconnect Google
-                      </Button>
-                    </div>
-                  )}
+              <AppStatusPanels
+                accessToken={accessToken}
+                apiError={apiError}
+                bingSitesCount={bingSites.length}
+                dataSource={dataSource}
+                fetchingSites={fetchingSites}
+                ga4SitesCount={ga4Sites.length}
+                gscSitesCount={sites.length}
+                onSignInWithGoogle={signInWithGoogle}
+                selectedSite={selectedSite}
+                sessionExpired={sessionExpired}
+              />
 
-                  {apiError && (
-                    <div className="p-6 border border-destructive/50 bg-destructive/10 rounded-lg flex flex-col items-start space-y-4">
-                      <div className="flex items-center gap-2 text-destructive font-semibold">
-                        <AlertCircle className="h-5 w-5" />
-                        <h3>API Access Required</h3>
-                      </div>
-                      <p className="text-sm text-foreground">
-                        The API needs to be enabled for your Firebase project before we can fetch your data.
-                      </p>
-                      {apiError.includes("https://console.developers.google.com") ? (
-                        <div className="space-y-4 w-full">
-                          <div className="p-3 bg-background rounded border text-xs font-mono text-muted-foreground break-all">
-                            {apiError}
-                          </div>
-                          <a 
-                            href={apiError.match(/https:\/\/console\.developers\.google\.com[^\s]*/)?.[0] || "#"} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className={buttonVariants({ variant: "default" })}
-                          >
-                            Enable API in Google Cloud Console <ExternalLink className="ml-2 h-4 w-4" />
-                          </a>
-                          <p className="text-xs text-muted-foreground mt-2">
-                            After enabling the API, wait a minute or two, then refresh this page.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="p-3 bg-background rounded border text-xs font-mono text-muted-foreground break-all">
-                          {apiError}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {!selectedSite && !fetchingSites && !apiError && (accessToken || dataSource === 'bing') && (
-                    <div className="p-8 text-center border rounded-lg bg-card flex flex-col items-center justify-center space-y-3">
-                      <AlertCircle className="h-10 w-10 text-muted-foreground" />
-                      <h3 className="text-lg font-medium">No properties found</h3>
-                      <p className="text-sm text-muted-foreground max-w-md">
-                        {dataSource === 'gsc' 
-                          ? "We couldn't find any Google Search Console properties associated with your account. Please make sure you have set up GSC for your website."
-                          : dataSource === 'bing'
-                          ? "We couldn't find any Bing Webmaster Tools properties. Please make sure your API key is correct and you have sites verified in Bing."
-                          : "We couldn't find any Google Analytics 4 properties associated with your account. Please make sure you have set up GA4 for your website."}
-                      </p>
-                    </div>
-                  )}
-
-                  {selectedSite && !apiError && dataSource === 'gsc' && sites.some(s => s.siteUrl === selectedSite) && activeMenu === 'Dashboard' && (
-                    <Tabs defaultValue="overview" className="space-y-4">
-                      <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
-                        <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
-                        <TabsTrigger value="queries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Queries</TabsTrigger>
-                        <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
-                        <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Countries</TabsTrigger>
-                        <TabsTrigger value="query-count" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Query Count</TabsTrigger>
-                      </TabsList>
-                      <TabsContent value="overview" className="space-y-4">
-                        <Overview 
-                          siteUrl={selectedSite} 
-                          dateRange={dateRange} 
-                          isCompareMode={isCompareMode} 
-                          compareDateRange={compareDateRange} 
-                          annotations={annotations.filter(a => (a.type === 'system' && showSystemAnnotations) || (a.type === 'user' && showUserAnnotations))}
-                        />
-                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} hideTrackerButton={true} />
-                      </TabsContent>
-                      <TabsContent value="queries" className="space-y-4">
-                        <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
-                      </TabsContent>
-                      <TabsContent value="pages" className="space-y-4">
-                        <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
-                      </TabsContent>
-                      <TabsContent value="countries" className="space-y-4">
-                        <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
-                      </TabsContent>
-                      <TabsContent value="query-count" className="space-y-4">
-                        <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                      </TabsContent>
-                    </Tabs>
-                  )}
-
-                  {selectedSite && !apiError && dataSource === 'bing' && userProfile?.bingApiKey && bingSites.some(s => s.siteUrl === selectedSite) && activeMenu === 'Dashboard' && (
-                    <div className="space-y-4">
-                      <div className="p-4 border rounded-lg bg-card">
-                        <h3 className="text-lg font-medium mb-2">Bing Webmaster Tools Data</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Bing integration is currently in beta. Advanced filtering and comparison features will be added soon.
-                        </p>
-                      </div>
-                      <BingDataGrid siteUrl={selectedSite} />
-                    </div>
-                  )}
-
-                  {selectedSite && !apiError && dataSource === 'ga4' && ga4Sites.some(s => s.siteUrl === selectedSite) && activeMenu === 'Dashboard' && (
-                    <Tabs defaultValue="overview" className="space-y-4">
-                      <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
-                        <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
-                        <TabsTrigger value="events" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Events</TabsTrigger>
-                        <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
-                        <TabsTrigger value="sources" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Traffic</TabsTrigger>
-                        <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Users</TabsTrigger>
-                      </TabsList>
-                      <TabsContent value="overview" className="space-y-4">
-                        <Ga4Overview 
-                          siteUrl={selectedSite} 
-                          dateRange={dateRange} 
-                          isCompareMode={isCompareMode} 
-                          compareDateRange={compareDateRange} 
-                          annotations={annotations.filter(a => (a.type === 'system' && showSystemAnnotations) || (a.type === 'user' && showUserAnnotations))}
-                        />
-                        <Ga4DataGrid siteUrl={selectedSite} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                      </TabsContent>
-                      <TabsContent value="events" className="space-y-4">
-                        <Ga4DataGrid siteUrl={selectedSite} dimension="eventName" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} metrics={['eventCount', 'totalUsers']} />
-                      </TabsContent>
-                      <TabsContent value="pages" className="space-y-4">
-                        <Ga4DataGrid siteUrl={selectedSite} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                      </TabsContent>
-                      <TabsContent value="sources" className="space-y-4">
-                        <Ga4DataGrid siteUrl={selectedSite} dimension="sessionSourceMedium" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                      </TabsContent>
-                      <TabsContent value="countries" className="space-y-4">
-                        <Ga4Demographics siteUrl={selectedSite} dateRange={dateRange} />
-                        <div className="flex justify-between items-center mt-8">
-                          <h3 className="text-lg font-medium">Detailed User Data</h3>
-                          <Select value={ga4UserDimension} onValueChange={(value) => setGa4UserDimension(value as Ga4Dimension)}>
-                            <SelectTrigger className="w-[180px]">
-                              <SelectValue placeholder="Select Dimension" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="country">Country</SelectItem>
-                              <SelectItem value="city">City</SelectItem>
-                              <SelectItem value="region">Region</SelectItem>
-                              <SelectItem value="deviceCategory">Device Category</SelectItem>
-                              <SelectItem value="browser">Browser</SelectItem>
-                              <SelectItem value="operatingSystem">Operating System</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <Ga4DataGrid siteUrl={selectedSite} dimension={ga4UserDimension} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                      </TabsContent>
-                    </Tabs>
-                  )}
-
-                  {selectedSite && !apiError && dataSource === 'ga4' && activeMenu === 'LLM Traffic' && ga4Sites.some(s => s.siteUrl === selectedSite) && (
-                    <div className="space-y-4">
-                      <Ga4LlmTraffic siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
-                    </div>
-                  )}
-
-                  {selectedSite && !apiError && activeMenu === 'Rank Tracker' && (
-                    <div className="space-y-4">
-                      <RankTrackerView siteUrl={selectedSite} />
-                    </div>
-                  )}
-
-                  {selectedSite && !apiError && activeMenu === 'Server Logs' && (
-                    <div className="space-y-4">
-                      <LogAnalyzerView siteUrl={selectedSite} dateRange={dateRange} />
-                    </div>
-                  )}
-
-                  {selectedSite && !apiError && activeMenu === 'Page Indexing' && (
-                    <div className="space-y-4">
-                      <PageIndexingView siteUrl={selectedSite} dateRange={dateRange} isLive={useLiveData} />
-                    </div>
-                  )}
-                </>
+              {!( !accessToken && ((dataSource === 'gsc' && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) ) && (
+                <AppContent
+                  activeMenu={activeMenu}
+                  annotations={annotations}
+                  apiError={apiError}
+                  bingSites={bingSites}
+                  compareDateRange={compareDateRange}
+                  dataSource={dataSource}
+                  dateRange={dateRange}
+                  ga4Sites={ga4Sites}
+                  ga4UserDimension={ga4UserDimension}
+                  isCompareMode={isCompareMode}
+                  onGa4UserDimensionChange={setGa4UserDimension}
+                  selectedSite={selectedSite}
+                  showSystemAnnotations={showSystemAnnotations}
+                  showUserAnnotations={showUserAnnotations}
+                  sites={sites}
+                  useLiveData={useLiveData}
+                  userProfile={userProfile}
+                />
               )}
             </div>
           </main>
         </div>
       </div>
 
-      <Dialog open={showUnlockModal} onOpenChange={setShowUnlockModal}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Unlock Property</DialogTitle>
-            <DialogDescription>
-              {unlockError ? (
-                <span className="text-destructive">{unlockError}</span>
-              ) : (
-                <span>
-                  You are about to unlock <strong>{siteToUnlock}</strong>. 
-                  Your current tier ({userProfile?.tier}) allows you to unlock up to {userProfile?.tier === 'free' ? 1 : userProfile?.tier === 'pro' ? 3 : 'unlimited'} properties.
-                  Once unlocked, you cannot remove it.
-                </span>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowUnlockModal(false)}>Cancel</Button>
-            {!unlockError && (
-              <Button onClick={confirmUnlock}>Confirm Unlock</Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Settings</DialogTitle>
-            <DialogDescription>
-              Configure your API keys and integrations.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-6 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="bing-key">Bing Webmaster Tools API Key</Label>
-              <Input 
-                id="bing-key" 
-                value={tempBingKey} 
-                onChange={(e) => setTempBingKey(e.target.value)} 
-                placeholder="Enter your Bing API Key"
-              />
-              <p className="text-xs text-muted-foreground">
-                You can generate this key in the Bing Webmaster Tools portal under Settings &gt; API Access.
-              </p>
-            </div>
-            {selectedSite && dataSource === 'gsc' && (
-              <div className="space-y-2 pt-4 border-t">
-                <Label>Data Warehouse Sync</Label>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground text-balance">
-                    Download historical data from Google Search Console directly to your local database for current selected site.
-                  </p>
-                  <WarehouseSync siteUrl={selectedSite} />
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSettingsModal(false)}>Cancel</Button>
-            <Button onClick={handleSaveSettings}>Save Changes</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <UnlockSiteDialog
+        onClose={() => setShowUnlockModal(false)}
+        onConfirm={confirmUnlock}
+        open={showUnlockModal}
+        siteToUnlock={siteToUnlock}
+        unlockError={unlockError}
+        userProfile={userProfile}
+      />
+      <SettingsDialog
+        dataSource={dataSource}
+        onClose={() => setShowSettingsModal(false)}
+        onSave={handleSaveSettings}
+        onTempBingKeyChange={setTempBingKey}
+        open={showSettingsModal}
+        selectedSite={selectedSite}
+        tempBingKey={tempBingKey}
+      />
     </SidebarProvider>
   )
 }

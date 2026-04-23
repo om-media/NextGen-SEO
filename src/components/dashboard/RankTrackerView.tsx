@@ -17,12 +17,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
 import { Badge } from "@/components/ui/badge"
 import { GscApiService } from "@/src/services/gscService"
+import { useAuth } from "@/src/contexts/AuthContext"
+import { authFetch } from "@/src/lib/authFetch"
 
 interface RankTrackerViewProps {
   siteUrl: string;
 }
 
 export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
+  const { accessToken } = useAuth()
   const [keywords, setKeywords] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -51,7 +54,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
   const fetchKeywords = async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`)
+      const res = await authFetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`)
       if (res.ok) {
         const data = await res.json()
         setKeywords(data)
@@ -69,7 +72,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
   const fetchHistory = async (id: string) => {
     setHistoryLoading(true)
     try {
-      const res = await fetch(`/api/rank-tracking/history?keywordId=${id}`)
+      const res = await authFetch(`/api/rank-tracking/history?keywordId=${id}`)
       if (res.ok) {
         const data = await res.json()
         // Format for Recharts
@@ -104,7 +107,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
     if (keywordArray.length === 0) return
 
     try {
-      const res = await fetch('/api/rank-tracking/keywords', {
+      const res = await authFetch('/api/rank-tracking/keywords', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -132,7 +135,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
   const handleDeleteKeyword = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      await fetch(`/api/rank-tracking/keywords/${id}`, { method: 'DELETE' })
+      await authFetch(`/api/rank-tracking/keywords/${id}`, { method: 'DELETE' })
       if (selectedKeywordId === id) {
         setSelectedKeywordId(null)
         setHistoryData([])
@@ -151,7 +154,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
       let gscHints: Record<string, { position: number, url: string }> = {};
       
       // Fetch latest keywords to guarantee we don't use stale state after adding
-      const currentKeywordsRes = await fetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`);
+      const currentKeywordsRes = await authFetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`);
       const currentKeywordsData = currentKeywordsRes.ok ? await currentKeywordsRes.json() : [];
 
       try {
@@ -160,7 +163,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
          const end = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
          const start = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; 
          
-         const token = sessionStorage.getItem('gsc_access_token') || '';
+         const token = accessToken || '';
          if (token && currentKeywordsData.length > 0) {
            const liveService = new GscApiService(token, 'free');
            
@@ -260,7 +263,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
          console.warn("GSC Hint fetch failed (expected if unauthenticated)", e);
       }
 
-      const res = await fetch('/api/rank-tracking/sync', {
+      const res = await authFetch('/api/rank-tracking/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ siteUrl, force: true, gscHints })

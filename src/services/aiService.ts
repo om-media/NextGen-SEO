@@ -1,7 +1,21 @@
 import { GoogleGenAI } from "@google/genai"
 import { GscSearchAnalyticsRow } from "./gscService"
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+let aiClient: GoogleGenAI | null = null
+
+function getAiClient() {
+  const apiKey = process.env.GEMINI_API_KEY
+
+  if (!apiKey) {
+    throw new Error("AI insights are unavailable until GEMINI_API_KEY is configured.")
+  }
+
+  if (!aiClient) {
+    aiClient = new GoogleGenAI({ apiKey })
+  }
+
+  return aiClient
+}
 
 export async function generateGscInsights(data: GscSearchAnalyticsRow[], dimension: string, searchTerm: string, intentFilter: string) {
   // We only send the top 50 rows to avoid context window limits and save tokens
@@ -23,9 +37,10 @@ Format your response in Markdown. Include:
 3. **Action Plan:** 3-4 specific recommendations for the content or SEO team.
 
 Keep it professional, insightful, and directly related to the provided data. Do not use generic SEO advice if it doesn't apply to the data.
-`
+  `
 
   try {
+    const ai = getAiClient()
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,

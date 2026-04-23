@@ -8,6 +8,7 @@ import { format, parseISO } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Loader2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { authFetch } from "@/src/lib/authFetch"
 
 type SortColumn = 'page' | 'queryCount' | 'clicks' | 'impressions' | null;
 
@@ -90,7 +91,7 @@ export function QueryCountView({
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     
     const fetchWarehouseData = async (start: string, end: string) => {
-      const res = await fetch('/api/warehouse/query', {
+      const res = await authFetch('/api/warehouse/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['page', 'query'] })
@@ -201,7 +202,7 @@ export function QueryCountView({
     }] : undefined;
 
     const fetchWarehouseData = async (start: string, end: string) => {
-      const res = await fetch('/api/warehouse/query', {
+      const res = await authFetch('/api/warehouse/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['date', 'query'], dimensionFilterGroups: filterGroups })

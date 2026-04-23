@@ -1,3 +1,5 @@
+import { authFetch } from "../lib/authFetch";
+
 export interface GscSite {
   siteUrl: string;
   permissionLevel: string;
@@ -70,7 +72,7 @@ export class GscApiService {
     const canUseWarehouse = !forceLive && !hasUnsupportedFilter && dimensions.every(d => d === 'query' || d === 'date' || d === 'page');
     if (canUseWarehouse) {
       try {
-        const response = await fetch('/api/warehouse/query', {
+        const response = await authFetch('/api/warehouse/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
