@@ -10,11 +10,18 @@ View your app in AI Studio: https://ai.studio/apps/cc404f7d-10b9-4cce-bc27-97d82
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Copy [.env.example](</Z:/GSCPLUS/.env.example>) to `.env.local` or `.env`
+3. Set `GEMINI_API_KEY`
+4. For persistent Google Search Console and GA4 access, also set:
+   `GOOGLE_OAUTH_CLIENT_ID`
+   `GOOGLE_OAUTH_CLIENT_SECRET`
+   `APP_BASE_URL`
+   `GOOGLE_OAUTH_REDIRECT_URI`
+5. Add your local callback URI to the Google OAuth client:
+   `http://localhost:3000/api/google/oauth/callback`
+6. Run the app:
    `npm run dev`

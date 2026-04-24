@@ -20,19 +20,26 @@ import { AnnotationsService, Annotation } from "./services/annotationsService"
 import { GlobalSyncPoller } from "./components/dashboard/GlobalSyncPoller"
 
 import { Toaster } from "@/components/ui/sonner"
+import { toast } from "sonner"
 import { AppContent } from "./components/app/AppContent"
 import { AppHeader } from "./components/app/AppHeader"
+import { OnboardingFlow } from "./components/app/OnboardingFlow"
 import { AppStatusPanels } from "./components/app/AppStatusPanels"
 import { AppToolbar } from "./components/app/AppToolbar"
-import { SettingsDialog } from "./components/app/SettingsDialog"
+import { SettingsDialog, type SettingsDraft } from "./components/app/SettingsDialog"
 import { UnlockSiteDialog } from "./components/app/UnlockSiteDialog"
+import { Ga4PropertyDialog } from "./components/app/Ga4PropertyDialog"
 import { getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
 import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownSites } from "./lib/siteData"
+import { getBillingConfig, openBillingPortal, startCheckout, type BillingConfig } from "./services/billingService"
+import { getPlanPropertyLimit } from "../shared/plans"
 
 type DataSource = 'gsc' | 'bing' | 'ga4'
 
 function MainApp() {
-  const { user, userProfile, loading, accessToken, signInWithGoogle, signOut, clearAccessToken, unlockSite, setBingApiKey } = useAuth()
+  const { user, userProfile, loading, signOut, connectGoogleServices, disconnectGoogleServices, unlockSite, setBingApiKey, completeOnboarding, updateDefaultSite, updateDefaultGa4Property, updateUserProfile } = useAuth()
+  const isOnboarding = Boolean(userProfile && !userProfile.onboardingCompleted)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<"profile" | "plan" | "workspace" | "integrations">("profile")
   const [sites, setSites] = useState<GscSite[]>(() => {
     const saved = localStorage.getItem('gsc_sites_cache');
     return saved ? JSON.parse(saved) : [];
@@ -45,12 +52,28 @@ function MainApp() {
   const [selectedSite, setSelectedSite] = useState<string>(() => {
     return localStorage.getItem('selected_site_cache') || "";
   })
+  const [selectedGa4Property, setSelectedGa4Property] = useState<string>(() => {
+    return localStorage.getItem('selected_ga4_property_cache') || "";
+  })
+  const [initializedGa4Selection, setInitializedGa4Selection] = useState(false)
   const [fetchingSites, setFetchingSites] = useState(false)
+  const [isConnectingGoogleData, setIsConnectingGoogleData] = useState(false)
+  const [isDisconnectingGoogleData, setIsDisconnectingGoogleData] = useState(false)
+  const [isStartingCheckout, setIsStartingCheckout] = useState(false)
+  const [isOpeningBillingPortal, setIsOpeningBillingPortal] = useState(false)
+  const [isUpdatingDefaultSite, setIsUpdatingDefaultSite] = useState(false)
+  const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [dataSource, setDataSource] = useState<DataSource>('gsc')
   
   const [showSettingsModal, setShowSettingsModal] = useState(false)
-  const [tempBingKey, setTempBingKey] = useState("")
+  const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>({
+    avatarUrl: "",
+    bingApiKey: "",
+    bio: "",
+    company: "",
+    name: "",
+  })
 
   const [useLiveData, setUseLiveData] = useState(true)
 
@@ -59,6 +82,18 @@ function MainApp() {
   const [showUserAnnotations, setShowUserAnnotations] = useState(true)
 
   const [activeMenu, setActiveMenu] = useState<string>("Dashboard")
+
+  const openSettings = (tab: "profile" | "plan" | "workspace" | "integrations" = "profile") => {
+    setSettingsInitialTab(tab)
+    setSettingsDraft({
+      avatarUrl: userProfile?.avatarUrl || user?.photoURL || "",
+      bingApiKey: userProfile?.bingApiKey || "",
+      bio: userProfile?.bio || "",
+      company: userProfile?.company || "",
+      name: userProfile?.name || user?.displayName || "",
+    })
+    setShowSettingsModal(true)
+  }
 
   const handleMenuSelect = (menu: string) => {
     setActiveMenu(menu)
@@ -95,6 +130,51 @@ function MainApp() {
   useEffect(() => {
     localStorage.setItem('selected_site_cache', selectedSite);
   }, [selectedSite]);
+
+  useEffect(() => {
+    localStorage.setItem('selected_ga4_property_cache', selectedGa4Property);
+  }, [selectedGa4Property]);
+
+  useEffect(() => {
+    if (userProfile?.activatedSiteUrl && !selectedSite) {
+      setSelectedSite(userProfile.activatedSiteUrl);
+    }
+  }, [selectedSite, userProfile?.activatedSiteUrl]);
+
+  useEffect(() => {
+    if (!userProfile || isOnboarding || userProfile.tier === 'enterprise' || !selectedSite) {
+      return;
+    }
+
+    if (userProfile.unlockedSites.includes(selectedSite)) {
+      return;
+    }
+
+    setSelectedSite(userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "");
+  }, [isOnboarding, selectedSite, userProfile]);
+
+  useEffect(() => {
+    if (!userProfile || initializedGa4Selection) {
+      return;
+    }
+
+    setSelectedGa4Property(userProfile.activatedGa4PropertyId || "");
+    setInitializedGa4Selection(true);
+  }, [initializedGa4Selection, userProfile]);
+
+  useEffect(() => {
+    if (!user) {
+      setBillingConfig(null)
+      return
+    }
+
+    getBillingConfig()
+      .then(setBillingConfig)
+      .catch((error) => {
+        console.warn("Failed to load billing config:", error)
+        setBillingConfig(null)
+      })
+  }, [user])
 
   const [dateRange, setDateRange] = useState<DateRange>({
     from: subDays(new Date(), 30),
@@ -159,18 +239,40 @@ function MainApp() {
   const [showUnlockModal, setShowUnlockModal] = useState(false)
   const [siteToUnlock, setSiteToUnlock] = useState<string | null>(null)
   const [unlockError, setUnlockError] = useState<string | null>(null)
+  const [showGa4PropertyDialog, setShowGa4PropertyDialog] = useState(false)
+  const [isSavingGa4Property, setIsSavingGa4Property] = useState(false)
+  const [pendingGa4Property, setPendingGa4Property] = useState("")
+
+  const getPreferredGa4PropertyId = (availableSites: SiteLike[]) => {
+    const preferred = selectedGa4Property || userProfile?.activatedGa4PropertyId || "";
+    return availableSites.some((site) => site.siteUrl === preferred) ? preferred : "";
+  };
 
   useEffect(() => {
+    const googleConnected = Boolean(userProfile?.googleConnected)
+
+    if (googleConnected && isOnboarding) {
+      const ga4Service = new Ga4ApiService()
+      ga4Service.getProperties()
+        .then((fetchedSites) => {
+          setGa4Sites(fetchedSites)
+        })
+        .catch((err) => {
+          console.warn("Failed to fetch GA4 properties during onboarding:", err)
+          setGa4Sites([])
+        })
+    }
+
     if (dataSource === 'gsc') {
-      if (accessToken) {
+      if (googleConnected) {
         setFetchingSites(true)
         setApiError(null)
-        const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
+        const gscService = new GscApiService(null, userProfile?.tier || 'free')
         gscService.getSites()
           .then(fetchedSites => {
             setSessionExpired(false)
             setSites(fetchedSites)
-            if (fetchedSites.length > 0) {
+            if (fetchedSites.length > 0 && !isOnboarding) {
               setSelectedSite(getPreferredSiteUrl(
                 selectedSite,
                 fetchedSites,
@@ -187,10 +289,9 @@ function MainApp() {
             }
           })
           .catch(err => {
-            if (isGoogleAuthError(err.message)) {
-              console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
+            if (isGoogleAuthError(err.message) || err.message.includes('GOOGLE_NOT_CONNECTED')) {
+              console.warn("Stored Google connection is missing or expired.");
               setSessionExpired(true);
-              clearAccessToken()
               
               // Fallback to warehouse-synced / offline sites + known sites from profile
               fetchOfflineGscSites(userProfile)
@@ -233,7 +334,7 @@ function MainApp() {
       bingService.getSites()
         .then(fetchedSites => {
           setBingSites(fetchedSites)
-          if (fetchedSites.length > 0) {
+          if (fetchedSites.length > 0 && !isOnboarding) {
             setSelectedSite(getPreferredSiteUrl(
               selectedSite,
               fetchedSites,
@@ -248,29 +349,22 @@ function MainApp() {
           setApiError(err.message)
         })
         .finally(() => setFetchingSites(false))
-    } else if (dataSource === 'ga4' && accessToken) {
+    } else if (dataSource === 'ga4' && googleConnected) {
       setFetchingSites(true)
       setApiError(null)
-      const ga4Service = new Ga4ApiService(accessToken)
+      const ga4Service = new Ga4ApiService()
       ga4Service.getProperties()
-        .then(fetchedSites => {
-          setSessionExpired(false)
-          setGa4Sites(fetchedSites)
-          if (fetchedSites.length > 0) {
-            setSelectedSite(getPreferredSiteUrl(
-              selectedSite,
-              fetchedSites,
-              userProfile?.unlockedSites || [],
-              userProfile?.tier,
-              ga4Sites as SiteLike[],
-            ))
+          .then(fetchedSites => {
+            setSessionExpired(false)
+            setGa4Sites(fetchedSites)
+          if (fetchedSites.length > 0 && !isOnboarding) {
+            setSelectedGa4Property(getPreferredGa4PropertyId(fetchedSites))
           }
         })
         .catch(err => {
-          if (isGoogleAuthError(err.message) || isGa4ScopeError(err.message)) {
-            console.warn("GA4 Access token expired or missing scopes. Prompting re-authentication.");
+          if (isGoogleAuthError(err.message) || isGa4ScopeError(err.message) || err.message.includes('GOOGLE_NOT_CONNECTED')) {
+            console.warn("Stored Google connection is missing or expired.");
             setSessionExpired(true);
-            clearAccessToken()
           } else if (err.message.includes("Google Analytics Admin API has not been used in project") || err.message.includes("is disabled")) {
             console.error("GA4 API not enabled:", err)
             setApiError(err.message)
@@ -283,8 +377,10 @@ function MainApp() {
           }
         })
         .finally(() => setFetchingSites(false))
+    } else if (dataSource === 'ga4' && !googleConnected) {
+      setGa4Sites([])
     }
-  }, [accessToken, clearAccessToken, userProfile?.tier, userProfile?.unlockedSites, userProfile?.bingApiKey, dataSource, user])
+  }, [dataSource, isOnboarding, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
     if (!userProfile) return;
@@ -296,9 +392,9 @@ function MainApp() {
       return;
     }
 
-    const limit = userProfile.tier === 'free' ? 1 : userProfile.tier === 'pro' ? 3 : Infinity;
+    const limit = getPlanPropertyLimit(userProfile.tier);
     
-    if (userProfile.unlockedSites.length < limit) {
+    if (limit === null || userProfile.unlockedSites.length < limit) {
       // They can unlock it
       setSiteToUnlock(siteUrl);
       setShowUnlockModal(true);
@@ -324,11 +420,224 @@ function MainApp() {
   };
 
   const handleSaveSettings = async () => {
-    await setBingApiKey(tempBingKey);
+    await updateUserProfile({
+      avatarUrl: settingsDraft.avatarUrl,
+      bio: settingsDraft.bio,
+      company: settingsDraft.company,
+      name: settingsDraft.name,
+    });
+    await setBingApiKey(settingsDraft.bingApiKey);
     setShowSettingsModal(false);
   };
 
-  const currentSites = dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : ga4Sites;
+  const handleGa4PropertySelect = async (propertyId: string) => {
+    setSelectedGa4Property(propertyId);
+
+    if (isOnboarding) {
+      return;
+    }
+
+    const selectedProperty = ga4Sites.find((site) => site.siteUrl === propertyId);
+    try {
+      await updateDefaultGa4Property(propertyId, selectedProperty?.displayName || null);
+    } catch (err) {
+      console.warn("Failed to persist default GA4 property:", err);
+    }
+  };
+
+  const handleSaveGa4Property = async () => {
+    if (!pendingGa4Property) {
+      return;
+    }
+
+    const selectedProperty = ga4Sites.find((site) => site.siteUrl === pendingGa4Property);
+    setIsSavingGa4Property(true);
+
+    const saveToast = toast.loading("Saving GA4 property", {
+      description: "We’re assigning the selected GA4 property to this workspace.",
+    });
+
+    try {
+      await updateDefaultGa4Property(pendingGa4Property, selectedProperty?.displayName || null);
+      setSelectedGa4Property(pendingGa4Property);
+      toast.success("GA4 property saved", {
+        id: saveToast,
+        description: "This workspace will now use the selected GA4 property by default.",
+      });
+      setShowGa4PropertyDialog(false);
+    } catch (err: any) {
+      toast.error("Failed to save GA4 property", {
+        id: saveToast,
+        description: err.message || "We couldn't assign that GA4 property to this workspace.",
+      });
+    } finally {
+      setIsSavingGa4Property(false);
+    }
+  };
+
+  const handleConnectGoogleData = async () => {
+    setIsConnectingGoogleData(true);
+    setApiError(null);
+
+    const connectingToast = toast.loading("Connecting Google data", {
+      description: "We’re opening Google consent so we can enable live Search Console and GA4 data.",
+    });
+
+    try {
+      await connectGoogleServices();
+      setSessionExpired(false);
+      toast.success("Google data connected", {
+        id: connectingToast,
+        description: "Live Search Console and GA4 access is ready. We’re refreshing your workspace now.",
+      });
+    } catch (err: any) {
+      toast.error("Google data connection failed", {
+        id: connectingToast,
+        description: err.message || "We couldn't finish connecting your Google data.",
+      });
+      throw err;
+    } finally {
+      setIsConnectingGoogleData(false);
+    }
+  };
+
+  const handleFinishOnboarding = async (
+    bingApiKey: string,
+    activatedGa4Property?: { siteUrl: string; displayName: string } | null,
+  ) => {
+    if (!selectedSite) {
+      throw new Error("Choose a property to activate first.");
+    }
+
+    const isUnlocked = userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(selectedSite);
+    if (!isUnlocked) {
+      await unlockSite(selectedSite);
+    }
+
+    if (bingApiKey.trim() && bingApiKey.trim() !== (userProfile?.bingApiKey || "")) {
+      await setBingApiKey(bingApiKey.trim());
+    }
+
+    await completeOnboarding(selectedSite, activatedGa4Property);
+  };
+
+  const handleDisconnectGoogleData = async () => {
+    setIsDisconnectingGoogleData(true);
+    const disconnectToast = toast.loading("Disconnecting Google data", {
+      description: "We’re removing the saved Search Console and GA4 connection from this workspace.",
+    });
+
+    try {
+      await disconnectGoogleServices();
+      setSessionExpired(true);
+      toast.success("Google data disconnected", {
+        id: disconnectToast,
+        description: "Your app login is still active. Reconnect Google Data whenever you want live reporting again.",
+      });
+    } catch (err: any) {
+      toast.error("Failed to disconnect Google data", {
+        id: disconnectToast,
+        description: err.message || "We couldn't remove the saved Google data connection.",
+      });
+    } finally {
+      setIsDisconnectingGoogleData(false);
+    }
+  };
+
+  const handleSetDefaultSite = async () => {
+    if (!selectedSite) {
+      return;
+    }
+
+    setIsUpdatingDefaultSite(true);
+    const defaultToast = toast.loading("Saving default property", {
+      description: "We’re updating the property that should open first for this workspace.",
+    });
+
+    try {
+      await updateDefaultSite(selectedSite);
+      toast.success("Default property updated", {
+        id: defaultToast,
+        description: "This property will now open first when you return to the dashboard.",
+      });
+    } catch (err: any) {
+      toast.error("Failed to update default property", {
+        id: defaultToast,
+        description: err.message || "We couldn't update your default property.",
+      });
+    } finally {
+      setIsUpdatingDefaultSite(false);
+    }
+  };
+
+  const handleStartCheckout = async (targetPlan: "pro" | "enterprise") => {
+    setIsStartingCheckout(true);
+    const checkoutToast = toast.loading(targetPlan === "enterprise" ? "Preparing enterprise contact flow" : "Preparing checkout", {
+      description: targetPlan === "enterprise"
+        ? "We’re opening the enterprise upgrade path for this workspace."
+        : "We’re opening the upgrade flow for this workspace.",
+    });
+
+    try {
+      const url = await startCheckout(targetPlan);
+      window.open(url, "_blank", "noopener,noreferrer");
+      toast.success(targetPlan === "enterprise" ? "Enterprise flow opened" : "Checkout opened", {
+        id: checkoutToast,
+        description: "Continue the plan change in the newly opened billing window.",
+      });
+    } catch (err: any) {
+      toast.error("Billing flow unavailable", {
+        id: checkoutToast,
+        description: err.message || "We couldn't open billing right now.",
+      });
+    } finally {
+      setIsStartingCheckout(false);
+    }
+  };
+
+  const handleOpenBillingPortal = async () => {
+    setIsOpeningBillingPortal(true);
+    const portalToast = toast.loading("Opening billing portal", {
+      description: "We’re preparing your self-serve billing workspace.",
+    });
+
+    try {
+      const url = await openBillingPortal();
+      window.open(url, "_blank", "noopener,noreferrer");
+      toast.success("Billing portal opened", {
+        id: portalToast,
+        description: "Manage payment methods, invoices, and subscription details in the new tab.",
+      });
+    } catch (err: any) {
+      toast.error("Billing portal unavailable", {
+        id: portalToast,
+        description: err.message || "We couldn't open the billing portal right now.",
+      });
+    } finally {
+      setIsOpeningBillingPortal(false);
+    }
+  };
+
+  const accessibleGa4Sites =
+    userProfile?.tier === 'enterprise'
+      ? ga4Sites
+      : userProfile?.activatedGa4PropertyId
+        ? ga4Sites.filter((site) => site.siteUrl === userProfile.activatedGa4PropertyId)
+        : [];
+
+  const currentSites = dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : accessibleGa4Sites;
+  const currentSelection = dataSource === 'ga4' ? selectedGa4Property : selectedSite;
+  const hasValidSelectedSite = currentSites.some((site) => {
+    if (site.siteUrl !== currentSelection) {
+      return false;
+    }
+
+    if (dataSource === 'ga4') {
+      return true;
+    }
+
+    return userProfile?.tier === 'enterprise' || Boolean(userProfile?.unlockedSites.includes(site.siteUrl));
+  });
 
   const switchDataSource = (nextSource: DataSource, availableSites: SiteLike[]) => {
     if (dataSource === nextSource) {
@@ -338,15 +647,87 @@ function MainApp() {
     setDataSource(nextSource);
 
     if (availableSites.length > 0) {
-      setSelectedSite(getPreferredSiteUrl(
-        selectedSite,
-        availableSites,
-        userProfile?.unlockedSites || [],
-        userProfile?.tier,
-        ga4Sites as SiteLike[],
-      ));
+      if (isOnboarding) {
+        if (nextSource === 'ga4') {
+          setSelectedGa4Property("");
+        } else {
+          setSelectedSite("");
+        }
+      } else {
+        if (nextSource === 'ga4') {
+          setSelectedGa4Property(getPreferredGa4PropertyId(availableSites));
+        } else {
+          const preferred = getPreferredSiteUrl(
+            selectedSite,
+            availableSites,
+            userProfile?.unlockedSites || [],
+            userProfile?.tier,
+            ga4Sites as SiteLike[],
+          );
+          setSelectedSite(preferred);
+        }
+      }
+    } else {
+      if (nextSource === 'ga4') {
+        setSelectedGa4Property("");
+      } else {
+        setSelectedSite("");
+      }
     }
   };
+
+  useEffect(() => {
+    if (currentSites.length === 0) {
+      if (dataSource === 'ga4') {
+        if (ga4Sites.length > 0) {
+          return;
+        }
+        setSelectedGa4Property("");
+      } else {
+        setSelectedSite("");
+      }
+      return;
+    }
+
+    if (isOnboarding) {
+      return;
+    }
+
+    const currentSelectionIsAccessible = currentSites.some((site) => {
+      if (site.siteUrl !== currentSelection) {
+        return false;
+      }
+
+      if (dataSource === 'ga4') {
+        return true;
+      }
+
+      return userProfile?.tier === 'enterprise' || Boolean(userProfile?.unlockedSites.includes(site.siteUrl));
+    });
+
+    if (!currentSelectionIsAccessible) {
+      if (dataSource === 'ga4') {
+        setSelectedGa4Property(getPreferredGa4PropertyId(currentSites));
+      } else {
+        const preferred = getPreferredSiteUrl(
+          selectedSite,
+          currentSites,
+          userProfile?.unlockedSites || [],
+          userProfile?.tier,
+          ga4Sites as SiteLike[],
+        );
+        setSelectedSite(preferred);
+      }
+    }
+  }, [currentSites, currentSelection, dataSource, ga4Sites, isOnboarding, selectedGa4Property, selectedSite, userProfile?.activatedGa4PropertyId, userProfile?.tier, userProfile?.unlockedSites]);
+
+  useEffect(() => {
+    if (!showGa4PropertyDialog) {
+      return;
+    }
+
+    setPendingGa4Property(selectedGa4Property || userProfile?.activatedGa4PropertyId || "");
+  }, [selectedGa4Property, showGa4PropertyDialog, userProfile?.activatedGa4PropertyId]);
 
   if (loading) {
     return (
@@ -363,70 +744,97 @@ function MainApp() {
     return <AuthScreen />
   }
 
+  if (userProfile && !userProfile.onboardingCompleted) {
+    return (
+      <OnboardingFlow
+        bingApiKey={userProfile.bingApiKey}
+        fetchingSites={fetchingSites}
+        fetchingGa4Sites={fetchingSites}
+        ga4Sites={ga4Sites}
+        googleConnected={Boolean(userProfile.googleConnected)}
+        isConnectingGoogle={isConnectingGoogleData}
+        onComplete={handleFinishOnboarding}
+        onConnectGoogle={handleConnectGoogleData}
+        onOpenPlan={() => openSettings("plan")}
+        onSelectGa4Property={setSelectedGa4Property}
+        onSelectSite={setSelectedSite}
+        selectedGa4Property={selectedGa4Property}
+        selectedSite={selectedSite}
+        sites={sites}
+        userName={(user.displayName || user.email || '').split(' ')[0]}
+        userProfile={userProfile}
+      />
+    )
+  }
+
   return (
     <SidebarProvider>
       <GlobalSyncPoller siteUrl={selectedSite} />
-      <div className="flex min-h-screen w-full bg-background">
+      <div className="app-shell-bg flex min-h-screen w-full">
         <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />
         <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
           <AppHeader
-            accessToken={accessToken}
             activeMenu={activeMenu}
             currentSites={currentSites}
             dataSource={dataSource}
+            googleConnected={Boolean(userProfile?.googleConnected)}
             onOpenSettings={() => {
-              setTempBingKey(userProfile?.bingApiKey || "");
-              setShowSettingsModal(true);
+              openSettings("profile");
             }}
-            onSelectSite={handleSiteSelect}
-            onSignInWithGoogle={signInWithGoogle}
+            onSelectSite={dataSource === 'ga4' ? handleGa4PropertySelect : handleSiteSelect}
+            onConnectGoogle={handleConnectGoogleData}
+            isConnectingGoogle={isConnectingGoogleData}
             onSignOut={signOut}
             onSwitchDataSource={(nextSource) => {
               const availableSites = nextSource === 'gsc' ? sites : nextSource === 'bing' ? bingSites : ga4Sites;
               switchDataSource(nextSource, availableSites);
             }}
-            selectedSite={selectedSite}
+            selectedSite={currentSelection}
             user={user}
             userProfile={userProfile}
           />
-          <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-auto">
-            <div className="max-w-7xl mx-auto space-y-6">
+          <main className="flex-1 p-4 sm:p-6 overflow-auto">
+            <div className="max-w-[1480px] mx-auto space-y-6">
               <AppToolbar
-                annotations={annotations}
+                activeMenu={activeMenu}
                 compareDateRange={compareDateRange}
                 currentSiteUrl={selectedSite}
                 dataSource={dataSource}
                 dateRange={dateRange}
-                firstName={user.displayName?.split(' ')[0]}
+                firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
                 isCompareMode={isCompareMode}
-                onAnnotationsChange={fetchAnnotations}
                 onCompareFromDateChange={handleCompareFromDateChange}
                 onCompareToDateChange={handleCompareToDateChange}
                 onFromDateChange={handleFromDateChange}
                 onToDateChange={handleToDateChange}
                 setIsCompareMode={setIsCompareMode}
-                setShowSystemAnnotations={setShowSystemAnnotations}
-                setShowUserAnnotations={setShowUserAnnotations}
                 setUseLiveData={setUseLiveData}
-                showSystemAnnotations={showSystemAnnotations}
-                showUserAnnotations={showUserAnnotations}
                 useLiveData={useLiveData}
               />
 
-              <AppStatusPanels
-                accessToken={accessToken}
-                apiError={apiError}
-                bingSitesCount={bingSites.length}
-                dataSource={dataSource}
-                fetchingSites={fetchingSites}
-                ga4SitesCount={ga4Sites.length}
-                gscSitesCount={sites.length}
-                onSignInWithGoogle={signInWithGoogle}
-                selectedSite={selectedSite}
-                sessionExpired={sessionExpired}
-              />
+              {activeMenu !== "Settings" && activeMenu !== "AI Content Auditor" && (
+                <AppStatusPanels
+                  apiError={apiError}
+                  bingSitesCount={bingSites.length}
+                  billingStatus={userProfile?.billingStatus}
+                  dataSource={dataSource}
+                  fetchingSites={fetchingSites}
+                  fullGa4SitesCount={ga4Sites.length}
+                  ga4SitesCount={accessibleGa4Sites.length}
+                  googleConnected={Boolean(userProfile?.googleConnected)}
+                  gscSitesCount={sites.length}
+                  hasValidSelectedSite={hasValidSelectedSite}
+                  isConnectingGoogle={isConnectingGoogleData}
+                  onConnectGoogle={handleConnectGoogleData}
+                  onOpenGa4Setup={() => setShowGa4PropertyDialog(true)}
+                  onOpenPlan={() => openSettings("plan")}
+                  selectedSite={currentSelection}
+                  sessionExpired={sessionExpired}
+                  trialEndsAt={userProfile?.trialEndsAt}
+                />
+              )}
 
-              {!( !accessToken && ((dataSource === 'gsc' && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) ) && (
+              {(activeMenu === "Settings" || activeMenu === "AI Content Auditor" || !( !userProfile?.googleConnected && ((dataSource === 'gsc' && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) )) && (
                 <AppContent
                   activeMenu={activeMenu}
                   annotations={annotations}
@@ -435,11 +843,15 @@ function MainApp() {
                   compareDateRange={compareDateRange}
                   dataSource={dataSource}
                   dateRange={dateRange}
-                  ga4Sites={ga4Sites}
+                  ga4Sites={accessibleGa4Sites}
                   ga4UserDimension={ga4UserDimension}
                   isCompareMode={isCompareMode}
+                  onAnnotationsChange={fetchAnnotations}
                   onGa4UserDimensionChange={setGa4UserDimension}
-                  selectedSite={selectedSite}
+                  onOpenSettings={openSettings}
+                  selectedSite={dataSource === 'ga4' ? selectedGa4Property : selectedSite}
+                  setShowSystemAnnotations={setShowSystemAnnotations}
+                  setShowUserAnnotations={setShowUserAnnotations}
                   showSystemAnnotations={showSystemAnnotations}
                   showUserAnnotations={showUserAnnotations}
                   sites={sites}
@@ -455,19 +867,44 @@ function MainApp() {
       <UnlockSiteDialog
         onClose={() => setShowUnlockModal(false)}
         onConfirm={confirmUnlock}
+        onOpenPlan={() => openSettings("plan")}
         open={showUnlockModal}
         siteToUnlock={siteToUnlock}
         unlockError={unlockError}
         userProfile={userProfile}
       />
       <SettingsDialog
+        billingConfig={billingConfig}
         dataSource={dataSource}
+        googleConnected={Boolean(userProfile?.googleConnected)}
+        initialTab={settingsInitialTab}
+        isConnectingGoogle={isConnectingGoogleData}
+        isDisconnectingGoogle={isDisconnectingGoogleData}
+        isOpeningBillingPortal={isOpeningBillingPortal}
+        isStartingCheckout={isStartingCheckout}
+        isUpdatingDefaultSite={isUpdatingDefaultSite}
         onClose={() => setShowSettingsModal(false)}
+        onConnectGoogle={handleConnectGoogleData}
+        onDisconnectGoogle={handleDisconnectGoogleData}
+        draft={settingsDraft}
+        onDraftChange={setSettingsDraft}
+        onOpenBillingPortal={handleOpenBillingPortal}
         onSave={handleSaveSettings}
-        onTempBingKeyChange={setTempBingKey}
+        onSetDefaultSite={handleSetDefaultSite}
+        onStartCheckout={handleStartCheckout}
         open={showSettingsModal}
         selectedSite={selectedSite}
-        tempBingKey={tempBingKey}
+        userEmail={user.email}
+        userProfile={userProfile}
+      />
+      <Ga4PropertyDialog
+        open={showGa4PropertyDialog}
+        properties={ga4Sites}
+        selectedProperty={pendingGa4Property}
+        saving={isSavingGa4Property}
+        onClose={() => setShowGa4PropertyDialog(false)}
+        onSave={handleSaveGa4Property}
+        onSelect={setPendingGa4Property}
       />
     </SidebarProvider>
   )

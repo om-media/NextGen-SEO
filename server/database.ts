@@ -23,12 +23,33 @@ const schemaSql = `
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT,
+    passwordHash TEXT,
+    authProvider TEXT DEFAULT 'local',
+    name TEXT,
+    company TEXT,
+    avatarUrl TEXT,
+    bio TEXT,
     tier TEXT,
     unlockedSites TEXT,
     createdAt TEXT,
     bingApiKey TEXT,
     gscRefreshToken TEXT,
-    knownSites TEXT
+    knownSites TEXT,
+    onboardingCompleted INTEGER DEFAULT 0,
+    activatedSiteUrl TEXT,
+    activatedGa4PropertyId TEXT,
+    activatedGa4DisplayName TEXT,
+    billingStatus TEXT DEFAULT 'trialing',
+    subscriptionId TEXT,
+    trialEndsAt TEXT,
+    currentPeriodEnd TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    tokenHash TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    createdAt TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS annotations (
@@ -428,7 +449,21 @@ function migrateWarehouseTables(db: Database.Database) {
 }
 
 function applyDatabaseMigrations(db: Database.Database) {
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN passwordHash TEXT');
+  runOptionalAlter(db, "ALTER TABLE users ADD COLUMN authProvider TEXT DEFAULT 'local'");
   runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN bingApiKey TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN name TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN company TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN avatarUrl TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN bio TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN onboardingCompleted INTEGER DEFAULT 0');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN activatedSiteUrl TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN activatedGa4PropertyId TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN activatedGa4DisplayName TEXT');
+  runOptionalAlter(db, "ALTER TABLE users ADD COLUMN billingStatus TEXT DEFAULT 'trialing'");
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN subscriptionId TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN trialEndsAt TEXT');
+  runOptionalAlter(db, 'ALTER TABLE users ADD COLUMN currentPeriodEnd TEXT');
   runOptionalAlter(db, 'ALTER TABLE tracked_keywords ADD COLUMN targetDomain TEXT');
   runOptionalAlter(db, 'ALTER TABLE tracked_keywords ADD COLUMN ownerId TEXT');
   runOptionalAlter(db, 'ALTER TABLE server_logs ADD COLUMN ownerId TEXT');
@@ -450,6 +485,8 @@ function applyDatabaseMigrations(db: Database.Database) {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_server_logs_owner_site_time ON server_logs(ownerId, siteUrl, timestamp);
     CREATE INDEX IF NOT EXISTS idx_server_logs_owner_botType ON server_logs(ownerId, siteUrl, botType);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(userId);
   `);
 }
 

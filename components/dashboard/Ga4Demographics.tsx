@@ -22,19 +22,19 @@ const DIMENSIONS = [
 ];
 
 export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
-  const { accessToken } = useAuth()
+  const { userProfile } = useAuth()
   const [data, setData] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!accessToken || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
 
     const fetchData = async () => {
       setLoading(true)
       setError(null)
       try {
-        const ga4Service = new Ga4ApiService(accessToken)
+        const ga4Service = new Ga4ApiService()
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
         
@@ -75,11 +75,11 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
     }
 
     fetchData()
-  }, [siteUrl, dateRange, accessToken])
+  }, [siteUrl, dateRange, userProfile?.googleConnected])
 
   if (loading && Object.keys(data).length === 0) {
     return (
-      <Card className="mb-4">
+      <Card className="mb-4 rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </CardContent>
@@ -89,7 +89,7 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
 
   if (error) {
     return (
-      <Card className="mb-4">
+      <Card className="mb-4 rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex flex-col items-center justify-center h-48 text-destructive space-y-4">
           <div className="text-center">{error}</div>
         </CardContent>
@@ -100,8 +100,8 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
       {DIMENSIONS.map((dim) => (
-        <Card key={dim.key} className="flex flex-col">
-          <CardHeader className="pb-2">
+        <Card key={dim.key} className="flex flex-col rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <CardHeader className="border-b border-[#E6ECE8] bg-white pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Sessions by {dim.label}</CardTitle>
           </CardHeader>
           <CardContent className="flex-1 flex flex-col">

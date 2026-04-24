@@ -56,12 +56,17 @@ export function getPreferredSiteUrl(
   }
 
   const match = findMatchingSite(selectedSite, availableSites, ga4Sites);
-  if (match) {
+  const matchIsAccessible = Boolean(match) && (tier === 'enterprise' || unlockedSites.includes(match.siteUrl));
+  if (match && matchIsAccessible) {
     return match.siteUrl;
   }
 
   const firstUnlocked = availableSites.find((site) => tier === 'enterprise' || unlockedSites.includes(site.siteUrl));
-  return firstUnlocked?.siteUrl || availableSites[0]?.siteUrl || '';
+  if (tier === 'enterprise') {
+    return firstUnlocked?.siteUrl || availableSites[0]?.siteUrl || '';
+  }
+
+  return firstUnlocked?.siteUrl || '';
 }
 
 export function mergeUniqueSites<T extends SiteLike>(existingSites: T[], incomingSites: T[]) {

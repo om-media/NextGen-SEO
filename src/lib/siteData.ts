@@ -46,7 +46,8 @@ export function buildOfflineGscSites(statuses: Array<{ siteUrl: string }>, profi
 export async function fetchOfflineGscSites(profile?: SiteProfile | null) {
   const response = await authFetch("/api/warehouse/status");
   const statuses = await response.json();
-  return buildOfflineGscSites(statuses, profile);
+  const normalizedStatuses = Array.isArray(statuses) ? statuses : [];
+  return buildOfflineGscSites(normalizedStatuses, profile);
 }
 
 export async function persistKnownSites(userId: string, knownSites: string[]) {

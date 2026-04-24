@@ -5,7 +5,9 @@ import type { AuthedRequest } from '../types.js';
 import { isNonEmptyString } from '../validation.js';
 
 export function registerWorkspaceCrudRoutes(app: Express, db: Database.Database) {
-  app.get('/api/projects', requireAuth, (req: AuthedRequest, res) => {
+  const authRequired = requireAuth(db);
+
+  app.get('/api/projects', authRequired, (req: AuthedRequest, res) => {
     try {
       const rows = db.prepare('SELECT * FROM projects WHERE ownerId = ?').all(req.authUser!.uid);
       res.json(rows);
@@ -14,7 +16,7 @@ export function registerWorkspaceCrudRoutes(app: Express, db: Database.Database)
     }
   });
 
-  app.post('/api/projects', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/projects', authRequired, (req: AuthedRequest, res) => {
     const { id, name, domain, createdAt } = req.body;
     if (!isNonEmptyString(id)) return res.status(400).json({ error: 'Invalid id' });
     if (!isNonEmptyString(name)) return res.status(400).json({ error: 'Invalid name' });
@@ -28,7 +30,7 @@ export function registerWorkspaceCrudRoutes(app: Express, db: Database.Database)
     }
   });
 
-  app.delete('/api/projects/:id', requireAuth, (req: AuthedRequest, res) => {
+  app.delete('/api/projects/:id', authRequired, (req: AuthedRequest, res) => {
     try {
       const result = db.prepare('DELETE FROM projects WHERE id = ? AND ownerId = ?').run(req.params.id, req.authUser!.uid);
       if (result.changes === 0) {
@@ -40,7 +42,7 @@ export function registerWorkspaceCrudRoutes(app: Express, db: Database.Database)
     }
   });
 
-  app.get('/api/filters', requireAuth, (req: AuthedRequest, res) => {
+  app.get('/api/filters', authRequired, (req: AuthedRequest, res) => {
     const projectId = req.query.projectId;
     if (projectId !== undefined && !isNonEmptyString(projectId)) return res.status(400).json({ error: 'Invalid projectId' });
     try {
@@ -53,7 +55,7 @@ export function registerWorkspaceCrudRoutes(app: Express, db: Database.Database)
     }
   });
 
-  app.post('/api/filters', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/filters', authRequired, (req: AuthedRequest, res) => {
     const { id, name, projectId, configuration, createdAt } = req.body;
     if (!isNonEmptyString(id)) return res.status(400).json({ error: 'Invalid id' });
     if (!isNonEmptyString(name)) return res.status(400).json({ error: 'Invalid name' });
@@ -68,7 +70,7 @@ export function registerWorkspaceCrudRoutes(app: Express, db: Database.Database)
     }
   });
 
-  app.delete('/api/filters/:id', requireAuth, (req: AuthedRequest, res) => {
+  app.delete('/api/filters/:id', authRequired, (req: AuthedRequest, res) => {
     try {
       const result = db.prepare('DELETE FROM filters WHERE id = ? AND ownerId = ?').run(req.params.id, req.authUser!.uid);
       if (result.changes === 0) {

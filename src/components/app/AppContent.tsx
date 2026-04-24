@@ -1,6 +1,8 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { Overview } from "@/components/dashboard/Overview";
+import { AnnotationsSettings } from "@/components/dashboard/AnnotationsSettings";
 import { GscDataGrid } from "@/components/dashboard/GscDataGrid";
 import { QueryCountView } from "@/components/dashboard/QueryCountView";
 import { Ga4DataGrid } from "@/components/dashboard/Ga4DataGrid";
@@ -31,8 +33,12 @@ type AppContentProps = {
   ga4Sites: Array<{ siteUrl: string; displayName: string }>;
   ga4UserDimension: Ga4Dimension;
   isCompareMode: boolean;
+  onAnnotationsChange: () => Promise<void>;
   onGa4UserDimensionChange: (value: Ga4Dimension) => void;
+  onOpenSettings: (tab?: "profile" | "plan" | "workspace" | "integrations") => void;
   selectedSite: string;
+  setShowSystemAnnotations: (value: boolean) => void;
+  setShowUserAnnotations: (value: boolean) => void;
   showSystemAnnotations: boolean;
   showUserAnnotations: boolean;
   sites: GscSite[];
@@ -59,8 +65,12 @@ export function AppContent({
   ga4Sites,
   ga4UserDimension,
   isCompareMode,
+  onAnnotationsChange,
   onGa4UserDimensionChange,
+  onOpenSettings,
   selectedSite,
+  setShowSystemAnnotations,
+  setShowUserAnnotations,
   showSystemAnnotations,
   showUserAnnotations,
   sites,
@@ -68,20 +78,41 @@ export function AppContent({
   userProfile,
 }: AppContentProps) {
   const visibleAnnotations = getVisibleAnnotations(annotations, showSystemAnnotations, showUserAnnotations);
+  const isUnlockedSite = (siteUrl: string) =>
+    userProfile?.tier === "enterprise" || Boolean(userProfile?.unlockedSites.includes(siteUrl));
+  const dashboardTabListClass = "w-full justify-start gap-10 rounded-none border-b border-[#E6ECE8] bg-transparent p-0";
+  const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-[#647067] shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-[#0F3D2E] data-active:bg-transparent data-active:text-[#0F3D2E] data-active:shadow-none";
 
   return (
     <>
-      {selectedSite && !apiError && dataSource === "gsc" && sites.some((site) => site.siteUrl === selectedSite) && activeMenu === "Dashboard" && (
+      {selectedSite && !apiError && dataSource === "gsc" && sites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
         <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
-            <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
-            <TabsTrigger value="queries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Queries</TabsTrigger>
-            <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
-            <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Countries</TabsTrigger>
-            <TabsTrigger value="query-count" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Query Count</TabsTrigger>
+          <TabsList variant="line" className={dashboardTabListClass}>
+            <TabsTrigger value="overview" className={dashboardTabTriggerClass}>Overview</TabsTrigger>
+            <TabsTrigger value="pages" className={dashboardTabTriggerClass}>Pages</TabsTrigger>
+            <TabsTrigger value="queries" className={dashboardTabTriggerClass}>Queries</TabsTrigger>
+            <TabsTrigger value="countries" className={dashboardTabTriggerClass}>Countries</TabsTrigger>
+            <TabsTrigger value="query-count" className={dashboardTabTriggerClass}>Query Count</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
-            <Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} annotations={visibleAnnotations} />
+            <Overview
+              siteUrl={selectedSite}
+              dateRange={dateRange}
+              isCompareMode={isCompareMode}
+              compareDateRange={compareDateRange}
+              annotations={visibleAnnotations}
+              annotationControls={
+                <AnnotationsSettings
+                  currentSiteUrl={selectedSite}
+                  annotations={annotations}
+                  onAnnotationsChange={onAnnotationsChange}
+                  showSystemAnnotations={showSystemAnnotations}
+                  setShowSystemAnnotations={setShowSystemAnnotations}
+                  showUserAnnotations={showUserAnnotations}
+                  setShowUserAnnotations={setShowUserAnnotations}
+                />
+              }
+            />
             <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} hideTrackerButton={true} />
           </TabsContent>
           <TabsContent value="queries" className="space-y-4">
@@ -99,11 +130,11 @@ export function AppContent({
         </Tabs>
       )}
 
-      {selectedSite && !apiError && dataSource === "bing" && userProfile?.bingApiKey && bingSites.some((site) => site.siteUrl === selectedSite) && activeMenu === "Dashboard" && (
+      {selectedSite && !apiError && dataSource === "bing" && userProfile?.bingApiKey && bingSites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
         <div className="space-y-4">
-          <div className="p-4 border rounded-lg bg-card">
-            <h3 className="text-lg font-medium mb-2">Bing Webmaster Tools Data</h3>
-            <p className="text-sm text-muted-foreground">Bing integration is currently in beta. Advanced filtering and comparison features will be added soon.</p>
+          <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+            <h3 className="mb-1 text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">Bing Webmaster Tools data</h3>
+            <p className="max-w-2xl text-sm leading-6 text-[#647067]">Bing integration is currently in beta. Advanced filtering and comparison features will be added soon.</p>
           </div>
           <BingDataGrid siteUrl={selectedSite} />
         </div>
@@ -111,12 +142,12 @@ export function AppContent({
 
       {selectedSite && !apiError && dataSource === "ga4" && ga4Sites.some((site) => site.siteUrl === selectedSite) && activeMenu === "Dashboard" && (
         <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="bg-transparent border-b rounded-none w-full justify-start h-auto p-0 space-x-6 flex-wrap">
-            <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Overview</TabsTrigger>
-            <TabsTrigger value="events" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Events</TabsTrigger>
-            <TabsTrigger value="pages" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Pages</TabsTrigger>
-            <TabsTrigger value="sources" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Traffic</TabsTrigger>
-            <TabsTrigger value="countries" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-0 py-3 data-[state=active]:shadow-none font-medium text-muted-foreground data-[state=active]:text-foreground transition-none">Users</TabsTrigger>
+          <TabsList variant="line" className={dashboardTabListClass}>
+            <TabsTrigger value="overview" className={dashboardTabTriggerClass}>Overview</TabsTrigger>
+            <TabsTrigger value="events" className={dashboardTabTriggerClass}>Events</TabsTrigger>
+            <TabsTrigger value="pages" className={dashboardTabTriggerClass}>Pages</TabsTrigger>
+            <TabsTrigger value="sources" className={dashboardTabTriggerClass}>Traffic</TabsTrigger>
+            <TabsTrigger value="countries" className={dashboardTabTriggerClass}>Users</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
             <Ga4Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} annotations={visibleAnnotations} />
@@ -133,10 +164,13 @@ export function AppContent({
           </TabsContent>
           <TabsContent value="countries" className="space-y-4">
             <Ga4Demographics siteUrl={selectedSite} dateRange={dateRange} />
-            <div className="flex justify-between items-center mt-8">
-              <h3 className="text-lg font-medium">Detailed User Data</h3>
+            <div className="mt-8 flex items-center justify-between rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+              <div>
+                <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">Detailed user data</h3>
+                <p className="mt-1 text-sm text-[#647067]">Switch the dimension used for the detailed GA4 user breakdown.</p>
+              </div>
               <Select value={ga4UserDimension} onValueChange={(value) => onGa4UserDimensionChange(value as Ga4Dimension)}>
-                <SelectTrigger className="w-[180px]">
+                <SelectTrigger className="w-[190px] rounded-xl border-[#E6ECE8] bg-white shadow-sm">
                   <SelectValue placeholder="Select Dimension" />
                 </SelectTrigger>
                 <SelectContent>
@@ -160,21 +194,80 @@ export function AppContent({
         </div>
       )}
 
-      {selectedSite && !apiError && activeMenu === "Rank Tracker" && (
+      {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Rank Tracker" && (
         <div className="space-y-4">
           <RankTrackerView siteUrl={selectedSite} />
         </div>
       )}
 
-      {selectedSite && !apiError && activeMenu === "Server Logs" && (
+      {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Server Logs" && (
         <div className="space-y-4">
           <LogAnalyzerView siteUrl={selectedSite} dateRange={dateRange} />
         </div>
       )}
 
-      {selectedSite && !apiError && activeMenu === "Page Indexing" && (
+      {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Page Indexing" && (
         <div className="space-y-4">
           <PageIndexingView siteUrl={selectedSite} dateRange={dateRange} isLive={useLiveData} />
+        </div>
+      )}
+
+      {activeMenu === "Settings" && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {[
+            {
+              title: "Profile",
+              description: "Update your display name, company, bio, and avatar image.",
+              action: "Edit profile",
+              tab: "profile" as const,
+            },
+            {
+              title: "Plan",
+              description: "Review property limits, billing status, and upgrade options.",
+              action: "View plan",
+              tab: "plan" as const,
+            },
+            {
+              title: "Workspace",
+              description: "Manage your default property and active site access.",
+              action: "Workspace settings",
+              tab: "workspace" as const,
+            },
+            {
+              title: "Integrations",
+              description: "Reconnect Google data, add Bing API keys, and sync warehouse data.",
+              action: "Open integrations",
+              tab: "integrations" as const,
+            },
+          ].map((item) => (
+            <div key={item.tab} className="flex min-h-[220px] flex-col justify-between rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+              <div>
+                <p className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">{item.title}</p>
+                <p className="mt-2 text-sm leading-6 text-[#647067]">{item.description}</p>
+              </div>
+              <Button className="mt-6 justify-start" variant="outline" onClick={() => onOpenSettings(item.tab)}>
+                {item.action}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeMenu === "AI Content Auditor" && (
+        <div className="rounded-2xl border border-[#E6ECE8] bg-white p-8 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <div className="max-w-2xl">
+            <p className="text-xl font-semibold tracking-[-0.01em] text-[#0F172A]">AI Content Auditor is being prepared</p>
+            <p className="mt-2 text-sm leading-6 text-[#647067]">
+              This section now has the same workspace shell, but the audit workflow still needs to be wired to real content data before we expose controls here.
+            </p>
+          </div>
+          <div className="mt-6 grid gap-3 md:grid-cols-3">
+            {["Content inventory", "Quality signals", "Actionable recommendations"].map((label) => (
+              <div key={label} className="rounded-2xl border border-dashed border-[#D9E5DE] bg-[#FBFCFB] p-4 text-sm text-[#647067]">
+                {label}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </>

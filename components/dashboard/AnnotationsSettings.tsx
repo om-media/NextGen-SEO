@@ -73,18 +73,22 @@ export function AnnotationsSettings({
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger render={<Button variant="outline" size="sm" className="gap-2" />}>
-        <Tag className="w-4 h-4" />
-        Annotations
-      </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
+    <div className="flex flex-wrap items-center gap-3">
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogTrigger render={<Button variant="outline" size="sm" className="h-9 gap-2 rounded-lg border-[#E6ECE8] bg-white shadow-sm" />}>
+          <Tag className="w-4 h-4" />
+          Annotations
+          <span className="ml-1 rounded-full bg-[#EEF3FF] px-1.5 py-0.5 text-xs font-semibold text-[#2F7DF6]">
+            {annotations.length}
+          </span>
+        </DialogTrigger>
+      <DialogContent className="max-h-[80vh] max-w-2xl overflow-hidden p-0 flex flex-col">
+        <DialogHeader className="border-b border-[#E6ECE8] bg-white px-6 py-5">
           <DialogTitle>Annotations</DialogTitle>
         </DialogHeader>
         
-        <div className="flex flex-col gap-6 overflow-y-auto pr-2 py-4">
-          <div className="flex items-center gap-6 p-4 rounded-md bg-muted/30 border">
+        <div className="flex flex-col gap-6 overflow-y-auto bg-[#FBFCFB] px-6 py-5">
+          <div className="flex flex-wrap items-center gap-6 rounded-2xl border border-[#E6ECE8] bg-white p-4 shadow-sm">
             <div className="flex items-center space-x-2">
               <Switch checked={showSystemAnnotations} onCheckedChange={setShowSystemAnnotations} id="show-sys" />
               <Label htmlFor="show-sys" className="cursor-pointer">Show Google Updates</Label>
@@ -103,7 +107,7 @@ export function AnnotationsSettings({
           </div>
 
           {isAdding && (
-            <div className="p-4 border rounded-md space-y-4 bg-muted/20">
+            <div className="space-y-4 rounded-2xl border border-[#E6ECE8] bg-white p-4 shadow-sm">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Date</Label>
@@ -130,12 +134,12 @@ export function AnnotationsSettings({
 
           <div className="space-y-3">
             {annotations.length === 0 ? (
-              <div className="text-center p-8 text-muted-foreground border rounded-md bg-muted/10">
+              <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-8 text-center text-muted-foreground">
                 No annotations found for this view.
               </div>
             ) : (
               annotations.map(ann => (
-                <div key={ann.id} className="flex flex-col p-4 border rounded-md bg-card relative shadow-sm group">
+                <div key={ann.id} className="group relative flex flex-col rounded-2xl border border-[#E6ECE8] bg-white p-4 shadow-sm">
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex items-center gap-2">
                       <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${ann.type === 'system' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
@@ -154,13 +158,24 @@ export function AnnotationsSettings({
                   </div>
                   <h4 className="font-semibold text-foreground">{ann.title}</h4>
                   {ann.description && <p className="text-sm text-muted-foreground mt-1">{ann.description}</p>}
-                  {ann.siteUrl && <span className="text-xs text-muted-foreground mt-2 opacity-50 border-t pt-2 block truncate">Site: {ann.siteUrl}</span>}
+                  {ann.siteUrl && <span className="text-xs text-muted-foreground mt-2 opacity-50 border-t border-[#E6ECE8] pt-2 block truncate">Site: {ann.siteUrl}</span>}
                 </div>
               ))
             )}
           </div>
         </div>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+      <div className="flex flex-wrap items-center gap-3 text-xs text-[#647067]">
+        <label className="flex items-center gap-2">
+          <Switch checked={showSystemAnnotations} onCheckedChange={setShowSystemAnnotations} />
+          Google updates
+        </label>
+        <label className="flex items-center gap-2">
+          <Switch checked={showUserAnnotations} onCheckedChange={setShowUserAnnotations} />
+          My notes
+        </label>
+      </div>
+    </div>
   )
 }

@@ -1,19 +1,26 @@
 import { Button, buttonVariants } from "@/components/ui/button";
-import { AlertCircle, BarChart3, ExternalLink } from "lucide-react";
+import { AlertCircle, BarChart3, ExternalLink, Loader2, PlugZap } from "lucide-react";
 
 type DataSource = "gsc" | "bing" | "ga4";
 
 type AppStatusPanelsProps = {
-  accessToken: string | null;
   apiError: string | null;
   bingSitesCount: number;
+  billingStatus?: "trialing" | "active" | "past_due" | "canceled" | "incomplete";
   dataSource: DataSource;
   fetchingSites: boolean;
+  fullGa4SitesCount: number;
   ga4SitesCount: number;
+  googleConnected: boolean;
   gscSitesCount: number;
-  onSignInWithGoogle: () => Promise<void>;
+  hasValidSelectedSite: boolean;
+  isConnectingGoogle: boolean;
+  onConnectGoogle: () => Promise<void>;
+  onOpenGa4Setup: () => void;
+  onOpenPlan: () => void;
   selectedSite: string;
   sessionExpired: boolean;
+  trialEndsAt?: string | null;
 };
 
 function renderNoPropertiesMessage(dataSource: DataSource) {
@@ -22,62 +29,88 @@ function renderNoPropertiesMessage(dataSource: DataSource) {
   }
 
   if (dataSource === "bing") {
-    return "We couldn't find any Bing Webmaster Tools properties. Please make sure your API key is correct and you have sites verified in Bing.";
+    return "We couldn't find any Bing Webmaster Tools properties yet. Add your Bing API key in Settings and make sure you have verified sites in Bing Webmaster Tools.";
   }
 
-  return "We couldn't find any Google Analytics 4 properties associated with your account. Please make sure you have set up GA4 for your website.";
+  return "We couldn't find any Google Analytics 4 properties for this Google account. Your onboarding property is a Search Console property, and GA4 uses separate properties like properties/123456789. Make sure GA4 exists for the site and that this Google account has access to it.";
 }
 
 export function AppStatusPanels({
-  accessToken,
   apiError,
   bingSitesCount,
+  billingStatus,
   dataSource,
   fetchingSites,
+  fullGa4SitesCount,
   ga4SitesCount,
+  googleConnected,
   gscSitesCount,
-  onSignInWithGoogle,
+  hasValidSelectedSite,
+  isConnectingGoogle,
+  onConnectGoogle,
+  onOpenGa4Setup,
+  onOpenPlan,
   selectedSite,
   sessionExpired,
+  trialEndsAt,
 }: AppStatusPanelsProps) {
   const hasNoSites =
-    !accessToken &&
+    !googleConnected &&
     ((dataSource === "gsc" && gscSitesCount === 0) ||
-      (dataSource === "ga4" && ga4SitesCount === 0) ||
-      (dataSource === "bing" && bingSitesCount === 0));
+      (dataSource === "ga4" && ga4SitesCount === 0));
 
   const showDisconnectedBanner =
-    (!accessToken || sessionExpired) &&
+    (!googleConnected || sessionExpired) &&
     ((dataSource === "gsc" && gscSitesCount > 0) || (dataSource === "ga4" && ga4SitesCount > 0));
 
+  const sourcePropertyCount = dataSource === "gsc" ? gscSitesCount : dataSource === "ga4" ? ga4SitesCount : bingSitesCount;
   const showNoProperties =
-    !selectedSite && !fetchingSites && !apiError && (accessToken || dataSource === "bing");
+    !fetchingSites &&
+    !apiError &&
+    sourcePropertyCount === 0 &&
+    (googleConnected || dataSource === "bing");
+  const showGa4PropertySetup =
+    !fetchingSites &&
+    !apiError &&
+    dataSource === "ga4" &&
+    googleConnected &&
+    ga4SitesCount === 0 &&
+    fullGa4SitesCount > 0;
+  const showInvalidSelection =
+    !fetchingSites &&
+    !apiError &&
+    sourcePropertyCount > 0 &&
+    !hasValidSelectedSite &&
+    (googleConnected || dataSource === "bing");
+  const showBillingBanner = billingStatus === "past_due" || billingStatus === "incomplete" || billingStatus === "canceled";
+  const showTrialBanner = billingStatus === "trialing" && Boolean(trialEndsAt);
 
   if (hasNoSites) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 text-center border rounded-lg bg-card shadow-sm space-y-6 mt-8">
-        <div className="bg-primary/10 p-4 rounded-full">
+      <div className="mt-8 flex flex-col items-center justify-center space-y-6 rounded-2xl border border-[#E6ECE8] bg-white p-12 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+        <div className="rounded-2xl bg-[#EAF4EC] p-4 text-[#0F3D2E]">
           <BarChart3 className="h-12 w-12 text-primary" />
         </div>
         <div className="space-y-2 max-w-md">
           {sessionExpired ? (
             <>
-              <h2 className="text-2xl font-bold tracking-tight">Offline & Empty</h2>
-              <p className="text-muted-foreground">
+              <h2 className="text-2xl font-semibold tracking-[-0.02em] text-[#0F172A]">Offline and empty</h2>
+              <p className="text-[#647067]">
                 Your Google API access token has expired securely. We attempted to fall back to Offline Mode, but we don't have any cached data available for your current sites.
               </p>
             </>
           ) : (
             <>
-              <h2 className="text-2xl font-bold tracking-tight">Connect your data</h2>
-              <p className="text-muted-foreground">
-                To view your Google Search Console and Google Analytics 4 performance, you need to connect your Google account. We only request read-only access.
+              <h2 className="text-2xl font-semibold tracking-[-0.02em] text-[#0F172A]">Connect your data</h2>
+              <p className="text-[#647067]">
+                To view your Google Search Console and Google Analytics 4 performance, connect your Google data sources. Your app login is already active, and we only request read-only access to the reporting APIs.
               </p>
             </>
           )}
         </div>
-        <Button onClick={onSignInWithGoogle} size="lg" className="px-8">
-          Connect Google Account
+        <Button onClick={onConnectGoogle} size="lg" className="px-8" disabled={isConnectingGoogle}>
+          {isConnectingGoogle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+          {isConnectingGoogle ? "Connecting Google Data..." : "Connect Google Data"}
         </Button>
       </div>
     );
@@ -85,30 +118,56 @@ export function AppStatusPanels({
 
   return (
     <>
-      {showDisconnectedBanner && (
-        <div className="bg-amber-500/10 border border-amber-500/20 text-amber-600 rounded-lg p-3 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+      {showBillingBanner && (
+        <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-destructive sm:flex-row">
           <div className="flex items-center gap-2">
             <AlertCircle className="h-5 w-5" />
             <div className="text-sm">
-              <strong>Live API Disconnected</strong> - Your 1-hour Google Cloud security session expired. You are currently viewing offline Cached & Server Log Data.
+              <strong>Billing Needs Attention</strong> - Your workspace is on the {String(billingStatus).replace("_", " ")} state. Update your plan settings so upgrades, trial transitions, and property access stay predictable.
             </div>
           </div>
-          <Button onClick={onSignInWithGoogle} variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-700 hover:bg-amber-500/20">
-            Reconnect Google
+          <Button onClick={onOpenPlan} variant="outline" size="sm" className="shrink-0">
+            View Plan
+          </Button>
+        </div>
+      )}
+
+      {showTrialBanner && !showBillingBanner && (
+        <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-[#0F3D2E]/15 bg-[#EAF4EC]/70 p-4 sm:flex-row">
+          <div className="text-sm">
+            <strong>Trial Active</strong> - Your workspace trial is active{trialEndsAt ? ` until ${new Date(trialEndsAt).toLocaleDateString()}` : ""}. Review plan options before you hit property or feature limits.
+          </div>
+          <Button onClick={onOpenPlan} variant="outline" size="sm" className="shrink-0">
+            Review Plans
+          </Button>
+        </div>
+      )}
+
+      {showDisconnectedBanner && (
+        <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-amber-700 sm:flex-row">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-5 w-5" />
+            <div className="text-sm">
+              <strong>Live API Disconnected</strong> - Your app login is still active, but your saved Google data connection needs attention, so you are currently viewing offline cached and server log data.
+            </div>
+          </div>
+          <Button onClick={onConnectGoogle} variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-700 hover:bg-amber-500/20" disabled={isConnectingGoogle}>
+            {isConnectingGoogle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {isConnectingGoogle ? "Connecting..." : "Reconnect Google Data"}
           </Button>
         </div>
       )}
 
       {apiError && (
-        <div className="p-6 border border-destructive/50 bg-destructive/10 rounded-lg flex flex-col items-start space-y-4">
-          <div className="flex items-center gap-2 text-destructive font-semibold">
+        <div className="flex flex-col items-start space-y-4 rounded-2xl border border-red-200 bg-red-50/90 p-6 shadow-[0_16px_44px_rgba(127,29,29,0.06)]">
+          <div className="flex items-center gap-2 font-semibold text-red-600">
             <AlertCircle className="h-5 w-5" />
             <h3>API Access Required</h3>
           </div>
-          <p className="text-sm text-foreground">The API needs to be enabled for your Firebase project before we can fetch your data.</p>
+          <p className="text-sm text-foreground">The required Google API needs to be enabled before we can fetch live reporting data for this workspace.</p>
           {apiError.includes("https://console.developers.google.com") ? (
             <div className="space-y-4 w-full">
-              <div className="p-3 bg-background rounded border text-xs font-mono text-muted-foreground break-all">{apiError}</div>
+              <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
               <a
                 href={apiError.match(/https:\/\/console\.developers\.google\.com[^\s]*/)?.[0] || "#"}
                 target="_blank"
@@ -120,16 +179,51 @@ export function AppStatusPanels({
               <p className="text-xs text-muted-foreground mt-2">After enabling the API, wait a minute or two, then refresh this page.</p>
             </div>
           ) : (
-            <div className="p-3 bg-background rounded border text-xs font-mono text-muted-foreground break-all">{apiError}</div>
+            <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
           )}
         </div>
       )}
 
-      {showNoProperties && (
-        <div className="p-8 text-center border rounded-lg bg-card flex flex-col items-center justify-center space-y-3">
-          <AlertCircle className="h-10 w-10 text-muted-foreground" />
-          <h3 className="text-lg font-medium">No properties found</h3>
-          <p className="text-sm text-muted-foreground max-w-md">{renderNoPropertiesMessage(dataSource)}</p>
+      {showGa4PropertySetup && (
+        <div className="relative overflow-hidden rounded-2xl border border-[#E6ECE8] bg-white p-6 shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_70%_30%,rgba(15,61,46,0.08),transparent_45%)]" />
+          <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex max-w-2xl items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#EAF4EC] text-[#0F3D2E]">
+                <PlugZap className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-[#0F3D2E]">Analytics setup needed</p>
+                <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-[#0F172A]">Choose your GA4 property</h3>
+                <p className="mt-2 text-sm leading-6 text-[#647067]">
+                  Your Google account has GA4 properties available, but this workspace does not have one assigned yet. Pick the property that should power Analytics reports here.
+                </p>
+              </div>
+            </div>
+            <Button onClick={onOpenGa4Setup} className="shrink-0 rounded-xl px-5">Choose GA4 property</Button>
+          </div>
+        </div>
+      )}
+
+      {showNoProperties && !showGa4PropertySetup && (
+        <div className="flex flex-col items-center justify-center space-y-3 rounded-2xl border border-[#E6ECE8] bg-white p-8 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F8FAF9] text-[#647067]">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+          <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">No properties found</h3>
+          <p className="max-w-md text-sm leading-6 text-[#647067]">{renderNoPropertiesMessage(dataSource)}</p>
+        </div>
+      )}
+
+      {showInvalidSelection && (
+        <div className="flex flex-col items-center justify-center space-y-3 rounded-2xl border border-[#E6ECE8] bg-white p-8 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F8FAF9] text-[#647067]">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+          <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">Choose a property for this data source</h3>
+          <p className="max-w-md text-sm leading-6 text-[#647067]">
+            Your previous selection doesn&apos;t belong to the current {dataSource === "ga4" ? "Google Analytics 4" : dataSource === "bing" ? "Bing Webmaster" : "Google Search Console"} view. Pick one from the selector in the top bar to continue.
+          </p>
         </div>
       )}
     </>

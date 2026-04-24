@@ -1,222 +1,413 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, linkWithPopup } from 'firebase/auth';
-import { auth } from '../firebase';
 import { authFetch } from '../lib/authFetch';
+import { getPlanPropertyLimit, type PlanTier } from '../../shared/plans';
+
+export interface AppUser {
+  uid: string;
+  email: string;
+  displayName?: string | null;
+  photoURL?: string | null;
+}
 
 export interface UserProfile {
+  id?: string;
   email: string;
-  tier: 'free' | 'pro' | 'enterprise';
+  name?: string | null;
+  company?: string | null;
+  avatarUrl?: string | null;
+  bio?: string | null;
+  googleConnected?: boolean;
+  tier: PlanTier;
   unlockedSites: string[];
   knownSites?: string[];
   bingApiKey?: string;
+  onboardingCompleted?: boolean;
+  activatedSiteUrl?: string | null;
+  activatedGa4PropertyId?: string | null;
+  activatedGa4DisplayName?: string | null;
+  billingStatus?: 'trialing' | 'active' | 'past_due' | 'canceled' | 'incomplete';
+  subscriptionId?: string | null;
+  trialEndsAt?: string | null;
+  currentPeriodEnd?: string | null;
 }
 
+type UserProfileUpdate = {
+  name: string;
+  company: string;
+  avatarUrl: string;
+  bio: string;
+};
+
 interface AuthContextType {
-  user: User | null;
+  user: AppUser | null;
   userProfile: UserProfile | null;
   loading: boolean;
-  accessToken: string | null;
-  signInWithGoogle: () => Promise<void>;
   registerWithEmail: (email: string, pass: string) => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
   signOut: () => Promise<void>;
-  clearAccessToken: () => void;
+  connectGoogleServices: () => Promise<void>;
+  disconnectGoogleServices: () => Promise<void>;
   unlockSite: (siteUrl: string) => Promise<void>;
   setBingApiKey: (key: string) => Promise<void>;
+  completeOnboarding: (activatedSiteUrl: string, activatedGa4Property?: { siteUrl: string; displayName: string } | null) => Promise<void>;
+  updateDefaultSite: (activatedSiteUrl: string) => Promise<void>;
+  updateDefaultGa4Property: (activatedGa4PropertyId: string, activatedGa4DisplayName?: string | null) => Promise<void>;
+  updateUserProfile: (profile: UserProfileUpdate) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+const SIGNED_OUT_NOTICE_SESSION_KEY = 'signed_out_notice';
+
+type SessionPayload = {
+  user: AppUser;
+  profile: UserProfile;
+};
+
+function buildAppUser(profile: UserProfile): AppUser {
+  return {
+    uid: profile.id || '',
+    email: profile.email,
+    displayName: profile.name || null,
+    photoURL: profile.avatarUrl || null,
+  };
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  // Keep Google API access tokens in memory only so they naturally expire with the session.
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<Error | null>(null);
 
-  if (authError) {
-    throw authError;
-  }
+  const applySession = (payload: SessionPayload | null) => {
+    if (!payload) {
+      setUser(null);
+      setUserProfile(null);
+      return;
+    }
+
+    setUser(payload.user);
+    setUserProfile(payload.profile);
+  };
+
+  const loadSession = async () => {
+    const response = await authFetch('/api/auth/session');
+    if (response.status === 401) {
+      applySession(null);
+      return null;
+    }
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.user || !data?.profile) {
+      throw new Error(data?.error || 'Failed to load session');
+    }
+
+    applySession(data as SessionPayload);
+    return data as SessionPayload;
+  };
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
-      setUser(firebaseUser);
-      if (!firebaseUser) {
-        setUserProfile(null);
-        setLoading(false);
-        return;
-      }
-    });
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const fetchOrInitializeProfile = async () => {
+    const bootstrapSession = async () => {
       try {
-        const res = await authFetch(`/api/users/${user.uid}`);
-        if (res.ok) {
-          const contentType = res.headers.get("content-type");
-          if (contentType && contentType.indexOf("application/json") !== -1) {
-            const data = await res.json();
-            setUserProfile(data);
-          } else {
-            throw new Error("API returned non-JSON html (likely a proxy or Vite fallback).");
-          }
-        } else if (res.status === 404) {
-          // Create new user
-          const newUser = {
-            id: user.uid,
-            email: user.email || '',
-            tier: 'free',
-            unlockedSites: [],
-            createdAt: new Date().toISOString()
-          };
-          const createRes = await authFetch('/api/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newUser)
-          });
-          if (createRes.ok) {
-            setUserProfile({
-              email: newUser.email,
-              tier: newUser.tier as any,
-              unlockedSites: newUser.unlockedSites
-            });
-          } else {
-            throw new Error('Failed to create user profile');
-          }
-        } else {
-          throw new Error('Failed to fetch user profile');
-        }
-      } catch (error: any) {
-        if (!error.message?.includes('non-JSON')) {
-          console.error("Error fetching/creating user profile:", error);
-        }
-        // Fallback to memory
-        setUserProfile({
-          email: user.email || '',
-          tier: 'free',
-          unlockedSites: []
-        });
+        await loadSession();
+      } catch (error) {
+        console.error('Failed to bootstrap session:', error);
+        applySession(null);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchOrInitializeProfile();
-  }, [user]);
+    void bootstrapSession();
+  }, []);
 
-  const signInWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
-    provider.addScope('https://www.googleapis.com/auth/webmasters.readonly');
-    provider.addScope('https://www.googleapis.com/auth/analytics.readonly');
-    try {
-      if (auth.currentUser && !auth.currentUser.providerData.some(p => p.providerId === 'google.com')) {
-        const result = await linkWithPopup(auth.currentUser, provider);
-        const credential = GoogleAuthProvider.credentialFromResult(result);
-        if (credential?.accessToken) {
-          setAccessToken(credential.accessToken);
-        }
-      } else {
-        const result = await signInWithPopup(auth, provider);
-        const credential = GoogleAuthProvider.credentialFromResult(result);
-        if (credential?.accessToken) {
-          setAccessToken(credential.accessToken);
-        }
-      }
-    } catch (error: any) {
-      if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
-         // Silently ignore popup closure or notify user via toast (no crash dump)
-         return;
-      }
-      console.error("Error signing in with Google:", error);
-      if (error.code === 'auth/credential-already-in-use') {
-        // If the google account is already linked to another user, just sign in with it
-        const result = await signInWithPopup(auth, provider);
-        const credential = GoogleAuthProvider.credentialFromResult(result);
-        if (credential?.accessToken) {
-          setAccessToken(credential.accessToken);
-        }
-      }
+  const readJsonError = async (response: Response, fallbackMessage: string) => {
+    const data = await response.json().catch(() => null);
+    const error = new Error(data?.error || fallbackMessage) as Error & { code?: string };
+    if (data?.code) {
+      error.code = data.code;
     }
+    throw error;
   };
 
   const registerWithEmail = async (email: string, pass: string) => {
-    await createUserWithEmailAndPassword(auth, email, pass);
+    const response = await authFetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass }),
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to create account');
+    }
+
+    const payload = await response.json() as SessionPayload;
+    applySession(payload);
   };
 
   const loginWithEmail = async (email: string, pass: string) => {
-    await signInWithEmailAndPassword(auth, email, pass);
+    const response = await authFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass }),
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to sign in');
+    }
+
+    const payload = await response.json() as SessionPayload;
+    applySession(payload);
   };
 
   const signOut = async () => {
-    await firebaseSignOut(auth);
-    setAccessToken(null);
+    await authFetch('/api/auth/logout', { method: 'POST' });
+    applySession(null);
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(SIGNED_OUT_NOTICE_SESSION_KEY, 'true');
+    }
   };
 
-  const clearAccessToken = () => {
-    setAccessToken(null);
+  const connectGoogleServices = async () => {
+    const response = await authFetch('/api/google/oauth/start');
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('Google connect route is not available yet. Restart the dev server and try again.');
+    }
+
+    const data = await response.json();
+    if (!response.ok || !data.authUrl) {
+      throw new Error(data.error || 'Failed to start Google connection');
+    }
+
+    const popup = window.open(data.authUrl, 'nextgen-google-oauth', 'width=520,height=720');
+    if (!popup) {
+      throw new Error('Popup blocked. Please allow popups and try again.');
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timeoutId = window.setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          window.removeEventListener('message', handleMessage);
+          reject(new Error('Google connection timed out.'));
+        }
+      }, 120000);
+
+      const pollId = window.setInterval(() => {
+        if (popup.closed && !settled) {
+          settled = true;
+          window.clearTimeout(timeoutId);
+          window.clearInterval(pollId);
+          window.removeEventListener('message', handleMessage);
+          reject(new Error('Google connection was cancelled.'));
+        }
+      }, 500);
+
+      const handleMessage = async (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) {
+          return;
+        }
+
+        if (event.data?.source !== 'nextgen-seo-google-oauth') {
+          return;
+        }
+
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        window.clearTimeout(timeoutId);
+        window.clearInterval(pollId);
+        window.removeEventListener('message', handleMessage);
+
+        if (!event.data.success) {
+          reject(new Error(event.data.message || 'Google connection failed.'));
+          return;
+        }
+
+        try {
+          await loadSession();
+          resolve();
+        } catch (error: any) {
+          reject(error);
+        }
+      };
+
+      window.addEventListener('message', handleMessage);
+    });
+  };
+
+  const disconnectGoogleServices = async () => {
+    const response = await authFetch('/api/google/connection', {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to disconnect Google data');
+    }
+
+    setUserProfile((prev) => prev ? {
+      ...prev,
+      googleConnected: false,
+    } : prev);
   };
 
   const unlockSite = async (siteUrl: string) => {
     if (!user || !userProfile) return;
-    
-    if (userProfile.tier === 'enterprise') return; // Enterprise users have all sites unlocked
 
-    // Check limits
-    const limit = userProfile.tier === 'free' ? 1 : userProfile.tier === 'pro' ? 3 : Infinity;
-    if (userProfile.unlockedSites.length >= limit) {
+    if (userProfile.tier === 'enterprise') return;
+
+    const limit = getPlanPropertyLimit(userProfile.tier);
+    if (limit !== null && userProfile.unlockedSites.length >= limit) {
       throw new Error(`You have reached the maximum number of sites for your ${userProfile.tier} tier.`);
     }
 
     if (userProfile.unlockedSites.includes(siteUrl)) {
-      return; // Already unlocked
+      return;
     }
 
-    try {
-      const res = await authFetch(`/api/users/${user.uid}/unlock`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteUrl })
-      });
-      
-      if (!res.ok) {
-        throw new Error('Failed to unlock site');
-      }
-      
-      const data = await res.json();
-      
-      setUserProfile(prev => prev ? {
-        ...prev,
-        unlockedSites: data.unlockedSites
-      } : null);
-    } catch (error: any) {
-      console.error("Failed to unlock site:", error);
-      throw new Error("Failed to unlock property. Please try again.");
+    const response = await authFetch(`/api/users/${user.uid}/unlock`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteUrl }),
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to unlock site');
     }
+
+    const data = await response.json();
+    setUserProfile((prev) => prev ? { ...prev, unlockedSites: data.unlockedSites } : prev);
   };
 
   const setBingApiKey = async (bingApiKey: string) => {
     if (!user) return;
-    try {
-      const res = await authFetch(`/api/users/${user.uid}/bing-key`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bingApiKey })
-      });
-      if (res.ok) {
-        setUserProfile(prev => prev ? { ...prev, bingApiKey } : null);
-      }
-    } catch (error) {
-      console.error("Failed to update Bing API key:", error);
+
+    const response = await authFetch(`/api/users/${user.uid}/bing-key`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bingApiKey }),
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to update Bing API key');
     }
+
+    setUserProfile((prev) => prev ? { ...prev, bingApiKey } : prev);
+  };
+
+  const completeOnboarding = async (
+    activatedSiteUrl: string,
+    activatedGa4Property?: { siteUrl: string; displayName: string } | null,
+  ) => {
+    if (!user) return;
+
+    const response = await authFetch(`/api/users/${user.uid}/onboarding`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        onboardingCompleted: true,
+        activatedSiteUrl,
+        activatedGa4PropertyId: activatedGa4Property?.siteUrl || null,
+        activatedGa4DisplayName: activatedGa4Property?.displayName || null,
+      }),
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to complete onboarding');
+    }
+
+    await loadSession();
+  };
+
+  const updateDefaultSite = async (activatedSiteUrl: string) => {
+    if (!user) return;
+
+    const response = await authFetch(`/api/users/${user.uid}/default-site`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activatedSiteUrl }),
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to update default site');
+    }
+
+    setUserProfile((prev) => prev ? { ...prev, activatedSiteUrl } : prev);
+  };
+
+  const updateDefaultGa4Property = async (activatedGa4PropertyId: string, activatedGa4DisplayName?: string | null) => {
+    if (!user) return;
+
+    const response = await authFetch(`/api/users/${user.uid}/default-ga4-property`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activatedGa4PropertyId, activatedGa4DisplayName: activatedGa4DisplayName || null }),
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to update default GA4 property');
+    }
+
+    setUserProfile((prev) => prev ? {
+      ...prev,
+      activatedGa4PropertyId,
+      activatedGa4DisplayName: activatedGa4DisplayName || null,
+    } : prev);
+  };
+
+  const updateUserProfile = async (profile: UserProfileUpdate) => {
+    if (!user) return;
+
+    const normalizedProfile = {
+      name: profile.name.trim(),
+      company: profile.company.trim(),
+      avatarUrl: profile.avatarUrl.trim(),
+      bio: profile.bio.trim(),
+    };
+
+    const response = await authFetch(`/api/users/${user.uid}/profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(normalizedProfile),
+    });
+
+    if (!response.ok) {
+      await readJsonError(response, 'Failed to update profile');
+    }
+
+    setUser((prev) => prev ? {
+      ...prev,
+      displayName: normalizedProfile.name || null,
+      photoURL: normalizedProfile.avatarUrl || null,
+    } : prev);
+
+    setUserProfile((prev) => prev ? {
+      ...prev,
+      ...normalizedProfile,
+    } : prev);
   };
 
   return (
-    <AuthContext.Provider value={{ user, userProfile, loading, accessToken, signInWithGoogle, registerWithEmail, loginWithEmail, signOut, clearAccessToken, unlockSite, setBingApiKey }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        userProfile,
+        loading,
+        registerWithEmail,
+        loginWithEmail,
+        signOut,
+        connectGoogleServices,
+        disconnectGoogleServices,
+        unlockSite,
+        setBingApiKey,
+        completeOnboarding,
+        updateDefaultSite,
+        updateDefaultGa4Property,
+        updateUserProfile,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

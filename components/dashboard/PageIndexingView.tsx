@@ -26,16 +26,22 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
   const [data, setData] = useState<IndexingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterMode, setFilterMode] = useState<'all' | 'indexed' | 'not_indexed' | 'at_risk'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
   const [inspectingParams, setInspectingParams] = useState<Record<string, boolean>>({});
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
-  const { accessToken, clearAccessToken } = useAuth();
+  const { userProfile } = useAuth();
+  const googleConnected = Boolean(userProfile?.googleConnected);
 
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{current: number, total: number} | null>(null);
 
   useEffect(() => {
     fetchData();
-  }, [siteUrl, dateRange, isLive, accessToken]);
+  }, [siteUrl, dateRange, isLive, googleConnected]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterMode, data.length, siteUrl, dateRange?.from, dateRange?.to, isLive]);
 
   const processingRef = React.useRef(false);
 
@@ -85,7 +91,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
   }, [siteUrl, isAutoSyncing]); // Also react when local state changes so we know when to trigger the toast
 
   const triggerBackgroundSync = async (uninspectedData: IndexingRow[]) => {
-    if (!accessToken || isAutoSyncing || processingRef.current) return;
+    if (!googleConnected || isAutoSyncing || processingRef.current) return;
     
     const uninspectedUrls = uninspectedData.filter(r => {
       if (!r.inspectionResult) return true; // Never inspected
@@ -130,7 +136,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
   };
 
   const fetchData = async () => {
-    if (!accessToken && isLive) return; // Wait for token if live
+    if (!googleConnected && isLive) return;
     setLoading(true);
     try {
       const start = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : format(subDays(new Date(), 28), 'yyyy-MM-dd');
@@ -200,7 +206,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
   };
 
   const handleInspect = async (url: string) => {
-    if (!accessToken) return;
+    if (!googleConnected) return;
     setInspectingParams(prev => ({ ...prev, [url]: true }));
     try {
       const res = await authFetch("/api/indexing/inspect", {
@@ -231,10 +237,9 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
       console.error("Inspection failed:", err);
       const isNetworkDrop = err?.message === 'Failed to fetch';
       
-      if (err?.message?.includes("invalid authentication credentials") || err?.message?.includes("OAuth 2 access token") || err?.message === 'UNAUTHORIZED') {
-        clearAccessToken();
+      if (err?.message?.includes("invalid authentication credentials") || err?.message?.includes("OAuth 2 access token") || err?.message === 'UNAUTHORIZED' || err?.message?.includes("GOOGLE_NOT_CONNECTED")) {
         toast.error("Session expired", {
-          description: "Your Google session has expired. Please click 'Reconnect Google' to restore access."
+          description: "Your Google connection needs attention. Please click 'Reconnect Google' to restore access."
         });
       } else {
         toast.error(isNetworkDrop ? "Connection lost" : "Inspection failed", {
@@ -376,16 +381,30 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
   // Sort by Impressions descending
   displayData.sort((a, b) => b.impressions - a.impressions);
 
+  const pageSize = 100;
+  const totalPages = Math.max(1, Math.ceil(displayData.length / pageSize));
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, displayData.length);
+  const paginatedData = displayData.slice(pageStart, pageStart + pageSize);
+
   const indexedCount = data.filter(d => d.coverageState?.toLowerCase().includes("indexed") && !d.coverageState?.toLowerCase().includes("not indexed")).length;
   const notIndexedCount = data.filter(d => d.coverageState && (!d.coverageState.toLowerCase().includes("indexed") || d.coverageState.toLowerCase().includes("not indexed"))).length;
   const totalUrls = data.length;
+  const currentFilterLabel =
+    filterMode === 'at_risk'
+      ? 'URLs at risk'
+      : filterMode === 'indexed'
+        ? 'Confirmed indexed URLs'
+        : filterMode === 'not_indexed'
+          ? 'Flagged or not indexed URLs'
+          : 'All known URLs';
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 rounded-2xl border border-[#E9F0EB] bg-white/90 p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center flex-wrap gap-3">
-            <h2 className="text-2xl font-bold tracking-tight">Hybrid Page Indexing</h2>
+            <h2 className="text-xl font-semibold tracking-[-0.01em] text-[#0F172A]">Hybrid Page Indexing</h2>
             {isAutoSyncing && syncProgress && (
                <div className="flex items-center space-x-2 text-xs font-medium text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full animate-pulse border border-emerald-100">
                  <RefreshCw className="h-3 w-3 animate-spin" />
@@ -393,14 +412,14 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
                </div>
             )}
           </div>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-[#647067]">
             Fusing Live Search Console Traffic with Raw Server Logs and the Real-time URL Inspection API.
           </p>
         </div>
-        <div className="flex items-center space-x-4 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-1.5 shrink-0">
           <div className="relative">
              <input type="file" accept=".csv" id="csv-upload" className="hidden" onChange={handleCsvUpload} />
-             <Button variant="outline" size="sm" onClick={() => document.getElementById('csv-upload')?.click()}>
+             <Button variant="outline" size="sm" className="bg-background" onClick={() => document.getElementById('csv-upload')?.click()}>
                <Upload className="w-4 h-4 mr-2" />
                Import GSC CSV
              </Button>
@@ -408,11 +427,12 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
           <Button 
             variant="outline" 
             size="sm" 
+            className="bg-background"
             onClick={() => triggerBackgroundSync(data)}
-            disabled={!accessToken || isAutoSyncing || (!data.some(r => !r.inspectionResult || (r.lastCrawl && r.lastInspectionTime && new Date(r.lastCrawl).getTime() > new Date(r.lastInspectionTime).getTime())))}
+            disabled={!googleConnected || isAutoSyncing || (!data.some(r => !r.inspectionResult || (r.lastCrawl && r.lastInspectionTime && new Date(r.lastCrawl).getTime() > new Date(r.lastInspectionTime).getTime())))}
           >
             {isAutoSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-            {accessToken ? "Sync Outdated URLs" : "Reconnect to Sync"}
+            {googleConnected ? "Sync Outdated URLs" : "Reconnect to Sync"}
           </Button>
           <div className="flex items-center space-x-2">
             <Switch 
@@ -420,7 +440,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
                checked={filterMode === 'at_risk'} 
                onCheckedChange={(checked) => setFilterMode(checked ? 'at_risk' : 'all')} 
             />
-            <Label htmlFor="risk-mode" className="flex items-center text-sm font-medium cursor-pointer">
+            <Label htmlFor="risk-mode" className="flex items-center text-sm font-medium cursor-pointer px-2">
               <ShieldAlert className="w-4 h-4 text-orange-500 mr-2" />
               Show URLs at Risk
             </Label>
@@ -430,33 +450,36 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card 
-          className={`bg-card shadow-sm border cursor-pointer transition-colors ${filterMode === 'all' ? 'ring-2 ring-primary' : 'hover:bg-muted/50'}`}
+          className={`cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition-all ${filterMode === 'all' ? 'ring-1 ring-inset ring-[#0F3D2E]/25 bg-[#EAF4EC]/45' : 'hover:bg-[#F6FAF7]'}`}
           onClick={() => setFilterMode('all')}
         >
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">Known URLs</CardTitle>
+            <CardDescription>Everything currently in the indexing matrix for this property.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{totalUrls.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card 
-          className={`bg-card shadow-sm border cursor-pointer transition-colors ${filterMode === 'indexed' ? 'ring-2 ring-primary' : 'hover:bg-muted/50'}`}
+          className={`cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition-all ${filterMode === 'indexed' ? 'ring-1 ring-inset ring-emerald-600/25 bg-emerald-50' : 'hover:bg-[#F6FAF7]'}`}
           onClick={() => setFilterMode('indexed')}
         >
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">Confirmed Indexed</CardTitle>
+            <CardDescription>Pages Google is currently willing to keep in the index.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-emerald-600">{indexedCount.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card 
-          className={`bg-card shadow-sm border cursor-pointer transition-colors ${filterMode === 'not_indexed' ? 'ring-2 ring-primary' : 'hover:bg-muted/50'}`}
+          className={`cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition-all ${filterMode === 'not_indexed' ? 'ring-1 ring-inset ring-red-500/25 bg-red-50' : 'hover:bg-[#F6FAF7]'}`}
           onClick={() => setFilterMode('not_indexed')}
         >
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">Not Indexed / Flagged</CardTitle>
+            <CardDescription>Pages worth reviewing for crawl, quality, or canonical issues.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-red-600">{notIndexedCount.toLocaleString()}</div>
@@ -464,10 +487,27 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
         </Card>
       </div>
 
-      <Card className="overflow-hidden border shadow-sm">
-        <div className="overflow-x-auto max-h-[600px]">
+      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardHeader className="border-b border-[#E6ECE8] bg-white px-5 py-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1">
+              <CardTitle className="text-xl leading-tight">
+                {currentFilterLabel} ({displayData.length.toLocaleString()})
+              </CardTitle>
+              <CardDescription>
+                Review the current indexing view, inspect suspicious URLs, and page through the dataset in manageable batches.
+              </CardDescription>
+            </div>
+
+            <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-2 text-sm text-muted-foreground">
+              100 rows per page
+            </div>
+          </div>
+        </CardHeader>
+
+        <div className="overflow-x-auto">
           <Table>
-            <TableHeader className="bg-muted/50 sticky top-0 z-10">
+          <TableHeader className="sticky top-0 z-10 bg-[#FBFCFB]">
               <TableRow>
                 <TableHead className="w-[300px]">URL</TableHead>
                 <TableHead className="text-right">Impressions</TableHead>
@@ -492,9 +532,9 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
                   </TableCell>
                 </TableRow>
               ) : (
-                displayData.map((row) => (
+                paginatedData.map((row) => (
                   <React.Fragment key={row.url}>
-                    <TableRow className="hover:bg-muted/30">
+                    <TableRow className="hover:bg-[#F6FAF7]">
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
                           <button 
@@ -544,14 +584,14 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
                       </TableCell>
                     </TableRow>
                     {expandedRows[row.url] && (
-                      <TableRow className="bg-muted/20 border-b">
+                      <TableRow className="border-b border-[#E6ECE8] bg-[#FBFCFB]">
                         <TableCell colSpan={6} className="p-4">
                           {!row.inspectionResult ? (
                             <div className="text-sm text-muted-foreground italic flex items-center justify-center py-4">
                               No profound Google Search Console inspection data available. Click 'Inspect' to fetch the latest details.
                             </div>
                           ) : (
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm bg-background block p-4 rounded-md border">
+                            <div className="grid grid-cols-2 gap-4 rounded-2xl border border-[#E6ECE8] bg-white p-4 text-sm md:grid-cols-4">
                               <div>
                                 <span className="font-semibold text-xs text-muted-foreground uppercase">Verdict</span>
                                 <div className="mt-1 flex items-center">
@@ -607,6 +647,40 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
             </TableBody>
           </Table>
         </div>
+
+        {!loading && displayData.length > 0 && (
+          <div className="flex flex-col gap-3 border-t border-[#E6ECE8] bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-muted-foreground">
+              Showing {pageStart + 1} to {pageEnd} of {displayData.length} URLs
+            </div>
+
+            <div className="flex items-center gap-3 rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-background"
+                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+
+              <div className="text-sm font-medium">
+                Page {currentPage} of {totalPages}
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-background"
+                onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );

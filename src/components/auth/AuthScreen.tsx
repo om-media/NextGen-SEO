@@ -1,18 +1,32 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "../../contexts/AuthContext"
-import { BarChart3 } from "lucide-react"
+import { AlertCircle, BarChart3, CheckCircle2 } from "lucide-react"
+
+const SIGNED_OUT_NOTICE_SESSION_KEY = "signed_out_notice";
 
 export function AuthScreen() {
-  const { signInWithGoogle, registerWithEmail, loginWithEmail } = useAuth()
+  const { registerWithEmail, loginWithEmail } = useAuth()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
+  const [signedOutMessage, setSignedOutMessage] = useState("")
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+
+    if (window.sessionStorage.getItem(SIGNED_OUT_NOTICE_SESSION_KEY) === "true") {
+      setSignedOutMessage("You've been signed out. Sign back in to return to your dashboard or continue onboarding.")
+      window.sessionStorage.removeItem(SIGNED_OUT_NOTICE_SESSION_KEY)
+    }
+  }, [])
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -21,8 +35,8 @@ export function AuthScreen() {
     try {
       await registerWithEmail(email, password)
     } catch (err: any) {
-      if (err.code === 'auth/operation-not-allowed') {
-        setError("Email/Password authentication is not enabled. Please enable it in the Firebase Console.")
+      if (err.code === 'EMAIL_ALREADY_IN_USE') {
+        setError("This email already belongs to an existing account. Sign in instead, or use a different email for a new workspace.")
       } else {
         setError(err.message)
       }
@@ -38,36 +52,100 @@ export function AuthScreen() {
     try {
       await loginWithEmail(email, password)
     } catch (err: any) {
-      setError(err.message)
+      if (err.code === 'INVALID_LOGIN' || err.code === 'PASSWORD_NOT_SET') {
+        setError("We couldn't sign you in with that email and password. If this email belongs to an older Google-created account, registering once with a local password will claim it for local sign-in.")
+      } else {
+        setError(err.message)
+      }
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-muted/30 p-4">
-      <div className="w-full max-w-md space-y-6">
-        <div className="flex flex-col items-center space-y-2 text-center">
-          <div className="bg-primary text-primary-foreground p-3 rounded-xl">
-            <BarChart3 className="h-8 w-8" />
+    <div className="relative flex min-h-dvh w-full items-center justify-center overflow-hidden bg-[#F8FAF9] p-4 sm:p-6">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(15,61,46,0.12),transparent_28%),radial-gradient(circle_at_82%_72%,rgba(47,125,246,0.10),transparent_34%),linear-gradient(180deg,#FBFCFB_0%,#F8FAF9_52%,#F4F8F7_100%)]" />
+      <div className="pointer-events-none absolute -bottom-24 right-[-8%] h-[520px] w-[720px] rounded-full bg-[#EAF4EC]/70 blur-3xl" />
+      <div className="relative grid w-full max-w-6xl overflow-hidden rounded-[28px] border border-[#E6ECE8] bg-white/80 shadow-[0_30px_90px_rgba(15,61,46,0.14)] backdrop-blur-xl lg:grid-cols-[0.95fr_1fr]">
+        <section className="relative hidden min-h-[660px] overflow-hidden border-r border-[#E6ECE8] bg-[#FBFCFB] p-10 lg:block">
+          <div className="relative z-10 flex h-full flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl bg-[#0F3D2E] p-3 text-white shadow-[0_16px_32px_rgba(15,61,46,0.20)]">
+                  <BarChart3 className="h-7 w-7" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#647067]">NextGen SEO</p>
+                  <p className="text-lg font-semibold text-[#0F172A]">Search intelligence</p>
+                </div>
+              </div>
+
+              <div className="mt-20 max-w-md">
+                <p className="text-sm font-semibold text-[#0F3D2E]">Create your workspace</p>
+                <h1 className="mt-3 text-5xl font-semibold leading-[0.98] tracking-[-0.045em] text-[#0F172A]">
+                  Start with a clean local account.
+                </h1>
+                <p className="mt-5 text-base leading-7 text-[#647067]">
+                  Google data is connected after account creation, so signing up never requires OAuth, face verification, or a browser account switch.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              {["Email and password login", "Google data connected later", "First site chosen during setup"].map((item) => (
+                <div key={item} className="flex items-center gap-3 rounded-2xl border border-[#E6ECE8] bg-white/80 px-4 py-3 text-sm font-medium text-[#0F172A]">
+                  <CheckCircle2 className="h-4 w-4 text-[#0F3D2E]" />
+                  {item}
+                </div>
+              ))}
+            </div>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">NextGen SEO</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage and analyze your Google Search Console data
-          </p>
-        </div>
+          <img
+            src="/images/hero-mountains.png"
+            alt=""
+            className="pointer-events-none absolute bottom-0 right-[-170px] w-[760px] max-w-none opacity-75"
+          />
+        </section>
+
+        <section className="relative p-6 sm:p-10">
+          <div className="mx-auto w-full max-w-md space-y-6">
+            <div className="space-y-3 lg:hidden">
+              <div className="rounded-2xl bg-[#0F3D2E] p-3 text-white shadow-[0_16px_32px_rgba(15,61,46,0.20)]">
+                <BarChart3 className="h-8 w-8" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#647067]">NextGen SEO</p>
+                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-[#0F172A]">Create your workspace</h1>
+              </div>
+            </div>
+            <div className="hidden lg:block">
+              <p className="text-sm font-semibold text-[#0F3D2E]">Workspace login</p>
+              <h2 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-[#0F172A]">Sign in or create an account</h2>
+              <p className="mt-2 text-sm leading-6 text-[#647067]">
+                Use a local account for the SaaS. Reporting permissions are connected inside onboarding.
+              </p>
+            </div>
+
+        {signedOutMessage && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{signedOutMessage}</p>
+            </div>
+          </div>
+        )}
 
         <Tabs defaultValue="login" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-2 rounded-2xl border border-[#E6ECE8] bg-white/80 p-1 shadow-sm">
             <TabsTrigger value="login">Login</TabsTrigger>
             <TabsTrigger value="register">Register</TabsTrigger>
           </TabsList>
           
           <TabsContent value="login">
-            <Card>
+            <Card className="overflow-hidden rounded-2xl border-[#E6ECE8] bg-white/92 shadow-[0_20px_60px_rgba(15,61,46,0.10)] backdrop-blur-xl">
               <CardHeader>
-                <CardTitle>Login</CardTitle>
-                <CardDescription>Enter your email and password to access your account.</CardDescription>
+                <CardTitle>Welcome back</CardTitle>
+                <CardDescription>Enter your workspace email and password.</CardDescription>
               </CardHeader>
               <form onSubmit={handleLogin}>
                 <CardContent className="space-y-4">
@@ -83,25 +161,19 @@ export function AuthScreen() {
                 </CardContent>
                 <CardFooter className="flex flex-col space-y-4">
                   <Button type="submit" className="w-full" disabled={loading}>
-                    {loading ? "Logging in..." : "Login"}
+                    {loading ? "Signing in..." : "Sign in"}
                   </Button>
-                  <div className="relative w-full">
-                    <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
-                    <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">Or continue with</span></div>
-                  </div>
-                  <Button type="button" variant="outline" className="w-full" onClick={signInWithGoogle}>
-                    Google
-                  </Button>
+                  <p className="text-center text-xs text-muted-foreground">Google reporting access is separate from your app login.</p>
                 </CardFooter>
               </form>
             </Card>
           </TabsContent>
 
           <TabsContent value="register">
-            <Card>
+            <Card className="overflow-hidden rounded-2xl border-[#E6ECE8] bg-white/92 shadow-[0_20px_60px_rgba(15,61,46,0.10)] backdrop-blur-xl">
               <CardHeader>
-                <CardTitle>Create an account</CardTitle>
-                <CardDescription>Enter your details below to create your account.</CardDescription>
+                <CardTitle>Create your workspace</CardTitle>
+                <CardDescription>Start with email and password. Connect Search Console and GA4 after this step.</CardDescription>
               </CardHeader>
               <form onSubmit={handleRegister}>
                 <CardContent className="space-y-4">
@@ -119,18 +191,14 @@ export function AuthScreen() {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? "Creating account..." : "Create account"}
                   </Button>
-                  <div className="relative w-full">
-                    <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
-                    <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">Or register with</span></div>
-                  </div>
-                  <Button type="button" variant="outline" className="w-full" onClick={signInWithGoogle}>
-                    Google
-                  </Button>
+                  <p className="text-center text-xs text-muted-foreground">This creates a local workspace login. No Google account is required to create the app account itself.</p>
                 </CardFooter>
               </form>
             </Card>
           </TabsContent>
         </Tabs>
+          </div>
+        </section>
       </div>
     </div>
   )

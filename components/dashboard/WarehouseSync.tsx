@@ -9,7 +9,8 @@ import { Progress } from "@/components/ui/progress"
 import { authFetch } from "@/src/lib/authFetch"
 
 export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
-  const { accessToken, userProfile } = useAuth()
+  const { userProfile } = useAuth()
+  const googleConnected = Boolean(userProfile?.googleConnected)
   const [isOpen, setIsOpen] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -33,14 +34,14 @@ export function WarehouseSync({ siteUrl }: { siteUrl: string }) {
   }
 
   const handleSync = async () => {
-    if (!accessToken) return;
+    if (!googleConnected) return;
     
     setIsSyncing(true)
     setProgress(0)
     setStatusText("Initializing...")
     
     try {
-      const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
+      const gscService = new GscApiService(null, userProfile?.tier || 'free')
       const today = new Date()
       // GSC keeps 16 months of data (approx 480 days). We subtract 3 days for their reporting lag
       const maxHistory = subDays(today, 480) 

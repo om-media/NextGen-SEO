@@ -1,24 +1,19 @@
-import { auth } from '../firebase';
 import { authFetch } from '../lib/authFetch';
 
 export interface SavedFilter {
   id?: string;
   name: string;
   projectId: string; // We'll use siteUrl for now
-  ownerId: string;
   configuration: string; // JSON string
   createdAt: any;
 }
 
-export const saveFilter = async (filter: Omit<SavedFilter, 'id' | 'createdAt' | 'ownerId'>) => {
+export const saveFilter = async (filter: Omit<SavedFilter, 'id' | 'createdAt'>) => {
   try {
-    if (!auth.currentUser) throw new Error("Not authenticated");
-    
     const id = crypto.randomUUID();
     const newFilter = {
       ...filter,
       id,
-      ownerId: auth.currentUser.uid,
       createdAt: new Date().toISOString()
     };
     
@@ -38,8 +33,6 @@ export const saveFilter = async (filter: Omit<SavedFilter, 'id' | 'createdAt' | 
 
 export const getFilters = async (projectId: string) => {
   try {
-    if (!auth.currentUser) throw new Error("Not authenticated");
-    
     const res = await authFetch(`/api/filters?projectId=${encodeURIComponent(projectId)}`);
     if (!res.ok) throw new Error('Failed to fetch filters');
     
@@ -53,7 +46,6 @@ export const getFilters = async (projectId: string) => {
 
 export const deleteFilter = async (filterId: string) => {
   try {
-    if (!auth.currentUser) throw new Error("Not authenticated");
     const res = await authFetch(`/api/filters/${filterId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete filter');
   } catch (error) {

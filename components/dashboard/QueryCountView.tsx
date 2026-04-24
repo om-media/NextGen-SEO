@@ -60,7 +60,7 @@ export function QueryCountView({
   compareDateRange?: DateRange,
   useLiveData?: boolean
 }) {
-  const { accessToken, userProfile, clearAccessToken } = useAuth()
+  const { userProfile } = useAuth()
   
   const [tableData, setTableData] = useState<any[]>([])
   const [chartData, setChartData] = useState<any[]>([])
@@ -86,7 +86,7 @@ export function QueryCountView({
     setLoadingTable(true)
     setError(null)
     
-    const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
+    const gscService = new GscApiService(null, userProfile?.tier || 'free')
     const startDate = format(dateRange.from, 'yyyy-MM-dd')
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     
@@ -172,9 +172,8 @@ export function QueryCountView({
         setTableData(result)
       })
       .catch(err => {
-        if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
-          console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
-          clearAccessToken()
+        if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token") || err.message.includes("GOOGLE_NOT_CONNECTED")) {
+          setError("Your Google connection needs attention. Please click 'Reconnect Google' at the top to restore live data.")
         } else if (err.message.includes("sufficient permission")) {
           setError("You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.")
         } else {
@@ -185,7 +184,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingTable(false)
       })
-  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, clearAccessToken, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, userProfile?.tier, useLiveData])
 
   // Fetch Chart Data (Historic Trend of Unique Queries)
   useEffect(() => {
@@ -193,7 +192,7 @@ export function QueryCountView({
     
     setLoadingChart(true)
     
-    const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
+    const gscService = new GscApiService(null, userProfile?.tier || 'free')
     const startDate = format(dateRange.from, 'yyyy-MM-dd')
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     
@@ -283,8 +282,8 @@ export function QueryCountView({
         }
       })
       .catch(err => {
-        if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
-          clearAccessToken()
+        if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token") || err.message.includes("GOOGLE_NOT_CONNECTED")) {
+          setError("Your Google connection needs attention. Please click 'Reconnect Google' at the top to restore live data.")
         } else if (err.message.includes("sufficient permission")) {
           // Error is already handled by the table fetch
         } else {
@@ -294,7 +293,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingChart(false)
       })
-  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, selectedPage, clearAccessToken, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, selectedPage, userProfile?.tier, useLiveData])
 
   const sortedTableData = useMemo(() => {
     return [...tableData].sort((a, b) => {
@@ -348,8 +347,8 @@ export function QueryCountView({
         </div>
       )}
 
-      <Card className="overflow-hidden border shadow-sm">
-        <div className="p-4 border-b bg-muted/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <div className="flex flex-col items-start justify-between gap-3 border-b border-[#E6ECE8] bg-white p-5 sm:flex-row sm:items-center">
           <div>
             <h3 className="font-semibold text-lg">Historic Trend</h3>
             <p className="text-sm text-muted-foreground">
@@ -431,8 +430,8 @@ export function QueryCountView({
         </CardContent>
       </Card>
 
-      <Card className="overflow-hidden border shadow-sm">
-        <div className="p-4 border-b bg-muted/20">
+      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <div className="border-b border-[#E6ECE8] bg-white p-5">
           <h3 className="font-semibold text-lg">Query Count by Page</h3>
           <p className="text-sm text-muted-foreground">
             Click a page to view its historic trend above.
@@ -442,25 +441,25 @@ export function QueryCountView({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[50%] cursor-pointer hover:bg-muted/50 select-none" onClick={() => handleSort('page')}>
+                <TableHead className="w-[50%] cursor-pointer select-none hover:bg-[#F6FAF7]" onClick={() => handleSort('page')}>
                   <div className="flex items-center">
                     Page URL
                     {renderSortIcon('page')}
                   </div>
                 </TableHead>
-                <TableHead className="text-right cursor-pointer hover:bg-muted/50 select-none" onClick={() => handleSort('queryCount')}>
+                <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort('queryCount')}>
                   <div className="flex items-center justify-end">
                     Total Unique Queries
                     {renderSortIcon('queryCount')}
                   </div>
                 </TableHead>
-                <TableHead className="text-right cursor-pointer hover:bg-muted/50 select-none" onClick={() => handleSort('clicks')}>
+                <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort('clicks')}>
                   <div className="flex items-center justify-end">
                     Total Clicks
                     {renderSortIcon('clicks')}
                   </div>
                 </TableHead>
-                <TableHead className="text-right cursor-pointer hover:bg-muted/50 select-none" onClick={() => handleSort('impressions')}>
+                <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort('impressions')}>
                   <div className="flex items-center justify-end">
                     Total Impressions
                     {renderSortIcon('impressions')}
@@ -478,7 +477,7 @@ export function QueryCountView({
               ) : currentData.map((row, i) => (
                 <TableRow 
                   key={i} 
-                  className={`cursor-pointer hover:bg-muted/50 ${selectedPage === row.page ? 'bg-muted' : ''}`}
+                  className={`cursor-pointer hover:bg-[#F6FAF7] ${selectedPage === row.page ? 'bg-[#EAF4EC]' : ''}`}
                   onClick={() => setSelectedPage(row.page)}
                 >
                   <TableCell className="font-medium max-w-[500px] truncate" title={row.page}>
@@ -511,7 +510,7 @@ export function QueryCountView({
 
         {/* Pagination Controls */}
         {pageCount > 1 && (
-          <div className="flex items-center justify-between px-4 py-4 border-t">
+          <div className="flex items-center justify-between border-t border-[#E6ECE8] px-5 py-4">
             <div className="flex-1 text-sm text-muted-foreground">
               Showing {pageIndex * pageSize + 1} to {Math.min((pageIndex + 1) * pageSize, sortedTableData.length)} of {sortedTableData.length} entries
             </div>

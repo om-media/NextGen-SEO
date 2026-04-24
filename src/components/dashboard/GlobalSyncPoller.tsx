@@ -4,11 +4,11 @@ import { useAuth } from "@/src/contexts/AuthContext"
 import { authFetch } from "@/src/lib/authFetch"
 
 export function GlobalSyncPoller({ siteUrl }: { siteUrl: string | null }) {
-  const { accessToken } = useAuth()
+  const { userProfile } = useAuth()
   const lastState = useRef<Record<string, string>>({})
 
   useEffect(() => {
-    if (!siteUrl || !accessToken) return;
+    if (!siteUrl || !userProfile?.googleConnected) return;
 
     let mounted = true;
     let pollInterval: any = null;
@@ -54,7 +54,7 @@ export function GlobalSyncPoller({ siteUrl }: { siteUrl: string | null }) {
       mounted = false;
       if (pollInterval) clearInterval(pollInterval);
     }
-  }, [siteUrl, accessToken]);
+  }, [siteUrl, userProfile?.googleConnected]);
 
   return null;
 }

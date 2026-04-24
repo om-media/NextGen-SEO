@@ -10,7 +10,9 @@ import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
 
 export function registerLogRoutes(app: Express, db: Database.Database, upload: multer.Multer) {
-  app.post('/api/logs/upload', requireAuth, upload.single('logfile'), async (req: AuthedRequest, res) => {
+  const authRequired = requireAuth(db);
+
+  app.post('/api/logs/upload', authRequired, upload.single('logfile'), async (req: AuthedRequest, res) => {
     try {
       const ownerId = req.authUser!.uid;
       const siteUrl = asTrimmedString(req.body.siteUrl);
@@ -80,7 +82,7 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     }
   });
 
-  app.post('/api/logs/webhook', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/logs/webhook', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, logs } = req.body;
     if (!isNonEmptyString(siteUrl) || !isStringArray(logs)) {
@@ -122,7 +124,7 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     }
   });
 
-  app.get('/api/logs/stats', requireAuth, (req: AuthedRequest, res) => {
+  app.get('/api/logs/stats', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const siteUrl = asTrimmedString(req.query.siteUrl);
     const startDate = req.query.startDate;
@@ -148,7 +150,7 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     }
   });
 
-  app.get('/api/logs/errors', requireAuth, (req: AuthedRequest, res) => {
+  app.get('/api/logs/errors', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const siteUrl = asTrimmedString(req.query.siteUrl);
     const startDate = req.query.startDate;
@@ -172,7 +174,7 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     }
   });
 
-  app.get('/api/logs/insights', requireAuth, (req: AuthedRequest, res) => {
+  app.get('/api/logs/insights', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const siteUrl = asTrimmedString(req.query.siteUrl);
     const startDate = req.query.startDate;

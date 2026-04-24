@@ -1,11 +1,12 @@
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, type ReactNode } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { ComposedChart, Area, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, ReferenceLine } from "recharts"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { GscApiService } from "@/src/services/gscService"
 import { format, parseISO, startOfWeek, startOfMonth } from "date-fns"
 import { DateRange } from "react-day-picker"
-import { Loader2, Check } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Check, Download, MoreVertical, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Annotation } from "@/src/services/annotationsService"
 import { authFetch } from "@/src/lib/authFetch"
@@ -60,6 +61,7 @@ export function Overview({
   isCompareMode,
   compareDateRange,
   annotations = [],
+  annotationControls,
   useLiveData = true
 }: { 
   siteUrl: string, 
@@ -69,9 +71,10 @@ export function Overview({
   isCompareMode?: boolean,
   compareDateRange?: DateRange,
   annotations?: Annotation[],
+  annotationControls?: ReactNode,
   useLiveData?: boolean
 }) {
-  const { accessToken, userProfile, clearAccessToken } = useAuth()
+  const { userProfile } = useAuth()
   const [rawData, setRawData] = useState<any[]>([])
   const [compareRawData, setCompareRawData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -86,18 +89,30 @@ export function Overview({
 
   const [timeframe, setTimeframe] = useState<'Day' | 'Week' | 'Month'>('Day')
 
-  // GSC exact colors
   const colors = {
-    clicks: "#4285f4",
-    impressions: "#5e35b1",
-    ctr: "#00897b",
-    position: "#e65100"
+    clicks: "#2F7DF6",
+    impressions: "#7C3AED",
+    ctr: "#0891B2",
+    position: "#F97316"
+  }
+  const isConnectionIssue = error?.startsWith("Your Google data connection needs attention.") ?? false
+
+  const getFriendlyOverviewError = (message: string) => {
+    if (message === 'UNAUTHORIZED' || message.includes("invalid authentication credentials") || message.includes("OAuth 2 access token") || message.includes("GOOGLE_NOT_CONNECTED")) {
+      return "Your Google data connection needs attention. Please click 'Reconnect Google Data' at the top to restore live reporting."
+    }
+
+    if (message.includes("sufficient permission")) {
+      return "You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console."
+    }
+
+    return message
   }
 
   useEffect(() => {
     if (siteUrl && dateRange?.from && dateRange?.to) {
       setLoading(true)
-      const gscService = new GscApiService(accessToken, userProfile?.tier || 'free')
+      const gscService = new GscApiService(null, userProfile?.tier || 'free')
       
       const endDate = format(dateRange.to, 'yyyy-MM-dd')
       const startDate = format(dateRange.from, 'yyyy-MM-dd')
@@ -123,49 +138,57 @@ export function Overview({
         }))
       }
 
-      const promises = [
-        useLiveData 
-          ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['date'], filterGroups)
-          : fetchWarehouseData(startDate, endDate)
-      ];
+      const primaryPromise = useLiveData 
+        ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['date'], filterGroups)
+        : fetchWarehouseData(startDate, endDate)
 
-      if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
-        const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
-        const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
-        promises.push(
-          useLiveData
-            ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['date'], filterGroups)
-            : fetchWarehouseData(compareStartDate, compareEndDate)
-        )
-      }
+      const comparePromise =
+        isCompareMode && compareDateRange?.from && compareDateRange?.to
+          ? (() => {
+              const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
+              const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
+              return useLiveData
+                ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['date'], filterGroups)
+                : fetchWarehouseData(compareStartDate, compareEndDate)
+            })()
+          : null
 
-      Promise.all(promises)
-        .then(([primaryRows, compareRows]) => {
+      primaryPromise
+        .then(async (primaryRows) => {
           setRawData(primaryRows)
           setError(null)
-          if (compareRows) {
-            setCompareRawData(compareRows)
-          } else {
+
+          if (!comparePromise) {
             setCompareRawData([])
+            return
           }
+
+          const compareResult = await comparePromise
+            .then((compareRows) => ({ ok: true as const, compareRows }))
+            .catch((err) => {
+              console.warn("Compare range failed for GSC overview; continuing with primary range only.", err)
+              return { ok: false as const, error: err }
+            })
+
+          if (!compareResult.ok || !compareResult.compareRows) {
+            setCompareRawData([])
+            return
+          }
+
+          setCompareRawData(compareResult.compareRows)
         })
         .catch(err => {
-          if (err.message === 'UNAUTHORIZED' || err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token")) {
-            console.warn("GSC Access token expired or invalid. Prompting re-authentication.");
-            clearAccessToken()
-            setError("Your Google session has expired. Please click 'Reconnect Google' at the top to restore live data.")
-          } else if (err.message.includes("sufficient permission")) {
-            setError("You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.")
-          } else {
+          const friendlyMessage = getFriendlyOverviewError(err.message)
+          if (friendlyMessage === err.message) {
             console.error("Failed to fetch GSC overview data:", err)
-            setError(err.message)
           }
+          setError(friendlyMessage)
         })
         .finally(() => {
           setLoading(false)
         })
     }
-  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, clearAccessToken, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.tier, useLiveData])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
     if (!rawData.length || !dateRange?.from || !dateRange?.to) {
@@ -313,6 +336,29 @@ export function Overview({
     }))
   }
 
+  const exportChartCsv = () => {
+    if (chartData.length === 0) return;
+
+    const headers = ["date", "clicks", "impressions", "ctr", "position"];
+    const csvRows = chartData.map((row) =>
+      headers.map((header) => {
+        const value = row[header as keyof typeof row] ?? "";
+        return `"${String(value).replace(/"/g, '""')}"`;
+      }).join(","),
+    );
+    const blob = new Blob([[headers.join(","), ...csvRows].join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `performance-over-time-${siteUrl.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const scrollToFullReport = () => {
+    document.getElementById("gsc-data-grid")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const activeMetricsList = (['clicks', 'impressions', 'ctr', 'position'] as const).filter(m => activeMetrics[m]);
 
   const getAxisProps = (metric: 'clicks' | 'impressions' | 'ctr' | 'position') => {
@@ -337,193 +383,256 @@ export function Overview({
     return ""
   }
 
-  const renderChange = (current: number, previous: number, inverse: boolean = false) => {
-    if (!isCompareMode || !compareSummary) return null;
-    if (previous === 0) return null;
-    
+  const getChange = (current: number, previous: number, inverse: boolean = false) => {
+    if (!isCompareMode || !compareSummary || previous === 0) return null;
+
     const diff = current - previous;
     const percentChange = (diff / previous) * 100;
-    
     let isPositive = diff > 0;
-    if (inverse) isPositive = !isPositive; // For position, lower is better
-    
+    if (inverse) isPositive = !isPositive;
+
+    return {
+      diff,
+      isPositive,
+      label: `${diff > 0 ? "+" : ""}${percentChange.toFixed(1)}%`,
+    };
+  };
+
+  const getMetricSeries = (metric: keyof typeof activeMetrics) => chartData.map((point) => Number(point[metric]) || 0);
+
+  const buildSparklinePath = (values: number[]) => {
+    if (values.length < 2) return { line: "", area: "" };
+
+    const width = 116;
+    const height = 42;
+    const padding = 3;
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const spread = max - min || 1;
+
+    const points = values.map((value, index) => {
+      const x = (index / (values.length - 1)) * width;
+      const y = padding + (1 - (value - min) / spread) * (height - padding * 2);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    });
+
+    return {
+      line: points.join(" "),
+      area: `0,${height} ${points.join(" ")} ${width},${height}`,
+    };
+  };
+
+  const miniSparkline = (metric: keyof typeof activeMetrics, color: string) => {
+    const { line, area } = buildSparklinePath(getMetricSeries(metric));
+    if (!line) {
+      return <div className="h-10 w-24 rounded-lg bg-[#F8FAF9]" />;
+    }
+
     return (
-      <div className={cn("text-xs font-medium mt-1", isPositive ? "text-green-500" : "text-red-500")}>
-        {diff > 0 ? '+' : ''}{percentChange.toFixed(1)}%
-      </div>
+      <svg viewBox="0 0 116 42" className="h-10 w-24" aria-hidden="true">
+        <polygon points={area} fill={color} opacity="0.08" />
+        <polyline points={line} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  };
+
+  const formatRate = (value: number) => `${formatCompactNumber(value)}/day`;
+
+  const formatCompareRange = () => {
+    if (!isCompareMode || !compareDateRange?.from || !compareDateRange?.to) {
+      return null;
+    }
+
+    return `vs ${format(compareDateRange.from, "MMM d")} - ${format(compareDateRange.to, "MMM d")}`;
+  };
+
+  const compareLabel = formatCompareRange();
+
+  const metricCards = [
+    {
+      key: "clicks" as const,
+      title: "Total Clicks",
+      value: formatCompactNumber(summary.clicks),
+      color: colors.clicks,
+      suffix: formatRate(summary.clicks / Math.max(1, chartData.length)),
+      change: compareSummary ? getChange(summary.clicks, compareSummary.clicks) : null,
+    },
+    {
+      key: "impressions" as const,
+      title: "Total Impressions",
+      value: formatCompactNumber(summary.impressions),
+      color: colors.impressions,
+      suffix: formatRate(summary.impressions / Math.max(1, chartData.length)),
+      change: compareSummary ? getChange(summary.impressions, compareSummary.impressions) : null,
+    },
+    {
+      key: "ctr" as const,
+      title: "Average CTR",
+      value: `${summary.ctr.toFixed(1)}%`,
+      color: colors.ctr,
+      suffix: compareSummary ? `vs ${compareSummary.ctr.toFixed(1)}%` : `${summary.ctr.toFixed(1)}%`,
+      change: compareSummary ? getChange(summary.ctr, compareSummary.ctr) : null,
+    },
+    {
+      key: "position" as const,
+      title: "Average Position",
+      value: summary.position.toFixed(1),
+      color: colors.position,
+      suffix: compareSummary ? `vs ${compareSummary.position.toFixed(1)}` : summary.position.toFixed(1),
+      change: compareSummary ? getChange(summary.position, compareSummary.position, true) : null,
+      inverse: true,
+    },
+  ];
+
+  const getAnnotationXParam = (dateString: string) => {
+    if (timeframe !== "Day") {
+      return getChartXParam(dateString);
+    }
+
+    try {
+      return format(parseISO(dateString), "MMM d, yyyy");
+    } catch {
+      return "";
+    }
+  };
+
+  const getVisibleAnnotations = () => {
+    const visibleDates = new Set(chartData.map((point) => point.date));
+    return annotations.filter((annotation) => visibleDates.has(getAnnotationXParam(annotation.date)));
+  };
+
+  const visibleAnnotations = getVisibleAnnotations();
+
+  const getPrimaryAxisId = () => activeMetricsList[0] || "clicks";
+
+  const renderMetricCompare = (metric: (typeof metricCards)[number]) => {
+    if (!metric.change || !compareLabel) {
+      return <span className="text-[#647067]">Current period</span>;
+    }
+
+    return (
+      <>
+        <span className={metric.change.isPositive ? "text-[#16A34A]" : "text-red-500"}>
+          {metric.change.isPositive ? "↑" : "↓"} {metric.change.label.replace("+", "")}
+        </span>
+        <span className="text-[#647067]">{compareLabel}</span>
+      </>
     );
   };
 
   return (
     <div className="space-y-6">
-      {error && (
-        <div className="p-4 border border-destructive/50 bg-destructive/10 rounded-lg text-destructive text-sm">
+      {!isConnectionIssue && error && (
+        <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-sm text-red-600 shadow-[0_10px_24px_rgba(127,29,29,0.05)]">
           {error}
         </div>
       )}
-      {/* GSC Style Toggle Cards */}
-      <div className="grid grid-cols-2 sm:flex border rounded-lg overflow-hidden shadow-sm bg-white">
-        {/* Clicks Card */}
-        <div 
-          onClick={() => toggleMetric('clicks')}
-          className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 border-b sm:border-b-0 border-r transition-colors",
-            activeMetrics.clicks ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
-          )}
-          style={{ backgroundColor: activeMetrics.clicks ? colors.clicks : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
-              activeMetrics.clicks ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.clicks && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {metricCards.map((metric) => (
+          <button
+            key={metric.key}
+            onClick={() => toggleMetric(metric.key)}
+            className={cn(
+              "rounded-2xl border border-[#E9F0EB] bg-white p-4 text-left shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2] hover:shadow-[0_14px_30px_rgba(15,61,46,0.065)]",
+              activeMetrics[metric.key] && "border-[#DCEAE1] ring-1 ring-inset ring-[#EAF4EC]"
+            )}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-medium text-[#334155]">
+                  <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ backgroundColor: metric.color }}>
+                    {activeMetrics[metric.key] && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+                  </span>
+                  {metric.title}
+                  <Info className="h-3.5 w-3.5 text-[#94A3B8]" />
+                </div>
+                <div className="mt-4 text-3xl font-semibold text-[#0F172A]">
+                  {loading ? <span className="block h-8 w-20 animate-pulse rounded-xl bg-[#EEF3F0]" /> : metric.value}
+                </div>
+              </div>
+              {miniSparkline(metric.key, metric.color)}
             </div>
-            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.clicks ? "text-white" : "text-gray-600")}>Total clicks</span>
-          </div>
-          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.clicks ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.clicks)}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
-              <span className={cn("text-[10px] sm:text-xs", activeMetrics.clicks ? "text-white/80" : "text-muted-foreground")}>
-                vs {formatCompactNumber(compareSummary.clicks)}
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              {renderMetricCompare(metric)}
+              <span className="ml-auto rounded-md px-2 py-1 text-xs" style={{ color: metric.color, backgroundColor: `${metric.color}12` }}>
+                {metric.suffix}
               </span>
-              {renderChange(summary.clicks, compareSummary.clicks)}
             </div>
-          )}
-        </div>
-
-        {/* Impressions Card */}
-        <div 
-          onClick={() => toggleMetric('impressions')}
-          className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 border-b sm:border-b-0 sm:border-r transition-colors",
-            activeMetrics.impressions ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
-          )}
-          style={{ backgroundColor: activeMetrics.impressions ? colors.impressions : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
-              activeMetrics.impressions ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.impressions && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </div>
-            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.impressions ? "text-white" : "text-gray-600")}>Total impressions</span>
-          </div>
-          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.impressions ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.impressions)}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
-              <span className={cn("text-[10px] sm:text-xs", activeMetrics.impressions ? "text-white/80" : "text-muted-foreground")}>
-                vs {formatCompactNumber(compareSummary.impressions)}
-              </span>
-              {renderChange(summary.impressions, compareSummary.impressions)}
-            </div>
-          )}
-        </div>
-
-        {/* CTR Card */}
-        <div 
-          onClick={() => toggleMetric('ctr')}
-          className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 border-r sm:border-r transition-colors",
-            activeMetrics.ctr ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
-          )}
-          style={{ backgroundColor: activeMetrics.ctr ? colors.ctr : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
-              activeMetrics.ctr ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.ctr && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </div>
-            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.ctr ? "text-white" : "text-gray-600")}>Average CTR</span>
-          </div>
-          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.ctr ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : `${summary.ctr.toFixed(1)}%`}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
-              <span className={cn("text-[10px] sm:text-xs", activeMetrics.ctr ? "text-white/80" : "text-muted-foreground")}>
-                vs {compareSummary.ctr.toFixed(1)}%
-              </span>
-              {renderChange(summary.ctr, compareSummary.ctr)}
-            </div>
-          )}
-        </div>
-
-        {/* Position Card */}
-        <div 
-          onClick={() => toggleMetric('position')}
-          className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 transition-colors",
-            activeMetrics.position ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
-          )}
-          style={{ backgroundColor: activeMetrics.position ? colors.position : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
-              activeMetrics.position ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.position && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </div>
-            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.position ? "text-white" : "text-gray-600")}>Average position</span>
-          </div>
-          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.position ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : summary.position.toFixed(1)}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
-              <span className={cn("text-[10px] sm:text-xs", activeMetrics.position ? "text-white/80" : "text-muted-foreground")}>
-                vs {compareSummary.position.toFixed(1)}
-              </span>
-              {renderChange(summary.position, compareSummary.position, true)}
-            </div>
-          )}
-        </div>
+          </button>
+        ))}
       </div>
 
-      <Card className="overflow-hidden border shadow-sm">
-        <CardContent className="p-6">
-          {/* Timeframe Toggles */}
-          <div className="flex justify-end mb-6">
-            <div className="flex bg-muted/50 rounded-md p-1 border">
+      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardContent className="p-5">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-[#0F172A]">Performance Over Time</h3>
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-[#334155]">
+                {metricCards
+                  .filter((metric) => activeMetrics[metric.key])
+                  .map((metric) => (
+                    <span key={metric.key} className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: metric.color }} />
+                      {metric.title.replace("Total ", "").replace("Average ", "")}
+                    </span>
+                  ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-lg border border-[#E6ECE8] bg-[#FBFCFB] p-1">
               {(['Day', 'Week', 'Month'] as const).map((t) => (
                 <button 
                   key={t}
                   onClick={() => setTimeframe(t)}
                   className={cn(
-                    "px-4 py-1.5 text-xs font-medium rounded transition-colors",
-                    timeframe === t ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                    "h-8 px-5 text-xs font-medium rounded-md transition-colors",
+                    timeframe === t ? "bg-white shadow-sm text-[#0F172A]" : "text-[#647067] hover:text-[#0F172A]"
                   )}
                 >
                   {t}
                 </button>
               ))}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 rounded-lg border-[#E6ECE8] bg-white"
+                disabled={chartData.length === 0}
+                onClick={exportChartCsv}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </Button>
+              <Button variant="outline" size="icon" className="h-9 w-9 rounded-lg border-[#E6ECE8] bg-white" disabled>
+                <MoreVertical className="h-4 w-4" />
+              </Button>
             </div>
           </div>
 
           {/* Chart */}
           {loading ? (
-            <div className="h-[400px] flex items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <div className="h-[320px] w-full rounded-2xl bg-[linear-gradient(180deg,#FFFFFF_0%,#FBFCFB_100%)] p-6">
+              <div className="relative h-full overflow-hidden rounded-xl border border-[#E6ECE8] bg-white">
+                <div className="absolute inset-x-0 top-[18%] h-px bg-[#E6ECE8]" />
+                <div className="absolute inset-x-0 top-[42%] h-px bg-[#E6ECE8]" />
+                <div className="absolute inset-x-0 top-[66%] h-px bg-[#E6ECE8]" />
+                <div className="absolute bottom-8 left-8 right-8 h-24 animate-pulse rounded-[60%_42%_0_0] bg-gradient-to-t from-[#EAF2FF] to-transparent" />
+                <div className="absolute bottom-12 left-16 right-16 h-28 animate-pulse rounded-[42%_60%_0_0] bg-gradient-to-t from-[#F1E8FF] to-transparent [animation-delay:120ms]" />
+                <div className="absolute left-6 top-6 h-4 w-16 animate-pulse rounded-full bg-[#EEF3F0]" />
+                <div className="absolute right-6 top-6 h-4 w-20 animate-pulse rounded-full bg-[#EEF3F0]" />
+              </div>
             </div>
           ) : (
-            <div className="h-[400px] w-full">
+            <div className="h-[320px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 18, right: 10, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="color_clicks" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.clicks} stopOpacity={0.1}/>
+                      <stop offset="5%" stopColor={colors.clicks} stopOpacity={0.26}/>
                       <stop offset="95%" stopColor={colors.clicks} stopOpacity={0}/>
                     </linearGradient>
                     <linearGradient id="color_impressions" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.impressions} stopOpacity={0.1}/>
+                      <stop offset="5%" stopColor={colors.impressions} stopOpacity={0.24}/>
                       <stop offset="95%" stopColor={colors.impressions} stopOpacity={0}/>
                     </linearGradient>
                     <linearGradient id="color_ctr" x1="0" y1="0" x2="0" y2="1">
@@ -537,8 +646,8 @@ export function Overview({
                   </defs>
                   <CartesianGrid 
                     vertical={false} 
-                    stroke="#e2e8f0"
-                    yAxisId={activeMetricsList[0]}
+                    stroke="#E6ECE8"
+                    yAxisId={getPrimaryAxisId()}
                   />
                   <XAxis
                     dataKey="date"
@@ -550,23 +659,6 @@ export function Overview({
                     scale="point"
                     padding={{ left: 10, right: 10 }}
                   />
-                  
-                  {annotations.map(ann => (
-                    <ReferenceLine 
-                      key={ann.id}
-                      x={getChartXParam(ann.date)} 
-                      stroke={ann.type === 'system' ? '#3b82f6' : '#a855f7'}
-                      strokeDasharray="3 3"
-                      strokeWidth={1.5}
-                      label={{ 
-                        position: 'insideTopLeft', 
-                        value: ann.title, 
-                        fill: ann.type === 'system' ? '#3b82f6' : '#a855f7',
-                        fontSize: 10,
-                        fontWeight: 'bold',
-                      }}
-                    />
-                  ))}
                   
                   {/* Lines render first so they are underneath the axis labels */}
                   {activeMetrics.clicks && (
@@ -660,6 +752,7 @@ export function Overview({
                         type="monotone"
                         dataKey="position"
                         name="Position"
+                        baseValue="dataMax"
                         stroke={colors.position}
                         strokeWidth={2}
                         fillOpacity={1}
@@ -741,6 +834,25 @@ export function Overview({
                     />
                   )}
 
+                  {visibleAnnotations.map(ann => (
+                    <ReferenceLine
+                      key={ann.id}
+                      yAxisId={getPrimaryAxisId()}
+                      x={getAnnotationXParam(ann.date)}
+                      stroke={ann.type === 'system' ? '#0F3D2E' : '#7C3AED'}
+                      strokeDasharray="4 4"
+                      strokeWidth={2}
+                      ifOverflow="extendDomain"
+                      label={{
+                        position: 'insideTopLeft',
+                        value: ann.type === 'system' ? 'Google update' : ann.title,
+                        fill: ann.type === 'system' ? '#0F3D2E' : '#7C3AED',
+                        fontSize: 11,
+                        fontWeight: 700,
+                      }}
+                    />
+                  ))}
+
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     labelStyle={{ fontWeight: 'bold', marginBottom: '4px', color: '#0f172a' }}
@@ -752,6 +864,15 @@ export function Overview({
                   />
                 </ComposedChart>
               </ResponsiveContainer>
+            </div>
+          )}
+          {annotationControls && (
+            <div className="mt-5 flex flex-col gap-3 border-t border-[#E6ECE8] pt-4 sm:flex-row sm:items-center sm:justify-between">
+              {annotationControls}
+              <Button variant="ghost" size="sm" className="w-fit text-[#2563EB] hover:text-[#1D4ED8]" onClick={scrollToFullReport}>
+                View full report
+                <span className="ml-2">-&gt;</span>
+              </Button>
             </div>
           )}
         </CardContent>

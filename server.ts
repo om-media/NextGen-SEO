@@ -1,7 +1,11 @@
+import dotenv from 'dotenv';
 import multer from 'multer';
 import { buildApp, type SyncJobState } from './server/app.js';
 import { initializeDatabase } from './server/database.js';
 import { attachFrontend } from './server/frontend.js';
+
+dotenv.config({ path: '.env.local' });
+dotenv.config();
 
 const upload = multer({ dest: 'uploads/' });
 const syncJobs = new Map<string, SyncJobState>();

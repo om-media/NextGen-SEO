@@ -13,7 +13,9 @@ import {
 } from '../validation.js';
 
 export function registerRankTrackingRoutes(app: Express, db: Database.Database) {
-  app.get('/api/rank-tracking/keywords', requireAuth, (req: AuthedRequest, res) => {
+  const authRequired = requireAuth(db);
+
+  app.get('/api/rank-tracking/keywords', authRequired, (req: AuthedRequest, res) => {
     const siteUrl = asTrimmedString(req.query.siteUrl);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
     try {
@@ -34,7 +36,7 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
     }
   });
 
-  app.post('/api/rank-tracking/keywords', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/rank-tracking/keywords', authRequired, (req: AuthedRequest, res) => {
     const { siteUrl, keywords, location, device, tags, targetDomain, initialPositions } = req.body;
     if (!isNonEmptyString(siteUrl) || !isStringArray(keywords)) return res.status(400).json({ error: 'Invalid payload' });
     if (location !== undefined && location !== null && !isNonEmptyString(location)) return res.status(400).json({ error: 'Invalid location' });
@@ -105,7 +107,7 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
     }
   });
 
-  app.delete('/api/rank-tracking/keywords/:id', requireAuth, (req: AuthedRequest, res) => {
+  app.delete('/api/rank-tracking/keywords/:id', authRequired, (req: AuthedRequest, res) => {
     try {
       const keyword = db.prepare('SELECT id FROM tracked_keywords WHERE id = ? AND ownerId = ?').get(req.params.id, req.authUser!.uid) as { id: string } | undefined;
       if (!keyword) {
@@ -119,7 +121,7 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
     }
   });
 
-  app.get('/api/rank-tracking/history', requireAuth, (req: AuthedRequest, res) => {
+  app.get('/api/rank-tracking/history', authRequired, (req: AuthedRequest, res) => {
     const keywordId = asTrimmedString(req.query.keywordId);
     if (!keywordId) return res.status(400).json({ error: 'Missing keywordId' });
     try {
@@ -134,7 +136,7 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
     }
   });
 
-  app.post('/api/rank-tracking/sync', requireAuth, async (req: AuthedRequest, res) => {
+  app.post('/api/rank-tracking/sync', authRequired, async (req: AuthedRequest, res) => {
     const { siteUrl, force, gscHints } = req.body;
     if (!isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Missing siteUrl' });
     if (force !== undefined && typeof force !== 'boolean') return res.status(400).json({ error: 'Invalid force flag' });

@@ -11,7 +11,9 @@ import {
 } from '../validation.js';
 
 export function registerWarehouseRoutes(app: Express, db: Database.Database) {
-  app.post('/api/warehouse/ingest/site', requireAuth, (req: AuthedRequest, res) => {
+  const authRequired = requireAuth(db);
+
+  app.post('/api/warehouse/ingest/site', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, rows } = req.body;
     if (!isNonEmptyString(siteUrl) || !hasValidMetricRows(rows, 1)) return res.status(400).json({ error: 'Invalid payload' });
@@ -38,7 +40,7 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/warehouse/ingest/query', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/ingest/query', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, rows } = req.body;
     if (!isNonEmptyString(siteUrl) || !hasValidMetricRows(rows, 2)) return res.status(400).json({ error: 'Invalid payload' });
@@ -66,7 +68,7 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/warehouse/ingest/page_query', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/ingest/page_query', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, rows } = req.body;
     if (!isNonEmptyString(siteUrl) || !hasValidMetricRows(rows, 3)) return res.status(400).json({ error: 'Invalid payload' });
@@ -95,7 +97,7 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.get('/api/warehouse/status', requireAuth, (req: AuthedRequest, res) => {
+  app.get('/api/warehouse/status', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const siteUrl = req.query.siteUrl;
     if (siteUrl !== undefined && !isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Invalid siteUrl' });
@@ -129,7 +131,7 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/warehouse/status', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/status', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, lastSyncDate, earliestSyncDate, status } = req.body;
     if (!isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Invalid siteUrl' });
@@ -152,7 +154,7 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/warehouse/query', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/query', authRequired, (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups } = req.body;
     if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ChevronLeft, ChevronRight, MousePointerClick, Eye, Percent, ArrowUpRight } from "lucide-react"
 import { BingApiService, BingQueryStat } from "@/src/services/bingService"
@@ -74,7 +74,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
 
   if (loading) {
     return (
-      <Card>
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </CardContent>
@@ -84,7 +84,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
 
   if (error) {
     return (
-      <Card>
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex items-center justify-center h-64 text-destructive">
           {error}
         </CardContent>
@@ -94,7 +94,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
 
   if (data.length === 0) {
     return (
-      <Card>
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex items-center justify-center h-64 text-muted-foreground">
           No data available for this property.
         </CardContent>
@@ -111,7 +111,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
           { title: "Average CTR", value: `${totals.ctr.toFixed(2)}%`, icon: Percent },
           { title: "Average Position", value: totals.position.toFixed(1), icon: ArrowUpRight },
         ].map((metric) => (
-          <Card key={metric.title}>
+          <Card key={metric.title} className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">{metric.title}</CardTitle>
               <metric.icon className="h-4 w-4 text-muted-foreground" />
@@ -123,12 +123,15 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
         ))}
       </div>
 
-      <Card>
-        <CardHeader>
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardHeader className="border-b border-[#E6ECE8] bg-white px-5 py-4">
           <CardTitle>Top Queries</CardTitle>
+          <CardDescription>
+            Review Bing query performance and page through the dataset in smaller, readable batches.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="rounded-md border overflow-x-auto">
+          <div className="overflow-hidden rounded-2xl border border-[#E6ECE8] bg-white">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -154,14 +157,15 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
           </div>
           
           {totalPages > 1 && (
-            <div className="flex items-center justify-between space-x-2 py-4">
+            <div className="flex items-center justify-between space-x-2 border-t border-[#E6ECE8] py-4">
               <div className="text-sm text-muted-foreground">
                 Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, data.length)} of {data.length} entries
               </div>
-              <div className="flex space-x-2">
+              <div className="flex items-center gap-2 rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-1.5">
                 <Button
                   variant="outline"
                   size="sm"
+                  className="bg-background"
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
                 >
@@ -171,6 +175,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
                 <Button
                   variant="outline"
                   size="sm"
+                  className="bg-background"
                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages}
                 >

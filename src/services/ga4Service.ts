@@ -17,18 +17,14 @@ export interface Ga4DataRow {
 }
 
 export class Ga4ApiService {
-  private accessToken: string;
-
-  constructor(accessToken: string) {
-    this.accessToken = accessToken;
+  constructor(_accessToken?: string | null) {
   }
 
   private async fetchApi(url: string, options: RequestInit = {}) {
-    const response = await fetch(url, {
+    const response = await authFetch(url, {
       ...options,
       headers: {
         ...options.headers,
-        Authorization: `Bearer ${this.accessToken}`,
         'Content-Type': 'application/json',
       },
     });
@@ -38,15 +34,23 @@ export class Ga4ApiService {
         throw new Error('UNAUTHORIZED');
       }
       const error = await response.json();
-      throw new Error(error.error?.message || 'Failed to fetch GA4 data');
+      const errorMessage =
+        typeof error?.error === 'string'
+          ? error.error
+          : error?.error?.message || error?.message || 'Failed to fetch GA4 data';
+      throw new Error(errorMessage);
     }
 
     return response.json();
   }
 
   async getProperties(): Promise<{ siteUrl: string, displayName: string }[]> {
-    const data = await this.fetchApi('https://analyticsadmin.googleapis.com/v1beta/accountSummaries');
-    const summaries: Ga4AccountSummary[] = data.accountSummaries || [];
+    const data = await this.fetchApi('/api/google/ga4/properties');
+    const summaries: Ga4AccountSummary[] = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.accountSummaries)
+        ? data.accountSummaries
+        : [];
     
     const properties: { siteUrl: string, displayName: string }[] = [];
     
@@ -94,11 +98,19 @@ export class Ga4ApiService {
       }
     }
 
-    const data = await this.fetchApi(`https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`, {
+    const data = await this.fetchApi('/api/google/ga4/run-report', {
       method: 'POST',
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        propertyId,
+        startDate,
+        endDate,
+        dimensions,
+        metrics,
+        dimensionFilter: body.dimensionFilter,
+      })
     });
 
     return data;
   }
 }
+import { authFetch } from "../lib/authFetch";

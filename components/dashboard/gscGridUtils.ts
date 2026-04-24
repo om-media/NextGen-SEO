@@ -113,7 +113,7 @@ export function sortGridData(data: GridRow[], sortColumn: SortColumn, sortDirect
 export function getGridTitle(dimension: GridDimension) {
   if (dimension === "page") return "Top Pages";
   if (dimension === "country") return "Top Countries";
-  return "Search Queries";
+  return "Top Search Queries";
 }
 
 export function getGridTitleWithCount(dimension: GridDimension, count: number) {
@@ -136,4 +136,22 @@ export function hasActiveGridFilters(dimension: GridDimension, filters: GridFilt
       filters.isQuestionOnly ||
       filters.minWords !== "",
   );
+}
+
+export function getGridFilterSummary(dimension: GridDimension, filters: GridFilters) {
+  const summary: string[] = [`Dimension: ${dimension}`];
+
+  if (filters.searchTerm) summary.push(`Search: "${filters.searchTerm}"`);
+  if (dimension === "query" && filters.intentFilter !== "all") summary.push(`Intent: ${filters.intentFilter}`);
+  if (filters.minClicks !== "") summary.push(`Min Clicks: ${filters.minClicks}`);
+  if (filters.minImpressions !== "") summary.push(`Min Impressions: ${filters.minImpressions}`);
+  if (filters.maxPosition !== "") summary.push(`Max Position: ${filters.maxPosition}`);
+  if (dimension === "query" && filters.isQuestionOnly) summary.push("Questions Only");
+  if (dimension === "query" && filters.minWords !== "") summary.push(`Min Words: ${filters.minWords}`);
+
+  if (summary.length === 1) {
+    summary.push("No active filters");
+  }
+
+  return summary;
 }

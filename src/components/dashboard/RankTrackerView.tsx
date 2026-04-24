@@ -25,7 +25,7 @@ interface RankTrackerViewProps {
 }
 
 export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
-  const { accessToken } = useAuth()
+  const { userProfile } = useAuth()
   const [keywords, setKeywords] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -163,9 +163,8 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
          const end = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
          const start = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; 
          
-         const token = accessToken || '';
-         if (token && currentKeywordsData.length > 0) {
-           const liveService = new GscApiService(token, 'free');
+         if (userProfile?.googleConnected && currentKeywordsData.length > 0) {
+           const liveService = new GscApiService(null, 'free');
            
            // Query for all currently tracked keywords so they don't get truncated by the 2500 limit
            const regexList = currentKeywordsData.map((k: any) => 
@@ -296,10 +295,12 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col gap-4 rounded-2xl border border-[#E9F0EB] bg-white/90 p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Rank Tracker <Badge variant="outline" className="ml-2 bg-primary/10 text-primary border-primary/20">Beta</Badge></h2>
-          <p className="text-muted-foreground">Monitor daily Google keyword rankings with our Hybrid Engine.</p>
+          <h2 className="text-xl font-semibold tracking-[-0.01em] text-[#0F172A]">
+            Rank Tracker <Badge variant="outline" className="ml-2 border-[#0F3D2E]/20 bg-[#EAF4EC] text-[#0F3D2E]">Beta</Badge>
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-[#647067]">Monitor daily Google keyword rankings with our Hybrid Engine.</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing || keywords.length === 0}>
@@ -368,7 +369,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Average Position</CardTitle>
             <Target className="h-4 w-4 text-muted-foreground" />
@@ -378,7 +379,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
             <p className="text-xs text-muted-foreground">Across top 100 tracking</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Top 3 Rankings</CardTitle>
             <TrendingUp className="h-4 w-4 text-green-500" />
@@ -388,7 +389,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
             <p className="text-xs text-muted-foreground">High visibility terms</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Top 10 Rankings</CardTitle>
             <ArrowRight className="h-4 w-4 text-blue-500" />
@@ -401,8 +402,8 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <CardHeader>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)] lg:col-span-2">
+          <CardHeader className="border-b border-[#E6ECE8] bg-white">
             <CardTitle>Tracked Keywords</CardTitle>
             <CardDescription>Select a keyword to view its ranking history.</CardDescription>
           </CardHeader>
@@ -418,7 +419,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
             ) : (
               <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                 <Table>
-                  <TableHeader className="sticky top-0 bg-card z-10">
+                <TableHeader className="sticky top-0 z-10 bg-[#FBFCFB]">
                     <TableRow>
                       <TableHead>Keyword</TableHead>
                       <TableHead>Device/Loc</TableHead>
@@ -431,7 +432,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
                     {keywords.map(kw => (
                       <TableRow 
                         key={kw.id} 
-                        className={`cursor-pointer transition-colors hover:bg-muted/50 ${selectedKeywordId === kw.id ? 'bg-muted' : ''}`}
+                        className={`cursor-pointer transition-colors hover:bg-[#F6FAF7] ${selectedKeywordId === kw.id ? 'bg-[#EAF4EC]' : ''}`}
                         onClick={() => setSelectedKeywordId(kw.id)}
                       >
                         <TableCell className="font-medium">{kw.keyword}</TableCell>
@@ -466,8 +467,8 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-1">
-          <CardHeader>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)] lg:col-span-1">
+          <CardHeader className="border-b border-[#E6ECE8] bg-white">
             <CardTitle>Position History</CardTitle>
             <CardDescription className="truncate">
               {selectedKeywordId ? keywords.find(k => k.id === selectedKeywordId)?.keyword : "Select a keyword"}
@@ -475,15 +476,15 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
           </CardHeader>
           <CardContent>
             {!selectedKeywordId ? (
-               <div className="h-[300px] flex items-center justify-center text-muted-foreground border border-dashed rounded-lg">
+               <div className="flex h-[300px] items-center justify-center rounded-2xl border border-dashed border-[#D9E5DE] bg-[#FBFCFB] text-muted-foreground">
                  Select a keyword to view
                </div>
             ) : historyLoading ? (
-               <div className="h-[300px] flex items-center justify-center text-muted-foreground border border-dashed rounded-lg">
+               <div className="flex h-[300px] items-center justify-center rounded-2xl border border-dashed border-[#D9E5DE] bg-[#FBFCFB] text-muted-foreground">
                  Loading history...
                </div>
             ) : historyData.length === 0 ? (
-               <div className="h-[300px] flex items-center justify-center text-muted-foreground border border-dashed rounded-lg flex-col gap-2">
+               <div className="flex h-[300px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[#D9E5DE] bg-[#FBFCFB] text-muted-foreground">
                  <p>No history recorded yet.</p>
                  <Button variant="outline" size="sm" onClick={handleSync}>Sync Now</Button>
                </div>
@@ -519,7 +520,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
                 </div>
             )}
           </CardContent>
-          <CardFooter className="text-xs text-muted-foreground bg-muted/30 py-3 border-t">
+          <CardFooter className="border-t border-[#E6ECE8] bg-[#FBFCFB] py-3 text-xs text-muted-foreground">
              Data powered by Google Search Console integration and anonymous SERP checks.
           </CardFooter>
         </Card>

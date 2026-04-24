@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts"
 import { Upload, Server, AlertCircle, Loader2, Bot } from "lucide-react"
 import { authFetch } from "@/src/lib/authFetch"
+import { toast } from "sonner"
 
 interface LogAnalyzerViewProps {
   siteUrl: string | undefined
@@ -73,7 +74,9 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
       if (res.ok) {
         const json = await res.json()
         if (json.count === 0) {
-           alert("No log lines were parsed. Please ensure your file conforms to standard combined access log formats.");
+           toast.error("No log lines were parsed", {
+             description: "Please make sure the file uses a standard combined access log format.",
+           });
         }
         await fetchData()
       } else {
@@ -129,19 +132,19 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col gap-4 rounded-2xl border border-[#E9F0EB] bg-white/90 p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Server Log Analysis</h2>
-          <p className="text-muted-foreground">Monitor real 100% accurate human traffic and Googlebot crawl budget.</p>
+          <h2 className="text-xl font-semibold tracking-[-0.01em] text-[#0F172A]">Server Log Analysis</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-[#647067]">Monitor real 100% accurate human traffic and Googlebot crawl budget.</p>
         </div>
-        <div>
+        <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-1.5">
           <input 
             type="file" 
             ref={fileInputRef}
             className="hidden" 
             onChange={handleFileUpload} 
           />
-          <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+          <Button variant="outline" className="bg-background" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
             {uploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
             {uploading ? "Parsing Logs..." : "Upload Server Logs"}
           </Button>
@@ -149,7 +152,7 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <Card>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 text-muted-foreground pb-2">
             <CardTitle className="text-sm font-medium">True Human Pageviews</CardTitle>
             <Server className="h-4 w-4" />
@@ -160,7 +163,7 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
           </CardContent>
         </Card>
         
-        <Card>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 text-muted-foreground pb-2">
             <CardTitle className="text-sm font-medium">Googlebot Hits</CardTitle>
             <Bot className="h-4 w-4 text-green-500" />
@@ -171,7 +174,7 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 text-muted-foreground pb-2">
             <CardTitle className="text-sm font-medium">Bot Encountered Errors</CardTitle>
             <AlertCircle className="h-4 w-4 text-red-500" />
@@ -182,7 +185,7 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 text-muted-foreground pb-2">
             <CardTitle className="text-sm font-medium">Crawl Efficiency</CardTitle>
             <Bot className="h-4 w-4 text-blue-500" />
@@ -204,14 +207,15 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
       </div>
 
       {chartData.length > 0 ? (
-        <Card className="col-span-4 relative">
+        <Card className="col-span-4 relative rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
           {loading && (
             <div className="absolute inset-0 bg-background/50 backdrop-blur-sm z-10 flex items-center justify-center rounded-xl">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           )}
-          <CardHeader>
+          <CardHeader className="border-b border-[#E6ECE8] bg-white">
             <CardTitle>Traffic Composition (Bots vs Humans)</CardTitle>
+            <CardDescription>Use this view to spot crawl spikes, real traffic trends, and wasted bot activity over time.</CardDescription>
           </CardHeader>
           <CardContent className="h-[350px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -230,14 +234,14 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
           </CardContent>
         </Card>
       ) : loading ? (
-        <Card className="col-span-4 border-dashed bg-muted/30">
+        <Card className="col-span-4 rounded-2xl border border-dashed border-[#D9E5DE] bg-[#FBFCFB] shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
           <CardContent className="flex flex-col items-center justify-center h-[350px] text-muted-foreground text-center px-4">
             <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
             <p>Fetching log data...</p>
           </CardContent>
         </Card>
       ) : (
-         <Card className="col-span-4 border-dashed bg-muted/30">
+         <Card className="col-span-4 rounded-2xl border border-dashed border-[#D9E5DE] bg-[#FBFCFB] shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
           <CardContent className="flex flex-col items-center justify-center h-[350px] text-muted-foreground text-center px-4">
             <Server className="h-12 w-12 opacity-20 mb-4" />
             <p>Upload a server log file (e.g. access.log or .gz archive)</p>
@@ -247,8 +251,8 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
       )}
 
       {errors.length > 0 && (
-         <Card>
-           <CardHeader>
+         <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+           <CardHeader className="border-b border-[#E6ECE8] bg-white">
              <CardTitle className="text-red-600 flex items-center gap-2"><AlertCircle className="w-5 h-5" /> Bot Error Log (4xx / 5xx)</CardTitle>
              <CardDescription>Critical technical SEO issues that bots are wasting crawl budget on.</CardDescription>
            </CardHeader>
@@ -284,8 +288,8 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
       {insights && (
         <div className="grid gap-4 md:grid-cols-2">
           {/* Most Crawled Pages */}
-          <Card>
-            <CardHeader>
+          <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+            <CardHeader className="border-b border-[#E6ECE8] bg-white">
               <CardTitle>Most Crawled Pages</CardTitle>
               <CardDescription>Where Googlebot & Bingbot spend their budget.</CardDescription>
             </CardHeader>
@@ -312,8 +316,8 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
           </Card>
 
           {/* LLM Activity */}
-          <Card>
-            <CardHeader>
+          <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+            <CardHeader className="border-b border-[#E6ECE8] bg-white">
               <CardTitle>AI / LLM Bot Traffic</CardTitle>
               <CardDescription>Pages being scraped by AI training and search bots.</CardDescription>
             </CardHeader>

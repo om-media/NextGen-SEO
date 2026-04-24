@@ -28,7 +28,7 @@ type ExtendedGa4DataRow = Ga4DataRow & {
 };
 
 export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'] }: Ga4DataGridProps) {
-  const { accessToken } = useAuth()
+  const { userProfile } = useAuth()
   const [data, setData] = useState<ExtendedGa4DataRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -50,13 +50,13 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   }, [siteUrl, dimension, dateRange, isCompareMode, compareDateRange])
 
   useEffect(() => {
-    if (!accessToken || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
 
     const fetchData = async () => {
       setLoading(true)
       setError(null)
       try {
-        const ga4Service = new Ga4ApiService(accessToken)
+        const ga4Service = new Ga4ApiService()
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
         
@@ -138,7 +138,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
     }
 
     fetchData()
-  }, [accessToken, siteUrl, dateRange, dimension, isCompareMode, compareDateRange])
+  }, [siteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected])
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -214,7 +214,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
   if (loading && data.length === 0) {
     return (
-      <Card>
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </CardContent>
@@ -224,7 +224,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
   if (error) {
     return (
-      <Card>
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex flex-col items-center justify-center h-64 text-destructive space-y-4">
           <div className="text-center">{error}</div>
           {error.includes("https://console.developers.google.com") && (
@@ -281,8 +281,8 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   return (
     <div className="space-y-6">
       {selectedRowKey && dimension !== 'date' && (
-        <Card className="border shadow-sm">
-          <div className="p-4 border-b bg-muted/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <div className="flex flex-col items-start justify-between gap-3 border-b border-[#E6ECE8] bg-white p-5 sm:flex-row sm:items-center">
             <div>
               <h3 className="font-semibold text-lg">Historic Trend</h3>
               <p className="text-sm text-muted-foreground">
@@ -294,7 +294,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
               Close Chart
             </Button>
           </div>
-          <div className="p-6">
+          <div className="p-5">
             <Ga4Overview 
               siteUrl={siteUrl} 
               dateRange={dateRange} 
@@ -309,7 +309,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
       {pieData && !selectedRowKey && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-5xl mx-auto">
-          <Card>
+          <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Top Sessions Breakdown</CardTitle>
             </CardHeader>
@@ -342,7 +342,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Top Users Breakdown</CardTitle>
             </CardHeader>
@@ -377,8 +377,8 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
         </div>
       )}
 
-      <Card>
-        <CardHeader className={dimension !== 'date' ? "flex flex-row items-center justify-between pb-2" : ""}>
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardHeader className={dimension !== 'date' ? "flex flex-row items-center justify-between border-b border-[#E6ECE8] bg-white px-5 py-4" : "border-b border-[#E6ECE8] bg-white px-5 py-4"}>
           <div>
             <CardTitle>{dimension === 'date' ? 'Data Table' : `Detailed ${getDimensionHeader()} Data`}</CardTitle>
             {dimension !== 'date' && (
@@ -386,14 +386,14 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             )}
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-5 pt-5">
         {loading && data.length > 0 && (
           <div className="flex items-center space-x-2 text-sm text-muted-foreground mb-4">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span>Updating data...</span>
           </div>
         )}
-        <div className="rounded-md border relative overflow-x-auto">
+        <div className="relative overflow-hidden rounded-2xl border border-[#E6ECE8] bg-white">
           <Table>
             <TableHeader>
               <TableRow>
@@ -447,7 +447,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                   return (
                     <TableRow 
                       key={i}
-                      className={dimension !== 'date' ? `cursor-pointer hover:bg-muted/50 transition-colors ${selectedRowKey === dimStr ? 'bg-muted' : ''}` : ''}
+                      className={dimension !== 'date' ? `cursor-pointer transition-colors hover:bg-[#F6FAF7] ${selectedRowKey === dimStr ? 'bg-[#EAF4EC]' : ''}` : ''}
                       onClick={() => {
                         if (dimension !== 'date') {
                           setSelectedRowKey(dimStr)
@@ -490,7 +490,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
         {/* Pagination Controls */}
         {pageCount > 1 && (
-          <div className="flex items-center justify-between px-2 py-4">
+          <div className="flex items-center justify-between border-t border-[#E6ECE8] px-2 py-4">
             <div className="flex-1 text-sm text-muted-foreground">
               Showing {pageIndex * pageSize + 1} to {Math.min((pageIndex + 1) * pageSize, sortedData.length)} of {sortedData.length} entries
             </div>

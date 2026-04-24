@@ -42,14 +42,14 @@ export class ErrorBoundary extends Component<Props, State> {
             errorMessage = parsed.error;
             if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota limit exceeded')) {
               isQuotaError = true;
-              errorMessage = "The free database quota limit has been exceeded. Please try again tomorrow or upgrade your Firebase project to a paid plan.";
+        errorMessage = "The free database quota limit has been exceeded. Please try again later or upgrade the backing datastore for this workspace.";
             }
           }
         } catch (e) {
           errorMessage = this.state.error.message;
           if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota limit exceeded')) {
             isQuotaError = true;
-            errorMessage = "The free database quota limit has been exceeded. Please try again tomorrow or upgrade your Firebase project to a paid plan.";
+        errorMessage = "The free database quota limit has been exceeded. Please try again later or upgrade the backing datastore for this workspace.";
           }
         }
       }

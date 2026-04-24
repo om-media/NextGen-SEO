@@ -18,42 +18,35 @@ export interface GscSearchAnalyticsResponse {
 }
 
 export class GscApiService {
-  private accessToken: string | null;
   private tier: 'free' | 'pro' | 'enterprise';
 
   constructor(accessToken: string | null = null, tier: 'free' | 'pro' | 'enterprise' = 'free') {
-    this.accessToken = accessToken;
     this.tier = tier;
   }
 
   private async fetchApi(path: string, options: RequestInit = {}) {
-    if (!this.accessToken) {
-      throw new Error("invalid authentication credentials - OAuth 2 access token has expired or is missing");
-    }
-    const url = `https://www.googleapis.com/webmasters/v3${path}`;
-    const response = await fetch(url, {
+    const response = await authFetch(`/api/google/gsc${path}`, {
       ...options,
       headers: {
         ...options.headers,
-        Authorization: `Bearer ${this.accessToken}`,
         'Content-Type': 'application/json',
       },
     });
 
     if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('UNAUTHORIZED');
-      }
       const error = await response.json();
-      throw new Error(error.error?.message || 'Failed to fetch GSC data');
+      const errorMessage =
+        typeof error?.error === 'string'
+          ? error.error
+          : error?.error?.message || error?.message || 'Failed to fetch GSC data';
+      throw new Error(errorMessage);
     }
 
     return response.json();
   }
 
   async getSites(): Promise<GscSite[]> {
-    const data = await this.fetchApi('/sites');
-    return data.siteEntry || [];
+    return this.fetchApi('/sites');
   }
 
   async querySearchAnalytics(
@@ -124,9 +117,12 @@ export class GscApiService {
         body.dimensionFilterGroups = dimensionFilterGroups;
       }
 
-      const data = await this.fetchApi(`/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`, {
+      const data = await this.fetchApi('/search-analytics', {
         method: 'POST',
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          siteUrl,
+          ...body,
+        }),
       });
 
       const rows = data.rows || [];

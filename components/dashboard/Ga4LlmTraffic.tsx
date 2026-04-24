@@ -27,7 +27,7 @@ function classifyLlmSource(source: string): string {
 }
 
 export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRange }: Ga4LlmTrafficProps) {
-  const { accessToken } = useAuth()
+  const { userProfile } = useAuth()
   const [data, setData] = useState<any>(null)
   const [compareData, setCompareData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -44,14 +44,14 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   }
 
   useEffect(() => {
-    if (!accessToken || !siteUrl || !dateRange.from || !dateRange.to) return
+    if (!userProfile?.googleConnected || !siteUrl || !dateRange.from || !dateRange.to) return
     let isMounted = true
 
     const fetchData = async () => {
       setLoading(true)
       setError(null)
       try {
-        const ga4Service = new Ga4ApiService(accessToken)
+        const ga4Service = new Ga4ApiService()
         const metrics = ['sessions', 'engagedSessions', 'keyEvents', 'averageSessionDuration']
 
         // Fetch totals
@@ -147,7 +147,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
 
     fetchData()
     return () => { isMounted = false }
-  }, [siteUrl, dateRange, compareDateRange, isCompareMode, accessToken])
+  }, [siteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.googleConnected])
 
 
   const formatValue = (metric: string, value: string) => {
@@ -174,7 +174,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     }
 
     return (
-      <Card className="bg-card">
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
         </CardHeader>
@@ -196,11 +196,11 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   }
 
   if (error) {
-    return <div className="text-red-500 p-4 border rounded bg-red-50">{error}</div>
+    return <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-5 text-sm text-destructive">{error}</div>
   }
 
   if (!data?.totals?.rows || data.totals.rows.length === 0) {
-    return <div className="text-muted-foreground p-8 text-center border rounded">No LLM referral traffic recorded for this period.</div>
+    return <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-8 text-center text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)]">No LLM referral traffic recorded for this period.</div>
   }
 
   const totalsRow = data.totals.rows[0].metricValues
@@ -374,8 +374,8 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="col-span-1">
-          <CardHeader>
+        <Card className="col-span-1 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <CardHeader className="border-b border-[#E6ECE8] bg-white">
             <CardTitle>Traffic metrics by LLM referrer</CardTitle>
             <CardDescription>Displays traffic metrics by LLM referrer.</CardDescription>
           </CardHeader>
@@ -434,12 +434,12 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
           </CardContent>
         </Card>
 
-        <Card className="col-span-1 border rounded-lg p-6">
-          <CardHeader className="p-0 mb-4">
+        <Card className="col-span-1 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <CardHeader className="border-b border-[#E6ECE8] bg-white">
             <CardTitle>LLM Session trend over time</CardTitle>
             <CardDescription>Shows the daily trend of LLM sessions over the selected time period.</CardDescription>
           </CardHeader>
-          <div className="h-[300px]">
+          <CardContent className="h-[340px] pt-6">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -455,12 +455,12 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
                 )}
               </LineChart>
             </ResponsiveContainer>
-          </div>
+          </CardContent>
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardHeader className="border-b border-[#E6ECE8] bg-white">
           <CardTitle>Landing pages by LLM referrer</CardTitle>
           <CardDescription>Displays landing page performance by LLM referrer.</CardDescription>
         </CardHeader>

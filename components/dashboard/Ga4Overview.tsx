@@ -72,7 +72,7 @@ interface Ga4OverviewProps {
 }
 
 export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, annotations = [] }: Ga4OverviewProps) {
-  const { accessToken } = useAuth()
+  const { userProfile } = useAuth()
   const [data, setData] = useState<Ga4DataRow[]>([])
   const [compareData, setCompareData] = useState<Ga4DataRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -98,13 +98,13 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
   }
 
   useEffect(() => {
-    if (!accessToken || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
 
     const fetchData = async () => {
       setLoading(true)
       setError(null)
       try {
-        const ga4Service = new Ga4ApiService(accessToken)
+        const ga4Service = new Ga4ApiService()
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
         
@@ -153,7 +153,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     }
 
     fetchData()
-  }, [accessToken, siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected])
 
 
   const { chartData, summary, compareSummary } = useMemo(() => {
@@ -383,7 +383,7 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
 
   if (loading && data.length === 0) {
     return (
-      <Card>
+      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex items-center justify-center h-[400px]">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </CardContent>
@@ -402,14 +402,14 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
   return (
     <div className="space-y-4">
       {/* Scorecards */}
-      <div className="grid grid-cols-2 md:flex rounded-lg border bg-white shadow-sm overflow-hidden">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         
         {/* Sessions Card */}
         <div 
           onClick={() => toggleMetric('sessions')}
           className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 border-b md:border-b-0 border-r transition-colors",
-            activeMetrics.sessions ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
+            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2]",
+            activeMetrics.sessions ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
           )}
           style={{ backgroundColor: activeMetrics.sessions ? colors.sessions : undefined }}
         >
@@ -439,8 +439,8 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('users')}
           className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 border-b md:border-b-0 md:border-r transition-colors",
-            activeMetrics.users ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
+            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2]",
+            activeMetrics.users ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
           )}
           style={{ backgroundColor: activeMetrics.users ? colors.users : undefined }}
         >
@@ -470,8 +470,8 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('pageViews')}
           className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 border-b md:border-b-0 border-r transition-colors",
-            activeMetrics.pageViews ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
+            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2]",
+            activeMetrics.pageViews ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
           )}
           style={{ backgroundColor: activeMetrics.pageViews ? colors.pageViews : undefined }}
         >
@@ -501,8 +501,8 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('bounceRate')}
           className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 border-b md:border-b-0 md:border-r transition-colors",
-             activeMetrics.bounceRate ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
+            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2]",
+             activeMetrics.bounceRate ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
           )}
           style={{ backgroundColor: activeMetrics.bounceRate ? colors.bounceRate : undefined }}
         >
@@ -532,8 +532,8 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         <div 
           onClick={() => toggleMetric('eventCount')}
           className={cn(
-            "cursor-pointer flex-1 p-3 sm:p-4 col-span-2 md:col-span-1 transition-colors",
-            activeMetrics.eventCount ? "text-white" : "bg-white text-muted-foreground hover:bg-gray-50"
+            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2] md:col-span-2 xl:col-span-1",
+            activeMetrics.eventCount ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
           )}
           style={{ backgroundColor: activeMetrics.eventCount ? colors.eventCount : undefined }}
         >
@@ -560,18 +560,18 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
         </div>
       </div>
 
-      <Card className="overflow-hidden border shadow-sm">
+      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="p-6">
           {/* Timeframe Toggles */}
           <div className="flex justify-end mb-6">
-            <div className="flex bg-muted/50 rounded-md p-1 border">
+            <div className="flex rounded-lg border border-[#E6ECE8] bg-[#FBFCFB] p-1">
               {(['Day', 'Week', 'Month'] as const).map((t) => (
                 <button 
                   key={t}
                   onClick={() => setTimeframe(t)}
                   className={cn(
-                    "px-4 py-1.5 text-xs font-medium rounded transition-colors",
-                    timeframe === t ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                    "rounded-md px-4 py-1.5 text-xs font-medium transition-colors",
+                    timeframe === t ? "bg-white shadow-sm text-[#0F172A]" : "text-[#647067] hover:text-[#0F172A]"
                   )}
                 >
                   {t}
@@ -873,4 +873,3 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     </div>
   )
 }
-

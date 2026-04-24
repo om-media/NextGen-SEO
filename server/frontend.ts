@@ -9,7 +9,18 @@ export async function attachFrontend(app: express.Express) {
     const env = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '');
     const vite = await createViteServer({
       configFile: false,
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        watch: {
+          ignored: [
+            '**/sqlite.db',
+            '**/sqlite.db-*',
+            '**/sqlite.db.*',
+            '**/.server-dist/**',
+            '**/uploads/**',
+          ],
+        },
+      },
       appType: 'spa',
       plugins: [react(), tailwindcss()],
       define: {
