@@ -1,7 +1,7 @@
 import { Button, buttonVariants } from "@/components/ui/button";
 import { AlertCircle, BarChart3, ExternalLink, Loader2, PlugZap } from "lucide-react";
 
-type DataSource = "gsc" | "bing" | "ga4";
+type DataSource = "gsc" | "bing" | "ga4" | "blended";
 
 type AppStatusPanelsProps = {
   apiError: string | null;
@@ -31,6 +31,10 @@ function renderNoPropertiesMessage(dataSource: DataSource) {
     return "We couldn't find any Bing Webmaster Tools properties yet. Add your Bing API key in Settings and make sure you have verified sites in Bing Webmaster Tools.";
   }
 
+  if (dataSource === "blended") {
+    return "We couldn't find any Search Console properties to blend yet. Connect Google data or sync a Search Console property first, then choose a GA4 property to add onsite behavior metrics.";
+  }
+
   return "We couldn't find any Google Analytics 4 properties for this Google account. Your onboarding property is a Search Console property, and GA4 uses separate properties like properties/123456789. Make sure GA4 exists for the site and that this Google account has access to it.";
 }
 
@@ -52,16 +56,17 @@ export function AppStatusPanels({
   selectedSite,
   sessionExpired,
 }: AppStatusPanelsProps) {
+  const usesGscProperty = dataSource === "gsc" || dataSource === "blended";
   const hasNoSites =
     !googleConnected &&
-    ((dataSource === "gsc" && gscSitesCount === 0) ||
+    ((usesGscProperty && gscSitesCount === 0) ||
       (dataSource === "ga4" && ga4SitesCount === 0));
 
   const showDisconnectedBanner =
     (!googleConnected || sessionExpired) &&
-    ((dataSource === "gsc" && gscSitesCount > 0) || (dataSource === "ga4" && ga4SitesCount > 0));
+    ((usesGscProperty && gscSitesCount > 0) || (dataSource === "ga4" && ga4SitesCount > 0));
 
-  const sourcePropertyCount = dataSource === "gsc" ? gscSitesCount : dataSource === "ga4" ? ga4SitesCount : bingSitesCount;
+  const sourcePropertyCount = usesGscProperty ? gscSitesCount : dataSource === "ga4" ? ga4SitesCount : bingSitesCount;
   const showNoProperties =
     !fetchingSites &&
     !apiError &&
@@ -208,7 +213,7 @@ export function AppStatusPanels({
           </div>
           <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">Choose a property for this data source</h3>
           <p className="max-w-md text-sm leading-6 text-[#647067]">
-            Your previous selection doesn&apos;t belong to the current {dataSource === "ga4" ? "Google Analytics 4" : dataSource === "bing" ? "Bing Webmaster" : "Google Search Console"} view. Pick one from the selector in the top bar to continue.
+            Your previous selection doesn&apos;t belong to the current {dataSource === "ga4" ? "Google Analytics 4" : dataSource === "bing" ? "Bing Webmaster" : dataSource === "blended" ? "Blended page performance" : "Google Search Console"} view. Pick one from the selector in the top bar to continue.
           </p>
         </div>
       )}

@@ -20,7 +20,7 @@ import type { BingSite } from "../../services/bingService";
 import type { GscSite } from "../../services/gscService";
 import type { UserProfile } from "../../contexts/AuthContext";
 
-type DataSource = "gsc" | "bing" | "ga4";
+type DataSource = "gsc" | "bing" | "ga4" | "blended";
 type Ga4Dimension = "country" | "city" | "region" | "deviceCategory" | "browser" | "operatingSystem";
 export type GscDashboardTab = "overview" | "pages" | "queries" | "countries" | "query-count";
 export type Ga4DashboardTab = "overview" | "events" | "pages" | "sources" | "countries";
@@ -135,13 +135,7 @@ export function AppContent({
             <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
           </TabsContent>
           <TabsContent value="pages" className="space-y-4">
-            <BlendedPagesView
-              siteUrl={selectedSite}
-              dateRange={dateRange}
-              isCompareMode={isCompareMode}
-              compareDateRange={compareDateRange}
-              ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
-            />
+            <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
           </TabsContent>
           <TabsContent value="countries" className="space-y-4">
             <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
@@ -150,6 +144,25 @@ export function AppContent({
             <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
           </TabsContent>
         </Tabs>
+      )}
+
+      {selectedSite && !apiError && dataSource === "blended" && sites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-[#DDEAE2] bg-[#F8FAF9] p-5 shadow-[0_12px_32px_rgba(15,61,46,0.04)]">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#0F3D2E]">Blended page decisions</p>
+            <h3 className="mt-2 text-xl font-semibold tracking-[-0.02em] text-[#0F172A]">Pages Performance</h3>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-[#647067]">
+              This view joins GSC search visibility with GA4 onsite behavior by canonical page path. It does not blend GA4 sessions into query-level data.
+            </p>
+          </div>
+          <BlendedPagesView
+            siteUrl={selectedSite}
+            dateRange={dateRange}
+            isCompareMode={isCompareMode}
+            compareDateRange={compareDateRange}
+            ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+          />
+        </div>
       )}
 
       {selectedSite && !apiError && dataSource === "bing" && userProfile?.bingApiKey && bingSites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (

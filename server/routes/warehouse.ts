@@ -10,6 +10,19 @@ import {
   validateDimensionFilterGroups,
 } from '../validation.js';
 import { canonicalPageKey } from '../reporting/url.js';
+import { googleApiFetchJson } from '../services/googleAuth.js';
+
+const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
+const GA4_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
+
+const normalizeGa4Date = (value: unknown) => {
+  if (typeof value !== 'string') return null;
+  if (isIsoDateString(value)) return value;
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+};
+
+const readField = (row: any, key: string) => row?.[key] ?? row?.[key.toLowerCase()];
 
 export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
@@ -22,6 +35,263 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (!Array.isArray(value)) return [];
     return value.filter((date): date is string => typeof date === 'string' && isIsoDateString(date));
   };
+
+  const fetchLiveGa4Report = async (
+    ownerId: string,
+    propertyId: string,
+    startDate: string,
+    endDate: string,
+    dimensions: string[],
+    metrics: string[],
+    dimensionFilter?: unknown,
+  ) => googleApiFetchJson(
+    db,
+    ownerId,
+    `https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        dateRanges: [{ startDate, endDate }],
+        dimensions: dimensions.map((name) => ({ name })),
+        metrics: metrics.map((name) => ({ name })),
+        ...(dimensionFilter ? { dimensionFilter } : {}),
+      }),
+    },
+  );
+
+  const fetchAndStoreGa4Pages = async (
+    ownerId: string,
+    propertyId: string,
+    siteUrl: string,
+    startDate: string,
+    endDate: string,
+  ) => {
+    const data = await fetchLiveGa4Report(
+      ownerId,
+      propertyId,
+      startDate,
+      endDate,
+      ['date', 'landingPagePlusQueryString'],
+      ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+    );
+
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    const replaceAndInsert = db.transaction(async () => {
+      await db.run(
+        'DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?',
+        [ownerId, propertyId, startDate, endDate],
+      );
+
+      for (const row of rows) {
+        const date = normalizeGa4Date(row.dimensionValues?.[0]?.value);
+        const pagePath = row.dimensionValues?.[1]?.value;
+        if (!date || !isNonEmptyString(pagePath)) continue;
+
+        await db.run(`
+          INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
+            siteUrl=excluded.siteUrl,
+            pagePath=excluded.pagePath,
+            sessions=excluded.sessions,
+            totalUsers=excluded.totalUsers,
+            pageViews=excluded.pageViews,
+            bounceRate=excluded.bounceRate,
+            eventCount=excluded.eventCount
+        `, [
+          ownerId,
+          propertyId,
+          siteUrl,
+          date,
+          pagePath,
+          canonicalPageKey(pagePath, siteUrl),
+          toFiniteNumber(row.metricValues?.[0]?.value),
+          toFiniteNumber(row.metricValues?.[1]?.value),
+          toFiniteNumber(row.metricValues?.[2]?.value),
+          toFiniteNumber(row.metricValues?.[3]?.value),
+          toFiniteNumber(row.metricValues?.[4]?.value),
+        ]);
+      }
+    });
+
+    await replaceAndInsert();
+    return rows.length;
+  };
+
+  const isExactPageFilter = (dimensionFilter: any) => {
+    const filter = dimensionFilter?.filter;
+    const fieldName = filter?.fieldName;
+    const stringFilter = filter?.stringFilter;
+    if (!filter || !stringFilter || !['pagePath', 'landingPagePlusQueryString'].includes(fieldName)) return false;
+    return stringFilter.matchType === undefined || stringFilter.matchType === 'EXACT';
+  };
+
+  const getExactPageFilterValue = (dimensionFilter: any) => {
+    if (!isExactPageFilter(dimensionFilter)) return null;
+    const value = dimensionFilter.filter.stringFilter.value;
+    return isNonEmptyString(value) ? value : null;
+  };
+
+  const canServeGa4FromWarehouse = (dimensions: string[], metrics: string[], dimensionFilter: unknown) => {
+    if (dimensions.some((dimension) => !GA4_WAREHOUSE_DIMENSIONS.has(dimension))) return false;
+    if (metrics.some((metric) => !GA4_WAREHOUSE_METRICS.has(metric))) return false;
+    if (!dimensionFilter) return true;
+    return isExactPageFilter(dimensionFilter);
+  };
+
+  const ensureGa4WarehouseRange = async (
+    ownerId: string,
+    propertyId: string,
+    siteUrl: string,
+    startDate: string,
+    endDate: string,
+  ) => {
+    const freshness = await db.get<any>(`
+      SELECT MIN(date) AS earliestDate, MAX(date) AS latestDate, COUNT(*) AS rowCount
+      FROM ga4_page_metrics
+      WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+    `, [ownerId, propertyId, startDate, endDate]);
+
+    const rowCount = toFiniteNumber(readField(freshness, 'rowCount'));
+    const earliestDate = readField(freshness, 'earliestDate');
+    const latestDate = readField(freshness, 'latestDate');
+    if (rowCount === 0 || !earliestDate || !latestDate || earliestDate > startDate || latestDate < endDate) {
+      await fetchAndStoreGa4Pages(ownerId, propertyId, siteUrl, startDate, endDate);
+    }
+  };
+
+  const selectGa4MetricSql = (metric: string) => {
+    if (metric === 'sessions') return 'SUM(sessions) AS sessions';
+    if (metric === 'totalUsers') return 'SUM(totalUsers) AS totalUsers';
+    if (metric === 'screenPageViews') return 'SUM(pageViews) AS screenPageViews';
+    if (metric === 'eventCount') return 'SUM(eventCount) AS eventCount';
+    return 'CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate';
+  };
+
+  const readGa4MetricValue = (row: any, metric: string) => {
+    if (metric === 'screenPageViews') return toFiniteNumber(readField(row, 'screenPageViews')).toString();
+    return toFiniteNumber(readField(row, metric)).toString();
+  };
+
+  const readGa4WarehouseReport = async (
+    ownerId: string,
+    propertyId: string,
+    siteUrl: string,
+    startDate: string,
+    endDate: string,
+    dimensions: string[],
+    metrics: string[],
+    dimensionFilter?: any,
+  ) => {
+    const whereParts = ['ownerId = ?', 'propertyId = ?', 'date >= ?', 'date <= ?'];
+    const params: unknown[] = [ownerId, propertyId, startDate, endDate];
+    const exactPageFilterValue = getExactPageFilterValue(dimensionFilter);
+    if (exactPageFilterValue) {
+      whereParts.push('pageKey = ?');
+      params.push(canonicalPageKey(exactPageFilterValue, siteUrl));
+    }
+
+    const selectedDimensions = dimensions.map((dimension) => {
+      if (dimension === 'date') return 'date';
+      return 'MIN(pagePath) AS pagePath';
+    });
+    const groupBy = dimensions.includes('date') && dimensions.some((dimension) => dimension !== 'date')
+      ? 'GROUP BY date, pageKey'
+      : dimensions.includes('date')
+        ? 'GROUP BY date'
+        : dimensions.some((dimension) => dimension !== 'date')
+          ? 'GROUP BY pageKey'
+          : '';
+    const firstMetric = metrics[0] || 'sessions';
+    const firstMetricAlias = firstMetric === 'screenPageViews' ? 'screenPageViews' : firstMetric;
+    const orderBy = dimensions.includes('date')
+      ? 'ORDER BY date ASC'
+      : dimensions.length > 0
+        ? `ORDER BY ${firstMetricAlias} DESC`
+        : '';
+    const selectParts = [
+      ...selectedDimensions,
+      ...metrics.map(selectGa4MetricSql),
+    ];
+
+    const rows = await db.all<any>(`
+      SELECT ${selectParts.join(', ')}
+      FROM ga4_page_metrics
+      WHERE ${whereParts.join(' AND ')}
+      ${groupBy}
+      ${orderBy}
+    `, params);
+
+    return {
+      rows: rows.map((row) => ({
+        dimensionValues: dimensions.map((dimension) => ({
+          value: dimension === 'date' ? String(readField(row, 'date') || '') : String(readField(row, 'pagePath') || ''),
+        })),
+        metricValues: metrics.map((metric) => ({ value: readGa4MetricValue(row, metric) })),
+      })),
+      metadata: { source: 'warehouse' },
+    };
+  };
+
+  app.post('/api/warehouse/ga4/report', authRequired, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const {
+      propertyId,
+      startDate,
+      endDate,
+      dimensions = [],
+      metrics = [],
+      dimensionFilter,
+      siteUrl,
+    } = req.body;
+
+    if (
+      !isNonEmptyString(propertyId)
+      || !isIsoDateString(startDate)
+      || !isIsoDateString(endDate)
+      || !Array.isArray(dimensions)
+      || !Array.isArray(metrics)
+      || dimensions.some((dimension) => !isNonEmptyString(dimension))
+      || metrics.some((metric) => !isNonEmptyString(metric))
+    ) {
+      return res.status(400).json({ error: 'Invalid GA4 report payload' });
+    }
+
+    try {
+      const user = await db.get<any>('SELECT activatedSiteUrl FROM users WHERE id = ?', [ownerId]);
+      const resolvedSiteUrl = isNonEmptyString(siteUrl)
+        ? siteUrl
+        : isNonEmptyString(readField(user, 'activatedSiteUrl'))
+          ? readField(user, 'activatedSiteUrl')
+          : propertyId;
+
+      if (canServeGa4FromWarehouse(dimensions, metrics, dimensionFilter)) {
+        await ensureGa4WarehouseRange(ownerId, propertyId, resolvedSiteUrl, startDate, endDate);
+        const report = await readGa4WarehouseReport(
+          ownerId,
+          propertyId,
+          resolvedSiteUrl,
+          startDate,
+          endDate,
+          dimensions,
+          metrics,
+          dimensionFilter,
+        );
+        return res.json(report);
+      }
+
+      const report = await fetchLiveGa4Report(ownerId, propertyId, startDate, endDate, dimensions, metrics, dimensionFilter);
+      return res.json({
+        ...report,
+        metadata: {
+          ...(report?.metadata || {}),
+          source: 'live',
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to fetch GA4 report' });
+    }
+  });
 
   app.post('/api/warehouse/ingest/site', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;

@@ -13,7 +13,7 @@ import type { UserProfile } from "../../contexts/AuthContext";
 import type { BillingConfig } from "../../services/billingService";
 import { getPlanDefinition, getPlanDisplayName, getPlanPropertyLimit, getRemainingPropertySlots } from "../../../shared/plans";
 
-type DataSource = "gsc" | "bing" | "ga4";
+type DataSource = "gsc" | "bing" | "ga4" | "blended";
 
 export type SettingsDraft = {
   avatarUrl: string;

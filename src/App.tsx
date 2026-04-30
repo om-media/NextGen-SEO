@@ -35,7 +35,7 @@ import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownS
 import { getBillingConfig, openBillingPortal, startCheckout, type BillingConfig } from "./services/billingService"
 import { getPlanPropertyLimit } from "../shared/plans"
 
-type DataSource = 'gsc' | 'bing' | 'ga4'
+type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
 
 function MainApp() {
   const { user, userProfile, loading, signOut, connectGoogleServices, disconnectGoogleServices, unlockSite, setBingApiKey, completeOnboarding, updateDefaultSite, updateDefaultGa4Property, updateUserProfile } = useAuth()
@@ -279,7 +279,7 @@ function MainApp() {
         })
     }
 
-    if (dataSource === 'gsc') {
+    if (dataSource === 'gsc' || dataSource === 'blended') {
       if (googleConnected) {
         setFetchingSites(true)
         setApiError(null)
@@ -659,7 +659,7 @@ function MainApp() {
         ? ga4SitesWithSavedDefault.filter((site) => site.siteUrl === savedGa4Property.siteUrl)
         : [];
 
-  const currentSites = dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : accessibleGa4Sites;
+  const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? bingSites : sites;
   const currentSelection = dataSource === 'ga4' ? selectedGa4Property : selectedSite;
   const hasValidSelectedSite = currentSites.some((site) => {
     if (site.siteUrl !== currentSelection) {
@@ -831,7 +831,7 @@ function MainApp() {
             isConnectingGoogle={isConnectingGoogleData}
             onSignOut={signOut}
             onSwitchDataSource={(nextSource) => {
-              const availableSites = nextSource === 'gsc' ? sites : nextSource === 'bing' ? bingSites : ga4Sites;
+              const availableSites = nextSource === 'ga4' ? ga4Sites : nextSource === 'bing' ? bingSites : sites;
               switchDataSource(nextSource, availableSites);
             }}
             selectedSite={currentSelection}
@@ -877,7 +877,7 @@ function MainApp() {
                 />
               )}
 
-              {(activeMenu === "Settings" || activeMenu === "AI Content Auditor" || !( !userProfile?.googleConnected && ((dataSource === 'gsc' && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) )) && (
+              {(activeMenu === "Settings" || activeMenu === "AI Content Auditor" || !( !userProfile?.googleConnected && (((dataSource === 'gsc' || dataSource === 'blended') && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) )) && (
                 <AppContent
                   key={`${dataSource}-${selectedSite}-${selectedGa4Property}`}
                   activeMenu={activeMenu}

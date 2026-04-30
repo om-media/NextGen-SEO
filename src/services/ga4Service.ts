@@ -98,7 +98,7 @@ export class Ga4ApiService {
       }
     }
 
-    const data = await this.fetchApi('/api/google/ga4/run-report', {
+    const data = await this.fetchApi('/api/warehouse/ga4/report', {
       method: 'POST',
       body: JSON.stringify({
         propertyId,

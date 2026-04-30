@@ -15,7 +15,7 @@ import { AlertCircle, Bell, Loader2, Lock, LogOut, Settings2, Sun } from "lucide
 import type { AppUser, UserProfile } from "../../contexts/AuthContext";
 import type { SiteLike } from "../../lib/siteSelection";
 
-type DataSource = "gsc" | "bing" | "ga4";
+type DataSource = "gsc" | "bing" | "ga4" | "blended";
 
 type AppHeaderProps = {
   activeMenu: string;
@@ -81,6 +81,9 @@ export function AppHeader({
             <Button variant={dataSource === "ga4" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3" onClick={() => onSwitchDataSource("ga4")}>
               Google Analytics 4
             </Button>
+            <Button variant={dataSource === "blended" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3" onClick={() => onSwitchDataSource("blended")}>
+              Blended
+            </Button>
           </div>
         )}
 
@@ -112,7 +115,7 @@ export function AppHeader({
           </Select>
         )}
 
-        {dataSource === "gsc" && !googleConnected && (
+        {(dataSource === "gsc" || dataSource === "blended") && !googleConnected && (
           <Button
             onClick={onConnectGoogle}
             variant="outline"

@@ -8,7 +8,7 @@ import { CheckCircle2, Clock3 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DateRange } from "react-day-picker";
 
-type DataSource = "gsc" | "bing" | "ga4";
+type DataSource = "gsc" | "bing" | "ga4" | "blended";
 
 type AppToolbarProps = {
   activeMenu: string;
@@ -67,7 +67,7 @@ export function AppToolbar({
       {showDataControls ? (
       <div className="flex w-full flex-col items-start gap-2 xl:min-w-[760px] xl:items-end">
         <div className="flex w-full flex-wrap items-center gap-2 xl:justify-end">
-          {dataSource === "gsc" && (
+          {(dataSource === "gsc" || dataSource === "blended") && (
             <>
               <div className="[&>button]:h-9 [&>button]:rounded-xl [&>button]:border-[#E6ECE8] [&>button]:shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
                 <WarehouseSync
@@ -235,8 +235,15 @@ function getSectionCopy(activeMenu: string, dataSource: DataSource) {
     };
   }
 
+  if (dataSource === "blended") {
+    return {
+      title: "Pages performance at a glance",
+      description: "Blend Search Console visibility with GA4 engagement at page level, without mixing query ownership.",
+    };
+  }
+
   return {
     title: "Your SEO performance at a glance",
-    description: "Track performance, compare ranges, and discover opportunities without losing your working context.",
+    description: "Review Google Search Console search visibility: clicks, impressions, CTR, position, and visible queries.",
   };
 }

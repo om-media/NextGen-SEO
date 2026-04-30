@@ -22,12 +22,12 @@ type BlendedPagesViewProps = {
 type SortColumn =
   | "page"
   | "clicks"
+  | "impressions"
   | "ctr"
   | "queryCount"
   | "sessions"
   | "pageViews"
-  | "bounceRate"
-  | "position";
+  | "bounceRate";
 
 type SortDirection = "asc" | "desc";
 
@@ -87,12 +87,12 @@ function getFolderKey(pageKey: string) {
 function getSortValue(row: BlendedPagePerformanceRow, column: SortColumn) {
   if (column === "page") return row.page.toLowerCase();
   if (column === "clicks") return row.gsc?.clicks ?? 0;
+  if (column === "impressions") return row.gsc?.impressions ?? 0;
   if (column === "ctr") return row.gsc?.ctr ?? 0;
   if (column === "queryCount") return row.gsc?.queryCount ?? 0;
   if (column === "sessions") return row.ga4?.sessions ?? 0;
   if (column === "pageViews") return row.ga4?.pageViews ?? 0;
-  if (column === "bounceRate") return row.ga4?.bounceRate ?? 0;
-  return row.gsc?.position ?? Number.MAX_SAFE_INTEGER;
+  return row.ga4?.bounceRate ?? 0;
 }
 
 function getChange(current: number, previous: number) {
@@ -103,16 +103,14 @@ function getChange(current: number, previous: number) {
 function downloadCsv(rows: BlendedPagePerformanceRow[]) {
   const headers = [
     "Page",
-    "Clicks",
-    "Impressions",
-    "CTR",
+    "GSC Clicks",
+    "GSC Impressions",
+    "GSC CTR",
     "Visible Queries",
-    "Position",
     "GA4 Sessions",
-    "GA4 Users",
     "GA4 Page Views",
     "GA4 Bounce Rate",
-    "GA4 Events",
+    "Opportunity / Status",
   ];
 
   const escape = (value: string | number) => {
@@ -126,12 +124,10 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
     row.gsc?.impressions ?? 0,
     row.gsc ? `${(row.gsc.ctr * 100).toFixed(2)}%` : "",
     row.gsc?.queryCount ?? 0,
-    row.gsc?.position?.toFixed(1) ?? "",
     row.ga4?.sessions ?? "",
-    row.ga4?.totalUsers ?? "",
     row.ga4?.pageViews ?? "",
     row.ga4 ? `${(row.ga4.bounceRate * 100).toFixed(2)}%` : "",
-    row.ga4?.eventCount ?? "",
+    getOpportunityStatus(row).label,
   ]);
 
   const csv = [headers, ...body].map((line) => line.map(escape).join(",")).join("\n");
@@ -144,6 +140,47 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
   link.click();
   document.body.removeChild(link);
   window.URL.revokeObjectURL(url);
+}
+
+function getOpportunityStatus(row: BlendedPagePerformanceRow) {
+  const impressions = row.gsc?.impressions ?? 0;
+  const clicks = row.gsc?.clicks ?? 0;
+  const ctr = row.gsc?.ctr ?? 0;
+  const sessions = row.ga4?.sessions ?? 0;
+  const bounceRate = row.ga4?.bounceRate ?? 0;
+
+  if (!row.ga4) {
+    return {
+      className: "bg-[#F8FAF9] text-[#647067]",
+      label: "GA4 not matched",
+    };
+  }
+
+  if (impressions >= 500 && ctr < 0.02) {
+    return {
+      className: "bg-[#FFF2E8] text-[#C2410C]",
+      label: "CTR opportunity",
+    };
+  }
+
+  if (clicks >= 20 && sessions >= 20 && bounceRate >= 0.7) {
+    return {
+      className: "bg-[#FEF2F2] text-[#B91C1C]",
+      label: "Engagement risk",
+    };
+  }
+
+  if (sessions >= 25 && impressions < 250) {
+    return {
+      className: "bg-[#F4ECFF] text-[#6D28D9]",
+      label: "Visibility gap",
+    };
+  }
+
+  return {
+    className: "bg-[#EAF4EC] text-[#0F3D2E]",
+    label: "Stable",
+  };
 }
 
 function MetricCard({
@@ -359,7 +396,7 @@ export function BlendedPagesView({
       return;
     }
     setSortColumn(column);
-    setSortDirection(column === "position" || column === "bounceRate" ? "asc" : "desc");
+    setSortDirection(column === "bounceRate" ? "asc" : "desc");
   };
 
   const sortIndicator = (column: SortColumn) => {
@@ -388,7 +425,7 @@ export function BlendedPagesView({
         <MetricCard
           accentClass="bg-[#EAF2FF] text-[#2F7DF6]"
           icon={<ArrowUp className="h-5 w-5" />}
-          label="Clicks"
+          label="GSC clicks"
           sublabel={isCompareMode ? `${getChange(totals.clicks, compareTotals.clicks)?.toFixed(1) ?? "0.0"}% vs compare` : "Current period"}
           value={formatCompact(totals.clicks)}
         />
@@ -421,15 +458,19 @@ export function BlendedPagesView({
         </div>
       )}
 
+      {!ga4PropertyId && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-800">
+          This blended view is currently GSC-only because no default GA4 property is assigned to the workspace. Choose a GA4 property in Settings to add sessions, page views, and bounce rate.
+        </div>
+      )}
+
       {sourceMeta && (
         <div className="flex flex-wrap gap-2 text-xs text-[#647067]">
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            GSC rows: {formatNumber(sourceMeta.freshness.gsc.rowCount)}
-            {sourceMeta.freshness.gsc.latestDate ? `, latest ${sourceMeta.freshness.gsc.latestDate}` : ""}
+            GSC synced through {sourceMeta.freshness.gsc.latestDate || "not synced"} · {formatNumber(sourceMeta.freshness.gsc.rowCount)} rows
           </span>
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            GA4 rows: {formatNumber(sourceMeta.freshness.ga4.rowCount)}
-            {sourceMeta.freshness.ga4.latestDate ? `, latest ${sourceMeta.freshness.ga4.latestDate}` : ""}
+            GA4 synced through {sourceMeta.freshness.ga4.latestDate || "not synced"} · {formatNumber(sourceMeta.freshness.ga4.rowCount)} rows
           </span>
         </div>
       )}
@@ -492,61 +533,62 @@ export function BlendedPagesView({
 
             <div className="overflow-hidden rounded-2xl border border-[#E6ECE8]">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] text-sm">
+                <table className="w-full min-w-[1080px] text-sm">
                   <thead className="bg-[#FBFCFB] text-xs font-semibold text-[#34483E]">
                     <tr>
-                      <th className="w-[34%] px-4 py-3 text-left">
+                      <th className="w-[32%] px-4 py-3 text-left">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("page")}>
                           Page {sortIndicator("page")}
                         </button>
                       </th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("clicks")}>
-                          Clicks {sortIndicator("clicks")}
+                          GSC Clicks {sortIndicator("clicks")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("impressions")}>
+                          GSC Impressions {sortIndicator("impressions")}
                         </button>
                       </th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("ctr")}>
-                          CTR {sortIndicator("ctr")}
+                          GSC CTR {sortIndicator("ctr")}
                         </button>
                       </th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("queryCount")}>
-                          Queries {sortIndicator("queryCount")}
+                          Visible Queries {sortIndicator("queryCount")}
                         </button>
                       </th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("sessions")}>
-                          Sessions {sortIndicator("sessions")}
+                          GA4 Sessions {sortIndicator("sessions")}
                         </button>
                       </th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("pageViews")}>
-                          Page views {sortIndicator("pageViews")}
+                          GA4 Page Views {sortIndicator("pageViews")}
                         </button>
                       </th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("bounceRate")}>
-                          Bounce {sortIndicator("bounceRate")}
+                          GA4 Bounce Rate {sortIndicator("bounceRate")}
                         </button>
                       </th>
-                      <th className="px-4 py-3 text-right">
-                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("position")}>
-                          Position {sortIndicator("position")}
-                        </button>
-                      </th>
+                      <th className="px-4 py-3 text-right">Opportunity / Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={8} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={9} className="px-4 py-16 text-center text-[#647067]">
                           Loading blended page data...
                         </td>
                       </tr>
                     ) : paginatedRows.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={9} className="px-4 py-16 text-center text-[#647067]">
                           No page rows match this view.
                         </td>
                       </tr>
@@ -555,6 +597,7 @@ export function BlendedPagesView({
                         const compareRow = compareByPageKey.get(row.pageKey);
                         const clickChange = getChange(row.gsc?.clicks ?? 0, compareRow?.gsc?.clicks ?? 0);
                         const sessionChange = getChange(row.ga4?.sessions ?? 0, compareRow?.ga4?.sessions ?? 0);
+                        const opportunityStatus = getOpportunityStatus(row);
 
                         return (
                           <tr key={row.pageKey || row.page} className="border-t border-[#E6ECE8] hover:bg-[#F8FAF9]">
@@ -568,6 +611,7 @@ export function BlendedPagesView({
                               <div className="font-medium text-[#0F172A]">{formatNumber(row.gsc?.clicks ?? 0)}</div>
                               {isCompareMode && <ChangeBadge value={clickChange} />}
                             </td>
+                            <td className="px-4 py-4 text-right">{formatNumber(row.gsc?.impressions ?? 0)}</td>
                             <td className="px-4 py-4 text-right">{row.gsc ? formatPercent(row.gsc.ctr) : "-"}</td>
                             <td className="px-4 py-4 text-right font-semibold text-[#6B5CFF]">{formatNumber(row.gsc?.queryCount ?? 0)}</td>
                             <td className="px-4 py-4 text-right">
@@ -576,7 +620,11 @@ export function BlendedPagesView({
                             </td>
                             <td className="px-4 py-4 text-right">{row.ga4 ? formatNumber(row.ga4.pageViews) : "-"}</td>
                             <td className="px-4 py-4 text-right">{row.ga4 ? formatPercent(row.ga4.bounceRate) : "-"}</td>
-                            <td className="px-4 py-4 text-right">{row.gsc ? row.gsc.position.toFixed(1) : "-"}</td>
+                            <td className="px-4 py-4 text-right">
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${opportunityStatus.className}`}>
+                                {opportunityStatus.label}
+                              </span>
+                            </td>
                           </tr>
                         );
                       })
