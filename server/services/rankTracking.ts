@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import * as cheerio from 'cheerio';
 
 type GscHintValue = number | { position?: unknown; url?: unknown };
@@ -43,14 +43,12 @@ function getHintValue(gscHints: GscHintMap | undefined, keyword: string, device:
 }
 
 export async function syncRankTrackingForSite(
-  db: Database.Database,
+  db: AppDatabase,
   ownerId: string,
   siteUrl: string,
   options: SyncRankTrackingOptions = {},
 ) {
-  const keywords = db
-    .prepare('SELECT * FROM tracked_keywords WHERE ownerId = ? AND siteUrl = ?')
-    .all(ownerId, siteUrl) as any[];
+  const keywords = await db.all<any>('SELECT * FROM tracked_keywords WHERE ownerId = ? AND siteUrl = ?', [ownerId, siteUrl]);
   const today = new Date().toISOString().split('T')[0];
   let syncCount = 0;
   const defaultTargetDomain = normalizeDomain(siteUrl);
@@ -60,7 +58,7 @@ export async function syncRankTrackingForSite(
     currentTargetDomain = normalizeDomain(currentTargetDomain);
 
     if (!options.force) {
-      const existing = db.prepare('SELECT 1 FROM keyword_rankings WHERE keywordId = ? AND date = ?').get(kw.id, today);
+      const existing = await db.get('SELECT 1 FROM keyword_rankings WHERE keywordId = ? AND date = ?', [kw.id, today]);
       if (existing) {
         continue;
       }
@@ -91,11 +89,11 @@ export async function syncRankTrackingForSite(
     }
 
     if (!foundInGsc) {
-      const gscData = db.prepare(`
+      const gscData = await db.get<any>(`
         SELECT position, date FROM gsc_query_metrics
         WHERE ownerId = ? AND siteUrl = ? AND query = ?
         ORDER BY date DESC LIMIT 1
-      `).get(ownerId, siteUrl, kw.keyword) as any;
+      `, [ownerId, siteUrl, kw.keyword]);
 
       if (gscData && gscData.position > 0) {
         positionToRecord = Math.round(gscData.position);
@@ -156,10 +154,13 @@ export async function syncRankTrackingForSite(
       }
     }
 
-    db.prepare(`
-      INSERT OR REPLACE INTO keyword_rankings (keywordId, date, position, rankingUrl)
+    await db.run(`
+      INSERT INTO keyword_rankings (keywordId, date, position, rankingUrl)
       VALUES (?, ?, ?, ?)
-    `).run(kw.id, today, positionToRecord, matchedUrl);
+      ON CONFLICT(keywordId, date) DO UPDATE SET
+        position=excluded.position,
+        rankingUrl=excluded.rankingUrl
+    `, [kw.id, today, positionToRecord, matchedUrl]);
 
     syncCount++;
   }
@@ -167,7 +168,7 @@ export async function syncRankTrackingForSite(
   return { success: true, count: syncCount };
 }
 
-export function startRankTrackingScheduler(db: Database.Database) {
+export function startRankTrackingScheduler(db: AppDatabase) {
   let isRunning = false;
 
   setInterval(async () => {
@@ -178,14 +179,14 @@ export function startRankTrackingScheduler(db: Database.Database) {
     isRunning = true;
 
     try {
-      const sites = db.prepare(`
+      const sites = await db.all<{ ownerId: string; siteUrl: string }>(`
         SELECT DISTINCT ownerId, siteUrl
         FROM tracked_keywords
         WHERE ownerId IS NOT NULL
           AND TRIM(ownerId) <> ''
           AND siteUrl IS NOT NULL
           AND TRIM(siteUrl) <> ''
-      `).all() as Array<{ ownerId: string; siteUrl: string }>;
+      `);
 
       for (const site of sites) {
         try {

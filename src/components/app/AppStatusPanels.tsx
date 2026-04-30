@@ -20,7 +20,6 @@ type AppStatusPanelsProps = {
   onOpenPlan: () => void;
   selectedSite: string;
   sessionExpired: boolean;
-  trialEndsAt?: string | null;
 };
 
 function renderNoPropertiesMessage(dataSource: DataSource) {
@@ -52,7 +51,6 @@ export function AppStatusPanels({
   onOpenPlan,
   selectedSite,
   sessionExpired,
-  trialEndsAt,
 }: AppStatusPanelsProps) {
   const hasNoSites =
     !googleConnected &&
@@ -81,9 +79,8 @@ export function AppStatusPanels({
     !apiError &&
     sourcePropertyCount > 0 &&
     !hasValidSelectedSite &&
-    (googleConnected || dataSource === "bing");
+      (googleConnected || dataSource === "bing");
   const showBillingBanner = billingStatus === "past_due" || billingStatus === "incomplete" || billingStatus === "canceled";
-  const showTrialBanner = billingStatus === "trialing" && Boolean(trialEndsAt);
 
   if (hasNoSites) {
     return (
@@ -132,23 +129,12 @@ export function AppStatusPanels({
         </div>
       )}
 
-      {showTrialBanner && !showBillingBanner && (
-        <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-[#0F3D2E]/15 bg-[#EAF4EC]/70 p-4 sm:flex-row">
-          <div className="text-sm">
-            <strong>Trial Active</strong> - Your workspace trial is active{trialEndsAt ? ` until ${new Date(trialEndsAt).toLocaleDateString()}` : ""}. Review plan options before you hit property or feature limits.
-          </div>
-          <Button onClick={onOpenPlan} variant="outline" size="sm" className="shrink-0">
-            Review Plans
-          </Button>
-        </div>
-      )}
-
       {showDisconnectedBanner && (
         <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-amber-700 sm:flex-row">
           <div className="flex items-center gap-2">
             <AlertCircle className="h-5 w-5" />
             <div className="text-sm">
-              <strong>Live API Disconnected</strong> - Your app login is still active, but your saved Google data connection needs attention, so you are currently viewing offline cached and server log data.
+              <strong>Google data needs attention</strong> - Your app login is still active, but the saved Google reporting connection needs attention. The dashboard is showing the latest synced warehouse data until you reconnect.
             </div>
           </div>
           <Button onClick={onConnectGoogle} variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-700 hover:bg-amber-500/20" disabled={isConnectingGoogle}>

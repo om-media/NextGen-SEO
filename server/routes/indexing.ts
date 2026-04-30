@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
@@ -14,7 +14,7 @@ type SyncJob = {
 
 export function registerIndexingRoutes(
   app: Express,
-  db: Database.Database,
+  db: AppDatabase,
   syncJobs: Map<string, SyncJob>,
   getSyncJobKey: (ownerId: string, siteUrl: string) => string,
 ) {
@@ -62,12 +62,13 @@ export function registerIndexingRoutes(
           console.error('GSC Live Fetch Error in Indexing:', e);
         }
       } else {
-        gscPages = db.prepare(
+        gscPages = await db.all(
           'SELECT page as url, SUM(clicks) as clicks, SUM(impressions) as impressions FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? GROUP BY page',
-        ).all(ownerId, siteUrl, start, end) as any[];
+          [ownerId, siteUrl, start, end],
+        ) as any[];
       }
 
-      const logs = db.prepare(`
+      const logs = await db.all(`
         SELECT urlPath, MAX(timestamp) as lastCrawl
         FROM server_logs
         WHERE ownerId = ? AND siteUrl = ?
@@ -77,10 +78,11 @@ export function registerIndexingRoutes(
           AND urlPath NOT LIKE '%.env%'
           AND urlPath NOT LIKE '%.bak'
         GROUP BY urlPath
-      `).all(ownerId, siteUrl) as any[];
-      const inspections = db.prepare(
+      `, [ownerId, siteUrl]) as any[];
+      const inspections = await db.all(
         'SELECT url, inspectionResult, coverageState, lastInspectionTime FROM url_inspection_cache WHERE ownerId = ? AND siteUrl = ?',
-      ).all(ownerId, siteUrl) as any[];
+        [ownerId, siteUrl],
+      ) as any[];
 
       const urlMap = new Map<string, any>();
       const baseHost = siteUrl.replace(/\/$/, '');
@@ -193,16 +195,14 @@ export function registerIndexingRoutes(
     }
   });
 
-  app.post('/api/indexing/seed-urls', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/indexing/seed-urls', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, urls } = req.body;
     if (!isNonEmptyString(siteUrl) || !isStringArray(urls)) return res.status(400).json({ error: 'Invalid payload' });
 
     try {
       let added = 0;
-      const insert = db.prepare('INSERT OR IGNORE INTO url_inspection_cache (ownerId, siteUrl, url, lastInspectionTime) VALUES (?, ?, ?, ?)');
-
-      db.transaction(() => {
+      await db.transaction(async () => {
         for (let u of urls) {
           if (typeof u !== 'string' || !u.startsWith('http')) continue;
 
@@ -213,7 +213,11 @@ export function registerIndexingRoutes(
 
           if (!u.endsWith('/')) u += '/';
 
-          const result = insert.run(ownerId, siteUrl, u, new Date(0).toISOString());
+          const result = await db.run(`
+            INSERT INTO url_inspection_cache (ownerId, siteUrl, url, lastInspectionTime)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(ownerId, siteUrl, url) DO NOTHING
+          `, [ownerId, siteUrl, u, new Date(0).toISOString()]);
           if (result.changes > 0) added++;
         }
       })();
@@ -244,10 +248,14 @@ export function registerIndexingRoutes(
       const resultStr = JSON.stringify(data.inspectionResult || {});
       const now = new Date().toISOString();
 
-      db.prepare(`
-        INSERT OR REPLACE INTO url_inspection_cache (ownerId, siteUrl, url, inspectionResult, coverageState, lastInspectionTime)
+      await db.run(`
+        INSERT INTO url_inspection_cache (ownerId, siteUrl, url, inspectionResult, coverageState, lastInspectionTime)
         VALUES (?, ?, ?, ?, ?, ?)
-      `).run(ownerId, siteUrl, inspectionUrl, resultStr, coverageState, now);
+        ON CONFLICT(ownerId, siteUrl, url) DO UPDATE SET
+          inspectionResult=excluded.inspectionResult,
+          coverageState=excluded.coverageState,
+          lastInspectionTime=excluded.lastInspectionTime
+      `, [ownerId, siteUrl, inspectionUrl, resultStr, coverageState, now]);
 
       res.json({ success: true, coverageState, inspectionResult: data.inspectionResult, lastInspectionTime: now });
     } catch (err: any) {
@@ -290,10 +298,14 @@ export function registerIndexingRoutes(
             const resultStr = JSON.stringify(data.inspectionResult || {});
             const now = new Date().toISOString();
 
-            db.prepare(`
-              INSERT OR REPLACE INTO url_inspection_cache (ownerId, siteUrl, url, inspectionResult, coverageState, lastInspectionTime)
+            await db.run(`
+              INSERT INTO url_inspection_cache (ownerId, siteUrl, url, inspectionResult, coverageState, lastInspectionTime)
               VALUES (?, ?, ?, ?, ?, ?)
-            `).run(ownerId, siteUrl, url, resultStr, coverageState, now);
+              ON CONFLICT(ownerId, siteUrl, url) DO UPDATE SET
+                inspectionResult=excluded.inspectionResult,
+                coverageState=excluded.coverageState,
+                lastInspectionTime=excluded.lastInspectionTime
+            `, [ownerId, siteUrl, url, resultStr, coverageState, now]);
           } catch (error: any) {
             const status = error.status;
             const errorData = error.payload || {};

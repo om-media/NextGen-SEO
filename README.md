@@ -25,3 +25,19 @@ View your app in AI Studio: https://ai.studio/apps/cc404f7d-10b9-4cce-bc27-97d82
    `http://localhost:3000/api/google/oauth/callback`
 6. Run the app:
    `npm run dev`
+
+## PostgreSQL
+
+By default the app still falls back to `sqlite.db` so local development does not break.
+
+To run on PostgreSQL, set `DATABASE_URL` in `.env.local`:
+
+`DATABASE_URL="postgresql://postgres:postgres@localhost:5432/nextgen_seo"`
+
+Then start the app normally:
+
+`npm run dev`
+
+To copy existing local SQLite data into PostgreSQL:
+
+`npm run db:migrate:postgres`

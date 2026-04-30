@@ -10,10 +10,10 @@ dotenv.config();
 const upload = multer({ dest: 'uploads/' });
 const syncJobs = new Map<string, SyncJobState>();
 const getSyncJobKey = (ownerId: string, siteUrl: string) => `${ownerId}:${siteUrl}`;
-const db = initializeDatabase();
 
 async function startServer() {
   const PORT = 3000;
+  const db = await initializeDatabase();
   const app = buildApp({ db, upload, syncJobs, getSyncJobKey });
   await attachFrontend(app);
 

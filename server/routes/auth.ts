@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import { clearSessionCookie, createUserSession, destroySession, hashPassword, readAuthedUser, requireAuth, setSessionCookie, verifyPassword } from '../auth.js';
 
 type UserRow = {
@@ -18,6 +18,8 @@ type UserRow = {
   bingApiKey?: string | null;
   onboardingCompleted?: number | null;
   activatedSiteUrl?: string | null;
+  activatedGa4PropertyId?: string | null;
+  activatedGa4DisplayName?: string | null;
   gscRefreshToken?: string | null;
   billingStatus?: string | null;
   subscriptionId?: string | null;
@@ -39,8 +41,10 @@ function normalizeUserProfile(user: UserRow) {
     bingApiKey: user.bingApiKey || '',
     onboardingCompleted: Boolean(user.onboardingCompleted),
     activatedSiteUrl: user.activatedSiteUrl || null,
+    activatedGa4PropertyId: user.activatedGa4PropertyId || null,
+    activatedGa4DisplayName: user.activatedGa4DisplayName || null,
     googleConnected: Boolean(user.gscRefreshToken),
-    billingStatus: user.billingStatus || 'trialing',
+    billingStatus: user.billingStatus === 'trialing' ? 'active' : (user.billingStatus || 'active'),
     subscriptionId: user.subscriptionId || null,
     trialEndsAt: user.trialEndsAt || null,
     currentPeriodEnd: user.currentPeriodEnd || null,
@@ -60,12 +64,6 @@ function buildSessionPayload(user: UserRow) {
   };
 }
 
-function createTrialEndDate() {
-  const date = new Date();
-  date.setDate(date.getDate() + 14);
-  return date.toISOString();
-}
-
 function isValidEmail(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 3 && value.includes('@');
 }
@@ -74,18 +72,18 @@ function isValidPassword(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 6;
 }
 
-export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
-  app.get('/api/auth/session', (req, res) => {
+export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
+  app.get('/api/auth/session', async (req, res) => {
     try {
-      const authedUser = readAuthedUser(req, db);
+      const authedUser = await readAuthedUser(req, db);
       if (!authedUser) {
         clearSessionCookie(res);
         return res.status(401).json({ error: 'No active session', code: 'NO_SESSION' });
       }
 
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(authedUser.uid) as UserRow | undefined;
+      const user = await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [authedUser.uid]);
       if (!user) {
-        destroySession(db, authedUser.token);
+        await destroySession(db, authedUser.token);
         clearSessionCookie(res);
         return res.status(401).json({ error: 'Account not found', code: 'ACCOUNT_NOT_FOUND' });
       }
@@ -96,7 +94,7 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/auth/register', (req, res) => {
+  app.post('/api/auth/register', async (req, res) => {
     const { email, password } = req.body ?? {};
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'Enter a valid email address.', code: 'INVALID_EMAIL' });
@@ -107,7 +105,7 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      const existingUser = db.prepare('SELECT * FROM users WHERE lower(email) = lower(?)').get(normalizedEmail) as UserRow | undefined;
+      const existingUser = await db.get<UserRow>('SELECT * FROM users WHERE lower(email) = lower(?)', [normalizedEmail]);
       let sessionUser: UserRow;
 
       if (existingUser) {
@@ -119,8 +117,7 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
         }
 
         const passwordHash = hashPassword(password);
-        db.prepare('UPDATE users SET email = ?, passwordHash = ?, authProvider = ? WHERE id = ?')
-          .run(normalizedEmail, passwordHash, 'local', existingUser.id);
+        await db.run('UPDATE users SET email = ?, passwordHash = ?, authProvider = ? WHERE id = ?', [normalizedEmail, passwordHash, 'local', existingUser.id]);
         sessionUser = {
           ...existingUser,
           email: normalizedEmail,
@@ -132,11 +129,11 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
         const passwordHash = hashPassword(password);
         const createdAt = new Date().toISOString();
 
-        db.prepare(`
+        await db.run(`
           INSERT INTO users (
             id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+        `, [
           id,
           normalizedEmail,
           passwordHash,
@@ -151,16 +148,16 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
           null,
           0,
           null,
-          'trialing',
+          'active',
           null,
-          createTrialEndDate(),
           null,
-        );
+          null,
+        ]);
 
-        sessionUser = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow;
+        sessionUser = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]))!;
       }
 
-      const sessionToken = createUserSession(db, sessionUser.id);
+      const sessionToken = await createUserSession(db, sessionUser.id);
       setSessionCookie(res, sessionToken);
       res.status(201).json(buildSessionPayload(sessionUser));
     } catch (error: any) {
@@ -168,7 +165,7 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/auth/login', (req, res) => {
+  app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body ?? {};
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'Enter a valid email address.', code: 'INVALID_EMAIL' });
@@ -179,7 +176,7 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      const user = db.prepare('SELECT * FROM users WHERE lower(email) = lower(?)').get(normalizedEmail) as UserRow | undefined;
+      const user = await db.get<UserRow>('SELECT * FROM users WHERE lower(email) = lower(?)', [normalizedEmail]);
 
       if (!user) {
         return res.status(401).json({ error: 'We could not find an account for that email.', code: 'INVALID_LOGIN' });
@@ -196,7 +193,7 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
         return res.status(401).json({ error: 'The email or password is incorrect.', code: 'INVALID_LOGIN' });
       }
 
-      const sessionToken = createUserSession(db, user.id);
+      const sessionToken = await createUserSession(db, user.id);
       setSessionCookie(res, sessionToken);
       res.json(buildSessionPayload(user));
     } catch (error: any) {
@@ -204,10 +201,10 @@ export function registerLocalAuthRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/auth/logout', requireAuth(db), (req, res) => {
+  app.post('/api/auth/logout', requireAuth(db), async (req, res) => {
     try {
-      const authedUser = readAuthedUser(req, db);
-      destroySession(db, authedUser?.token || null);
+      const authedUser = await readAuthedUser(req, db);
+      await destroySession(db, authedUser?.token || null);
       clearSessionCookie(res);
       res.json({ success: true });
     } catch (error: any) {

@@ -61,6 +61,11 @@ const CustomYAxisTick = (props: any) => {
   );
 };
 
+const getGa4DimensionValue = (row: any, index = 0) => {
+  const value = row?.dimensionValues?.[index]?.value;
+  return typeof value === "string" ? value : "";
+};
+
 interface Ga4OverviewProps {
   siteUrl: string;
   dateRange?: DateRange;
@@ -215,8 +220,8 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     }
 
     // Process primary
-    [...data].sort((a,b) => a.dimensionValues[0].value.localeCompare(b.dimensionValues[0].value)).forEach((row) => {
-      const date = parseGa4DateStr(row.dimensionValues[0].value);
+    data.filter((row) => getGa4DimensionValue(row)).sort((a,b) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b))).forEach((row) => {
+      const date = parseGa4DateStr(getGa4DimensionValue(row));
       let key = '';
       
       if (timeframe === 'Day') {
@@ -255,8 +260,8 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     if (isCompareMode && compareData.length > 0 && compareDateRange?.from) {
       const startCompareExact = parseISO(format(compareDateRange.from, 'yyyy-MM-dd'));
       
-      [...compareData].sort((a,b) => a.dimensionValues[0].value.localeCompare(b.dimensionValues[0].value)).forEach((row) => {
-        const date = parseGa4DateStr(row.dimensionValues[0].value);
+      compareData.filter((row) => getGa4DimensionValue(row)).sort((a,b) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b))).forEach((row) => {
+        const date = parseGa4DateStr(getGa4DimensionValue(row));
         const offset = Math.round((date.getTime() - startCompareExact.getTime()) / (24 * 60 * 60 * 1000));
         
         const sessions = parseInt(row.metricValues[0].value);

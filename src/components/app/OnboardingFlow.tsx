@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, CheckCircle2, ExternalLink, Globe, KeyRound, Loader2, Lock, Sparkles } from "lucide-react";
+import { BarChart3, CheckCircle2, Crown, ExternalLink, Globe, KeyRound, Loader2, Lock, Search, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { UserProfile } from "../../contexts/AuthContext";
 import type { GscSite } from "../../services/gscService";
 import type { SiteLike } from "../../lib/siteSelection";
-import { getPlanDefinition, getPlanDisplayName, getPlanPropertyLimit, getRemainingPropertySlots } from "../../../shared/plans";
+import { PLAN_DEFINITIONS, getPlanDefinition, getPlanDisplayName, getPlanPropertyLimit, getRemainingPropertySlots, type PlanTier } from "../../../shared/plans";
 
 type OnboardingFlowProps = {
   bingApiKey?: string;
@@ -31,13 +30,19 @@ type OnboardingFlowProps = {
   userProfile: UserProfile | null;
 };
 
-type OnboardingStep = "connect" | "property" | "bing";
+type OnboardingStep = "connect" | "plan" | "property" | "bing";
+const ONBOARDING_STEPS: OnboardingStep[] = ["connect", "plan", "property", "bing"];
+const PLAN_OPTIONS: PlanTier[] = ["free", "pro", "enterprise"];
 
 function getPropertyLabel(site: GscSite) {
   return site.siteUrl
     .replace("https://", "")
     .replace("http://", "")
     .replace("sc-domain:", "");
+}
+
+function getGa4PropertyLabel(site: SiteLike) {
+  return site.displayName || site.siteUrl;
 }
 
 export function OnboardingFlow({
@@ -58,13 +63,18 @@ export function OnboardingFlow({
   userName,
   userProfile,
 }: OnboardingFlowProps) {
-  const [step, setStep] = useState<OnboardingStep>(googleConnected ? "property" : "connect");
+  const [step, setStep] = useState<OnboardingStep>(googleConnected ? "plan" : "connect");
   const [bingKeyDraft, setBingKeyDraft] = useState(bingApiKey || "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justConnectedGoogle, setJustConnectedGoogle] = useState(false);
-  const planDefinition = getPlanDefinition(userProfile?.tier);
-  const planName = getPlanDisplayName(userProfile?.tier);
+  const [propertySearch, setPropertySearch] = useState("");
+  const currentTier = userProfile?.tier || "free";
+  const [selectedPlanTier, setSelectedPlanTier] = useState<PlanTier>(currentTier);
+  const [ga4Search, setGa4Search] = useState("");
+  const planDefinition = getPlanDefinition(selectedPlanTier);
+  const currentPlanName = getPlanDisplayName(currentTier);
+  const planName = planDefinition.displayName;
   const isFirstActivation = !userProfile?.onboardingCompleted;
   const effectiveUnlockedSites = isFirstActivation ? [] : (userProfile?.unlockedSites || []);
 
@@ -74,19 +84,32 @@ export function OnboardingFlow({
     }
   }, [googleConnected]);
 
+  useEffect(() => {
+    setSelectedPlanTier(currentTier);
+  }, [currentTier]);
+
   const propertyOptions = useMemo(() => sites.map((site) => {
-    const isUnlocked = getPlanPropertyLimit(userProfile?.tier) === null || effectiveUnlockedSites.includes(site.siteUrl);
+    const isUnlocked = getPlanPropertyLimit(selectedPlanTier) === null || effectiveUnlockedSites.includes(site.siteUrl);
     return {
       siteUrl: site.siteUrl,
       label: getPropertyLabel(site),
       isUnlocked,
     };
-  }), [effectiveUnlockedSites, sites, userProfile?.tier]);
+  }), [effectiveUnlockedSites, selectedPlanTier, sites]);
 
   const selectedProperty = propertyOptions.find((site) => site.siteUrl === selectedSite);
+  const filteredPropertyOptions = propertyOptions.filter((site) =>
+    site.label.toLowerCase().includes(propertySearch.trim().toLowerCase()) ||
+    site.siteUrl.toLowerCase().includes(propertySearch.trim().toLowerCase()),
+  );
+  const filteredGa4Options = ga4Sites.filter((site) => {
+    const query = ga4Search.trim().toLowerCase();
+    if (!query) return true;
+    return getGa4PropertyLabel(site).toLowerCase().includes(query) || site.siteUrl.toLowerCase().includes(query);
+  });
   const selectedGa4PropertyOption = ga4Sites.find((site) => site.siteUrl === selectedGa4Property) || null;
   const canActivate = Boolean(selectedSite);
-  const planLimit = getPlanPropertyLimit(userProfile?.tier);
+  const planLimit = getPlanPropertyLimit(selectedPlanTier);
   const unlockedCount = effectiveUnlockedSites.length;
   const wouldExceedLimit = Boolean(
     selectedProperty &&
@@ -95,15 +118,16 @@ export function OnboardingFlow({
     unlockedCount >= planLimit,
   );
 
-  const stepIndex = step === "connect" ? 1 : step === "property" ? 2 : 3;
-  const remainingSlots = getRemainingPropertySlots(userProfile?.tier, unlockedCount);
+  const stepIndex = ONBOARDING_STEPS.indexOf(step) + 1;
+  const remainingSlots = getRemainingPropertySlots(selectedPlanTier, unlockedCount);
+  const hasSelectedPaidPlanForSetup = selectedPlanTier !== currentTier;
 
   const handleConnectGoogle = async () => {
     setError(null);
     try {
       await onConnectGoogle();
       setJustConnectedGoogle(true);
-      setStep("property");
+      setStep("plan");
     } catch (err: any) {
       setError(err.message || "Failed to connect Google.");
     }
@@ -111,7 +135,7 @@ export function OnboardingFlow({
 
   const handleFinish = async () => {
     if (!selectedSite) {
-      setError("Choose your first property before finishing setup.");
+      setError("Choose the default property for this workspace before finishing setup.");
       return;
     }
 
@@ -152,21 +176,22 @@ export function OnboardingFlow({
               </Badge>
               <p className="text-base leading-7 text-[#647067]">
                 {userName ? `${userName}, ` : ""}
-                your login is ready. Now choose the reporting access and first site this workspace should use.
+                your login is ready. Now choose reporting access, plan fit, and the default site this workspace should open.
               </p>
             </div>
 
             <Card className="border-[#E6ECE8] bg-white/90 shadow-[0_16px_44px_rgba(15,61,46,0.08)] backdrop-blur-xl">
               <CardHeader className="pb-4">
                 <CardTitle className="text-base">Setup progress</CardTitle>
-                <CardDescription>Three short steps to activate your first workspace.</CardDescription>
+                <CardDescription>Four short steps to activate your workspace without hiding the plan decision.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Progress value={(stepIndex / 3) * 100} className="h-2" />
+                <Progress value={(stepIndex / ONBOARDING_STEPS.length) * 100} className="h-2" />
                 <div className="space-y-3">
                   {[
                     { id: "connect", label: "Connect Google data", icon: Globe },
-                    { id: "property", label: "Choose first property", icon: Sparkles },
+                    { id: "plan", label: "Choose workspace plan", icon: Crown },
+                    { id: "property", label: "Choose default property", icon: Sparkles },
                     { id: "bing", label: "Optional Bing setup", icon: KeyRound },
                   ].map((item, index) => {
                     const Icon = item.icon;
@@ -188,8 +213,9 @@ export function OnboardingFlow({
                           <p className="text-sm font-medium">{item.label}</p>
                           <p className="text-xs text-muted-foreground">
                             {index === 0 && "Enable live Search Console and GA4 reporting."}
-                            {index === 1 && "Pick the property you want to activate first."}
-                            {index === 2 && "Add Bing now or skip it for later."}
+                            {index === 1 && "Stay free or review paid plans before setup locks in."}
+                            {index === 2 && "Pick the site this workspace opens by default."}
+                            {index === 3 && "Add Bing now or skip it for later."}
                           </p>
                         </div>
                       </div>
@@ -213,7 +239,7 @@ export function OnboardingFlow({
                   />
                   <div className="relative flex flex-wrap items-center gap-3">
                     <Badge variant="secondary" className="rounded-full bg-[#EAF4EC] px-3 py-1 text-[#0F3D2E] hover:bg-[#EAF4EC]">
-                      Step 1 of 3
+                      Step 1 of 4
                     </Badge>
                     <Badge variant="secondary" className="rounded-full bg-white px-3 py-1 text-[#647067] hover:bg-white">
                       Read-only reporting
@@ -262,12 +288,128 @@ export function OnboardingFlow({
               </>
             )}
 
+            {step === "plan" && (
+              <>
+                <CardHeader className="relative overflow-hidden border-b border-[#E6ECE8] bg-[#FBFCFB] pb-8">
+                  <img
+                    src="/images/hero-mountains.png"
+                    alt=""
+                    className="pointer-events-none absolute bottom-[-58px] right-[-170px] w-[560px] max-w-none opacity-40"
+                  />
+                  <div className="relative flex flex-wrap items-center gap-3">
+                    <Badge variant="secondary" className="rounded-full bg-[#EAF4EC] px-3 py-1 text-[#0F3D2E] hover:bg-[#EAF4EC]">
+                      Step 2 of 4
+                    </Badge>
+                    <Badge variant="secondary" className="rounded-full bg-white px-3 py-1 text-[#647067] hover:bg-white">
+                      Current plan: {currentPlanName}
+                    </Badge>
+                  </div>
+                  <CardTitle className="relative pt-4 text-3xl tracking-[-0.035em] text-[#0F172A]">Choose how this workspace should start</CardTitle>
+                  <CardDescription className="relative max-w-2xl text-base leading-7 text-[#647067]">
+                    Free users activate one site. Paid workspaces can unlock more, so the next step only chooses the default property the app opens first.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6 pt-6">
+                  <div className="rounded-2xl border border-[#D9E5DE] bg-[#F8FAF9] p-5">
+                    <p className="text-sm font-semibold text-[#0F172A]">Why plan comes before property selection</p>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-[#647067]">
+                      The property you choose during setup becomes your default reporting workspace. It should not decide your whole subscription. If you want Pro or Enterprise capacity, review the plan first, then choose the default site.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-3">
+                    {PLAN_OPTIONS.map((tier) => {
+                      const option = PLAN_DEFINITIONS[tier];
+                      const isCurrent = tier === currentTier;
+                      const isSelected = tier === selectedPlanTier;
+                      const propertyLabel = option.propertyLimit === null ? "Unlimited properties" : `${option.propertyLimit} active propert${option.propertyLimit === 1 ? "y" : "ies"}`;
+                      return (
+                        <button
+                          key={tier}
+                          type="button"
+                          onClick={() => setSelectedPlanTier(tier)}
+                          className={`flex min-h-[270px] flex-col rounded-[22px] border p-5 text-left transition ${
+                            isSelected
+                              ? "border-[#0F3D2E] bg-[#EAF4EC] shadow-[0_14px_34px_rgba(15,61,46,0.12)]"
+                              : "border-[#E6ECE8] bg-white hover:border-[#D9E5DE] hover:shadow-[0_14px_34px_rgba(15,61,46,0.08)]"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">{option.displayName}</p>
+                              <p className="mt-1 text-sm text-[#647067]">{propertyLabel}</p>
+                            </div>
+                            {isSelected ? (
+                              <Badge className="rounded-full bg-[#0F3D2E] text-white hover:bg-[#0F3D2E]">
+                                {isCurrent ? "Current" : "Selected"}
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <div className="mt-5">
+                            <span className="text-3xl font-semibold tracking-[-0.04em] text-[#0F172A]">{option.monthlyPriceLabel}</span>
+                            {tier !== "enterprise" ? <span className="text-sm text-[#647067]"> / month</span> : null}
+                          </div>
+                          <div className="mt-5 space-y-2">
+                            {option.featureHighlights.slice(0, 3).map((feature) => (
+                              <div key={feature} className="flex items-center gap-2 text-sm text-[#647067]">
+                                <CheckCircle2 className="h-4 w-4 text-[#0F3D2E]" />
+                                <span>{feature}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-auto pt-6">
+                            <div className={`rounded-2xl px-3 py-2 text-center text-sm font-semibold ${
+                              isSelected ? "bg-[#0F3D2E] text-white" : "border border-[#D9E5DE] bg-white text-[#0F172A]"
+                            }`}>
+                              {isSelected ? `Use ${option.displayName} for setup` : `Select ${option.displayName}`}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-5">
+                    <p className="text-sm font-semibold text-[#0F172A]">
+                      {hasSelectedPaidPlanForSetup ? `${planName} selected for setup preview` : "You can change this later"}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-[#647067]">
+                      {hasSelectedPaidPlanForSetup
+                        ? `We will let you continue with ${planName} capacity in this setup flow, but billing is not completed yet. Finish payment from Plan settings before relying on paid limits in production.`
+                        : "Plans, billing, and additional property slots live in Settings. Setup only needs enough information to open a useful first dashboard."}
+                    </p>
+                    {hasSelectedPaidPlanForSetup ? (
+                      <Button variant="outline" className="mt-4 border-[#D9E5DE] bg-white" onClick={onOpenPlan}>
+                        Review billing options
+                      </Button>
+                    ) : null}
+                  </div>
+                </CardContent>
+                <CardFooter className="justify-between border-t border-[#E6ECE8] bg-[#FBFCFB]">
+                  <Button variant="ghost" onClick={() => setStep("connect")}>
+                    Back
+                  </Button>
+                  <Button onClick={() => setStep("property")} size="lg">
+                    Continue with {planName}
+                  </Button>
+                </CardFooter>
+              </>
+            )}
+
             {step === "property" && (
               <>
                 <CardHeader className="pb-6">
-                  <CardTitle className="text-2xl">Choose your first property</CardTitle>
+                  <div className="mb-3 flex flex-wrap items-center gap-3">
+                    <Badge variant="secondary" className="rounded-full bg-[#EAF4EC] px-3 py-1 text-[#0F3D2E] hover:bg-[#EAF4EC]">
+                      Step 3 of 4
+                    </Badge>
+                    <Badge variant="secondary" className="rounded-full bg-white px-3 py-1 text-[#647067] hover:bg-white">
+                      Default workspace site
+                    </Badge>
+                  </div>
+                  <CardTitle className="text-2xl">Choose your default property</CardTitle>
                   <CardDescription className="text-base leading-7">
-                    Activate the site you want the app to open on by default. You can always add more later based on your plan.
+                    Pick the site the app opens first. Your {planName} plan controls how many additional properties you can activate after setup.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -283,8 +425,8 @@ export function OnboardingFlow({
                         <p className="text-sm font-medium">Plan capacity</p>
                         <p className="mt-1 text-sm text-muted-foreground">
                           {planLimit === null
-                            ? `${planName} includes unlimited property activations.`
-                            : `You have used ${unlockedCount} of ${planLimit} property slots on your ${planName} plan.`}
+                            ? `${planName} includes unlimited property activations. This step only sets the default site.`
+                            : `${planName} includes ${planLimit} active propert${planLimit === 1 ? "y" : "ies"}. You have used ${unlockedCount}; this step sets the default site.`}
                         </p>
                       </div>
                       {remainingSlots !== null && (
@@ -301,23 +443,66 @@ export function OnboardingFlow({
                     </div>
                   ) : propertyOptions.length > 0 ? (
                     <>
-                      <div className="space-y-2">
-                        <Label htmlFor="onboarding-property">Property</Label>
-                        <Select value={selectedSite} onValueChange={onSelectSite}>
-                          <SelectTrigger id="onboarding-property" className="h-12">
-                            <SelectValue placeholder="Choose a property" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {propertyOptions.map((site) => (
-                              <SelectItem key={site.siteUrl} value={site.siteUrl}>
-                                <div className="flex items-center gap-2">
-                                  <span>{site.label}</span>
-                                  {!site.isUnlocked && <Lock className="h-3.5 w-3.5 text-muted-foreground" />}
+                      <div className="space-y-3">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                          <div>
+                            <Label htmlFor="onboarding-property-search">Search Console property</Label>
+                            <p className="mt-1 text-sm text-[#647067]">
+                              Search and choose the property this workspace should open first.
+                            </p>
+                          </div>
+                          <p className="text-xs font-medium text-[#647067]">{propertyOptions.length} properties found</p>
+                        </div>
+                        <div className="relative">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#647067]" />
+                          <Input
+                            id="onboarding-property-search"
+                            value={propertySearch}
+                            onChange={(event) => setPropertySearch(event.target.value)}
+                            placeholder="Search properties..."
+                            className="h-11 rounded-2xl border-[#E6ECE8] bg-white pl-9"
+                          />
+                        </div>
+                        <div className="max-h-[300px] space-y-2 overflow-y-auto rounded-2xl border border-[#E6ECE8] bg-[#FBFCFB] p-2">
+                          {filteredPropertyOptions.length > 0 ? filteredPropertyOptions.map((site) => {
+                            const isSelected = selectedSite === site.siteUrl;
+                            const canUseSlot = site.isUnlocked || planLimit === null || (remainingSlots !== null && remainingSlots > 0);
+                            return (
+                              <button
+                                key={site.siteUrl}
+                                type="button"
+                                disabled={!canUseSlot}
+                                onClick={() => onSelectSite(site.siteUrl)}
+                                className={`flex w-full items-start justify-between gap-4 rounded-2xl border p-4 text-left transition ${
+                                  isSelected
+                                    ? "border-[#0F3D2E] bg-[#EAF4EC] shadow-[0_10px_24px_rgba(15,61,46,0.08)]"
+                                    : "border-transparent bg-white hover:border-[#D9E5DE] hover:bg-white"
+                                } ${!canUseSlot ? "cursor-not-allowed opacity-55" : ""}`}
+                              >
+                                <div className="min-w-0">
+                                  <p className="break-all text-sm font-semibold text-[#0F172A]">{site.siteUrl}</p>
+                                  <p className="mt-1 break-all text-xs text-[#647067]">Display name: {site.label}</p>
                                 </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                                <div className="shrink-0 pt-0.5">
+                                  {isSelected ? (
+                                    <span className="rounded-full bg-[#0F3D2E] px-2.5 py-1 text-xs font-semibold text-white">Selected</span>
+                                  ) : canUseSlot ? (
+                                    <span className="rounded-full bg-[#EEF3F0] px-2.5 py-1 text-xs font-medium text-[#647067]">Available</span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-[#F1F5F9] px-2.5 py-1 text-xs font-medium text-[#647067]">
+                                      <Lock className="h-3 w-3" />
+                                      Plan limit
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          }) : (
+                            <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-5 text-sm text-[#647067]">
+                              No properties match that search.
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {selectedProperty && (
@@ -327,33 +512,91 @@ export function OnboardingFlow({
                             {selectedProperty.isUnlocked
                               ? "This property is already active for your account."
                               : planLimit === null
-                                ? `This property will use your ${planName} workspace access.`
-                                : `This property will use one of your ${planLimit} ${planName} property slots.`}
+                                ? `This property will become your default ${planName} workspace site.`
+                                : `This property will become your default site and use one of your ${planLimit} ${planName} property slots.`}
                           </p>
                         </div>
                       )}
 
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <Label htmlFor="onboarding-ga4-property">Matching GA4 property (optional)</Label>
-                        <Select value={selectedGa4Property} onValueChange={onSelectGa4Property}>
-                          <SelectTrigger id="onboarding-ga4-property" className="h-12">
-                            <SelectValue placeholder={fetchingGa4Sites ? "Loading GA4 properties..." : ga4Sites.length > 0 ? "Choose a GA4 property" : "No GA4 properties found"} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {ga4Sites.length > 0 ? ga4Sites.map((site) => (
-                              <SelectItem key={site.siteUrl} value={site.siteUrl}>
-                                {site.displayName || site.siteUrl}
-                              </SelectItem>
-                            )) : (
-                              <SelectItem value="__none__" disabled>
-                                No GA4 properties available
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
                         <p className="text-sm text-muted-foreground">
                           GA4 uses a separate property inventory from Search Console. If you have a GA4 property for this site, choose it now. You can also skip this and map it later.
                         </p>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="relative flex-1">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#647067]" />
+                            <Input
+                              id="onboarding-ga4-property"
+                              value={ga4Search}
+                              onChange={(event) => setGa4Search(event.target.value)}
+                              placeholder={fetchingGa4Sites ? "Loading GA4 properties..." : "Search GA4 properties..."}
+                              className="h-11 rounded-2xl border-[#E6ECE8] bg-white pl-9"
+                              disabled={fetchingGa4Sites || ga4Sites.length === 0}
+                            />
+                          </div>
+                          <p className="text-xs font-medium text-[#647067]">
+                            {fetchingGa4Sites ? "Loading..." : `${ga4Sites.length} GA4 properties found`}
+                          </p>
+                        </div>
+                        <div className="max-h-[250px] space-y-2 overflow-y-auto rounded-2xl border border-[#E6ECE8] bg-[#FBFCFB] p-2">
+                          {fetchingGa4Sites ? (
+                            <div className="flex items-center gap-2 rounded-2xl bg-white p-4 text-sm text-[#647067]">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading GA4 properties...
+                            </div>
+                          ) : ga4Sites.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-5 text-sm text-[#647067]">
+                              No GA4 properties found. You can finish setup now and map GA4 later from Settings.
+                            </div>
+                          ) : filteredGa4Options.length > 0 ? (
+                            filteredGa4Options.map((site) => {
+                              const isSelected = selectedGa4Property === site.siteUrl;
+                              const label = getGa4PropertyLabel(site);
+                              return (
+                                <button
+                                  key={site.siteUrl}
+                                  type="button"
+                                  onClick={() => onSelectGa4Property(site.siteUrl)}
+                                  className={`flex w-full items-start justify-between gap-4 rounded-2xl border p-4 text-left transition ${
+                                    isSelected
+                                      ? "border-[#0F3D2E] bg-[#EAF4EC] shadow-[0_10px_24px_rgba(15,61,46,0.08)]"
+                                      : "border-transparent bg-white hover:border-[#D9E5DE] hover:bg-white"
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <p className="break-words text-sm font-semibold text-[#0F172A]">{label}</p>
+                                    {label !== site.siteUrl ? (
+                                      <p className="mt-1 break-all text-xs text-[#647067]">{site.siteUrl}</p>
+                                    ) : null}
+                                  </div>
+                                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                    isSelected ? "bg-[#0F3D2E] text-white" : "bg-[#EEF3F0] text-[#647067]"
+                                  }`}>
+                                    {isSelected ? "Selected" : "GA4"}
+                                  </span>
+                                </button>
+                              );
+                            })
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-5 text-sm text-[#647067]">
+                              No GA4 properties match that search.
+                            </div>
+                          )}
+                        </div>
+                        {selectedGa4PropertyOption ? (
+                          <div className="flex flex-col gap-2 rounded-2xl border border-[#E6ECE8] bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-[#0F172A]">Selected GA4 property</p>
+                              <p className="mt-1 break-words text-sm text-[#647067]">
+                                {getGa4PropertyLabel(selectedGa4PropertyOption)}
+                              </p>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={() => onSelectGa4Property("")}>
+                              Skip GA4
+                            </Button>
+                          </div>
+                        ) : null}
                       </div>
 
                       {wouldExceedLimit && (
@@ -374,7 +617,7 @@ export function OnboardingFlow({
                   )}
                 </CardContent>
                 <CardFooter className="justify-between">
-                  <Button variant="ghost" onClick={() => setStep("connect")}>
+                  <Button variant="ghost" onClick={() => setStep("plan")}>
                     Back
                   </Button>
                   <Button
@@ -391,6 +634,14 @@ export function OnboardingFlow({
             {step === "bing" && (
               <>
                 <CardHeader className="pb-6">
+                  <div className="mb-3 flex flex-wrap items-center gap-3">
+                    <Badge variant="secondary" className="rounded-full bg-[#EAF4EC] px-3 py-1 text-[#0F3D2E] hover:bg-[#EAF4EC]">
+                      Step 4 of 4
+                    </Badge>
+                    <Badge variant="secondary" className="rounded-full bg-white px-3 py-1 text-[#647067] hover:bg-white">
+                      Optional integration
+                    </Badge>
+                  </div>
                   <CardTitle className="text-2xl">Optional Bing setup</CardTitle>
                   <CardDescription className="text-base leading-7">
                     Add your Bing Webmaster API key now, or skip it and do it later from Settings. Your Google workspace will still be ready immediately.

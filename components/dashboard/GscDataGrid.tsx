@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Check, Plus } from "lucide-react";
+import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Check, Plus, ExternalLink } from "lucide-react";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { saveFilter } from "@/src/services/dbService";
 import { generateGscInsights } from "@/src/services/aiService";
@@ -26,6 +26,7 @@ import {
 } from "./gscGridUtils";
 import { useGscGridData } from "./useGscGridData";
 import { useRankTrackerKeywords } from "./useRankTrackerKeywords";
+import { cn } from "@/lib/utils";
 
 export function GscDataGrid({
   siteUrl,
@@ -35,6 +36,11 @@ export function GscDataGrid({
   compareDateRange,
   useLiveData = true,
   hideTrackerButton = false,
+  dimensionFilterGroups,
+  showHeaderActions = true,
+  showInsights = true,
+  titleOverride,
+  descriptionOverride,
 }: {
   siteUrl: string;
   dimension?: "query" | "page" | "country";
@@ -43,6 +49,11 @@ export function GscDataGrid({
   compareDateRange?: DateRange;
   useLiveData?: boolean;
   hideTrackerButton?: boolean;
+  dimensionFilterGroups?: any[];
+  showHeaderActions?: boolean;
+  showInsights?: boolean;
+  titleOverride?: string;
+  descriptionOverride?: string;
 }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [intentFilter, setIntentFilter] = useState("all");
@@ -68,8 +79,13 @@ export function GscDataGrid({
   const [aiError, setAiError] = useState<string | null>(null);
 
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
+  const [selectedQueryPage, setSelectedQueryPage] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 100;
+  const stableDimensionFilterGroups = useMemo(
+    () => dimensionFilterGroups,
+    [JSON.stringify(dimensionFilterGroups || [])],
+  );
 
   const { addKeywordToTracker, addedKeywords, addingKeywords } = useRankTrackerKeywords({
     dimension,
@@ -80,6 +96,7 @@ export function GscDataGrid({
     compareDateRange,
     dateRange,
     dimension,
+    dimensionFilterGroups: stableDimensionFilterGroups,
     isCompareMode,
     siteUrl,
     tier: userProfile?.tier,
@@ -89,6 +106,11 @@ export function GscDataGrid({
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, intentFilter, minClicks, minImpressions, maxPosition, isQuestionOnly, minWords, sortColumn, sortDirection, dimension, dateRange, compareDateRange, isCompareMode]);
+
+  useEffect(() => {
+    setSelectedRowKey(null);
+    setSelectedQueryPage(null);
+  }, [siteUrl, dimension, stableDimensionFilterGroups, dateRange, compareDateRange]);
 
   useEffect(() => {
     setAiInsights(null);
@@ -251,6 +273,34 @@ export function GscDataGrid({
     return "bg-[#EAF2FF] text-[#2563EB] hover:bg-[#EAF2FF]";
   };
 
+  const formatPageCell = (pageUrl: string) => {
+    try {
+      const parsed = new URL(pageUrl);
+      const cleanPath = parsed.pathname.replace(/\/+$/, "") || "/";
+      const segments = cleanPath.split("/").filter(Boolean);
+      const lastSegment = segments[segments.length - 1] || "";
+      const decodedSegment = decodeURIComponent(lastSegment.replace(/\+/g, " "));
+      const title = cleanPath === "/"
+        ? `Home - ${parsed.hostname.replace(/^www\./, "")}`
+        : decodedSegment
+            .replace(/[-_]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .replace(/\b\w/g, (char) => char.toUpperCase()) || parsed.hostname.replace(/^www\./, "");
+
+      return {
+        title,
+        path: `${parsed.hostname.replace(/^www\./, "")}${cleanPath === "/" ? "/" : `${cleanPath}/`}`,
+      };
+    } catch {
+      const clean = pageUrl.replace(/^https?:\/\//, "").replace(/^www\./, "");
+      return {
+        title: clean.split("/").filter(Boolean).pop()?.replace(/[-_]+/g, " ") || clean,
+        path: clean,
+      };
+    }
+  };
+
   return (
     <div className="space-y-6">
       {!isConnectionIssue && error && (
@@ -268,15 +318,17 @@ export function GscDataGrid({
           onClose={() => setSelectedRowKey(null)}
           selectedRowKey={selectedRowKey}
           siteUrl={siteUrl}
+          useLiveData={useLiveData}
         />
       )}
 
-      <div className={dimension === "query" ? "grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]" : ""}>
+      <div className={dimension === "query" && showInsights ? "grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]" : ""}>
       <Card id="gsc-data-grid" className="mt-0 rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardHeader className="border-b border-[#E6ECE8] bg-white px-5 py-4">
           <GscGridHeader
             aiError={aiError}
             aiInsights={aiInsights}
+            descriptionOverride={descriptionOverride}
             dimension={dimension}
             isAiDialogOpen={isAiDialogOpen}
             isGeneratingAi={isGeneratingAi}
@@ -284,9 +336,46 @@ export function GscDataGrid({
             onExport={handleExport}
             onGenerateInsights={handleGenerateInsights}
             rowCount={sortedData.length}
+            showActions={showHeaderActions}
+            titleOverride={titleOverride}
           />
         </CardHeader>
         <CardContent className="px-5 pt-5">
+          {dimension === "page" && selectedQueryPage && (
+            <div className="mb-5 rounded-2xl border border-[#D7E7DC] bg-[#F8FAF9] p-3 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+              <div className="mb-3 flex flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#647067]">Page query drilldown</p>
+                  <h3 className="mt-1 text-lg font-semibold text-[#0F172A]">
+                    Visible queries for this page
+                  </h3>
+                  <p className="mt-1 max-w-3xl truncate text-sm text-[#647067]" title={selectedQueryPage}>
+                    {selectedQueryPage}
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setSelectedQueryPage(null)} className="rounded-lg border-[#E6ECE8] bg-white">
+                  Close queries
+                </Button>
+              </div>
+              <GscDataGrid
+                compareDateRange={compareDateRange}
+                dateRange={dateRange}
+                descriptionOverride="These are the visible Search Console queries that drove this selected page in the current date range."
+                dimension="query"
+                dimensionFilterGroups={[{
+                  filters: [{ dimension: "page", expression: selectedQueryPage, operator: "equals" }],
+                }]}
+                hideTrackerButton={hideTrackerButton}
+                isCompareMode={isCompareMode}
+                showHeaderActions={false}
+                showInsights={false}
+                siteUrl={siteUrl}
+                titleOverride="Queries for selected page"
+                useLiveData={useLiveData}
+              />
+            </div>
+          )}
+
           <GscFilterToolbar
             dimension={dimension}
             filterName={filterName}
@@ -312,7 +401,7 @@ export function GscDataGrid({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[300px] cursor-pointer select-none hover:bg-[#F6FAF7]" onClick={() => handleSort("key")}>
+                  <TableHead className={cn("cursor-pointer select-none hover:bg-[#F6FAF7]", dimension === "page" ? "w-[48%] min-w-[420px]" : "w-[300px]")} onClick={() => handleSort("key")}>
                     <div className="flex items-center">
                       {dimension === "query" ? "Search Query" : getGridTitle(dimension)}
                       {renderSortIcon("key")}
@@ -344,6 +433,14 @@ export function GscDataGrid({
                       {renderSortIcon("ctr")}
                     </div>
                   </TableHead>
+                  {dimension === "page" && (
+                    <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort("queryCount")}>
+                      <div className="flex items-center justify-end">
+                        Visible Queries
+                        {renderSortIcon("queryCount")}
+                      </div>
+                    </TableHead>
+                  )}
                   <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort("position")}>
                     <div className="flex items-center justify-end">
                       Position
@@ -363,6 +460,11 @@ export function GscDataGrid({
                       {dimension === "query" && (
                         <TableCell className="py-4">
                           <div className="h-5 w-24 animate-pulse rounded-full bg-[#EAF2FF]" />
+                        </TableCell>
+                      )}
+                      {dimension === "page" && (
+                        <TableCell className="py-4">
+                          <div className="ml-auto h-4 w-12 animate-pulse rounded-full bg-[#EEF3F0]" />
                         </TableCell>
                       )}
                       <TableCell className="py-4">
@@ -386,13 +488,13 @@ export function GscDataGrid({
                   ))
                 ) : error ? (
                   <TableRow>
-                    <TableCell colSpan={dimension === "query" ? 7 : 5} className="h-24 text-center text-destructive">
+                    <TableCell colSpan={dimension === "query" ? 7 : dimension === "page" ? 6 : 5} className="h-24 text-center text-destructive">
                       {error}
                     </TableCell>
                   </TableRow>
                 ) : sortedData.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={dimension === "query" ? 7 : 5} className="h-24 text-center text-muted-foreground">
+                    <TableCell colSpan={dimension === "query" ? 7 : dimension === "page" ? 6 : 5} className="h-24 text-center text-muted-foreground">
                       No data found.
                     </TableCell>
                   </TableRow>
@@ -400,6 +502,7 @@ export function GscDataGrid({
                   sortedData.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((row, i) => {
                     const key = row.keys[0];
                     const intent = dimension === "query" ? classifyIntent(key, siteUrl) : null;
+                    const pageDisplay = dimension === "page" ? formatPageCell(key) : null;
 
                     return (
                       <TableRow
@@ -407,11 +510,28 @@ export function GscDataGrid({
                         className={`cursor-pointer hover:bg-[#F6FAF7] ${selectedRowKey === key ? "bg-[#EAF4EC]" : ""}`}
                         onClick={() => setSelectedRowKey(key)}
                       >
-                        <TableCell className="max-w-[300px] font-medium truncate" title={key}>
+                        <TableCell className={cn("font-medium", dimension === "page" ? "max-w-[560px] py-3" : "max-w-[300px] truncate")} title={key}>
                           {dimension === "page" ? (
-                            <a href={key} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-                              {key.replace(siteUrl, "/")}
-                            </a>
+                            <div className="group/page flex min-w-0 items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-[#16382E]">
+                                  {pageDisplay?.title}
+                                </div>
+                                <div className="mt-1 truncate text-xs font-medium text-[#647067]">
+                                  {pageDisplay?.path}
+                                </div>
+                              </div>
+                              <a
+                                href={key}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="shrink-0 rounded-full border border-[#E6ECE8] bg-white p-1.5 text-[#647067] opacity-0 shadow-sm transition hover:border-[#0F3D2E] hover:text-[#0F3D2E] group-hover/page:opacity-100"
+                                title="Open page"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </a>
+                            </div>
                           ) : dimension === "country" ? (
                             <span className="uppercase">{key}</span>
                           ) : dimension === "query" ? (
@@ -466,6 +586,23 @@ export function GscDataGrid({
                           {(row.ctr * 100).toFixed(2)}%
                           {renderDifference(row.ctr, row.compareCtr, true)}
                         </TableCell>
+                        {dimension === "page" && (
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              className="h-8 rounded-full px-3 text-sm font-semibold text-[#4F46E5] hover:bg-[#EEF2FF] hover:text-[#4338CA]"
+                              title={`Open visible queries for ${pageDisplay?.title || key}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedQueryPage(key);
+                                setSelectedRowKey(null);
+                              }}
+                            >
+                              {(row.queryCount || 0).toLocaleString()}
+                            </Button>
+                            {renderDifference(row.queryCount || 0, row.compareQueryCount)}
+                          </TableCell>
+                        )}
                         <TableCell className="text-right">
                           {row.position.toFixed(1)}
                           {renderDifference(row.position, row.comparePosition, false, true)}
@@ -513,7 +650,7 @@ export function GscDataGrid({
           )}
         </CardContent>
       </Card>
-      {dimension === "query" && <InsightsPanel rows={sortedData} />}
+      {dimension === "query" && showInsights && <InsightsPanel rows={sortedData} />}
       </div>
     </div>
   );

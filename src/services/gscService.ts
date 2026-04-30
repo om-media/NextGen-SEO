@@ -11,6 +11,7 @@ export interface GscSearchAnalyticsRow {
   impressions: number;
   ctr: number;
   position: number;
+  queryCount?: number;
 }
 
 export interface GscSearchAnalyticsResponse {

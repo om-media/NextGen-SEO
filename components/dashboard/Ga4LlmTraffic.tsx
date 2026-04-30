@@ -17,13 +17,18 @@ interface Ga4LlmTrafficProps {
 }
 
 function classifyLlmSource(source: string): string {
-  const s = source.toLowerCase()
+  const s = String(source || "").toLowerCase()
   if (s.includes('chatgpt') || s.includes('openai')) return 'ChatGPT'
   if (s.includes('claude') || s.includes('anthropic')) return 'Claude'
   if (s.includes('gemini') || s.includes('bard')) return 'Gemini'
   if (s.includes('perplexity')) return 'Perplexity'
   if (s.includes('copilot') || s.includes('bing.com/chat')) return 'Copilot'
   return source
+}
+
+const getGa4DimensionValue = (row: any, index = 0) => {
+  const value = row?.dimensionValues?.[index]?.value
+  return typeof value === "string" ? value : ""
 }
 
 export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRange }: Ga4LlmTrafficProps) {
@@ -226,11 +231,11 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   const dailyMap = new Map()
   
   // Sort primary rows by date so we map them properly if out of order
-  const sortedPrimary = [...(data.daily?.rows || [])].sort((a,b) => a.dimensionValues[0].value.localeCompare(b.dimensionValues[0].value))
-  const sortedCompare = [...(compareData?.daily?.rows || [])].sort((a,b) => a.dimensionValues[0].value.localeCompare(b.dimensionValues[0].value))
+  const sortedPrimary = [...(data.daily?.rows || [])].filter((row) => getGa4DimensionValue(row)).sort((a,b) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)))
+  const sortedCompare = [...(compareData?.daily?.rows || [])].filter((row) => getGa4DimensionValue(row)).sort((a,b) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)))
 
   sortedPrimary.forEach((r: any, index: number) => {
-    const rawDate = r.dimensionValues[0].value
+    const rawDate = getGa4DimensionValue(r)
     let dateStr = rawDate
     try {
       dateStr = format(parseISO(rawDate), 'MMM d')
@@ -238,12 +243,12 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     
     let compSessions = 0
     if (sortedCompare[index]) {
-      compSessions = Number(sortedCompare[index].metricValues[0].value)
+      compSessions = Number(sortedCompare[index].metricValues?.[0]?.value || 0)
     }
 
     dailyMap.set(dateStr, { 
       date: dateStr, 
-      sessions: Number(r.metricValues[0].value),
+      sessions: Number(r.metricValues?.[0]?.value || 0),
       previousSessions: compSessions
     })
   })
@@ -253,7 +258,8 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   // Source Table Data
   const sourceTableMap = new Map()
   data.source?.rows?.forEach((r: any) => {
-    const rawSource = r.dimensionValues[0].value
+    const rawSource = getGa4DimensionValue(r)
+    if (!rawSource) return
     const sourceClass = classifyLlmSource(rawSource)
     
     if (!sourceTableMap.has(sourceClass)) {
@@ -271,26 +277,27 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     }
     
     const entry = sourceTableMap.get(sourceClass)
-    const sessions = Number(r.metricValues[0].value)
+    const sessions = Number(r.metricValues?.[0]?.value || 0)
     
     entry.sessions += sessions
-    entry.engagedSessions += Number(r.metricValues[1].value)
-    entry.keyEvents += Number(r.metricValues[2].value)
-    entry.avgDurationTotal += Number(r.metricValues[3].value) * sessions
+    entry.engagedSessions += Number(r.metricValues?.[1]?.value || 0)
+    entry.keyEvents += Number(r.metricValues?.[2]?.value || 0)
+    entry.avgDurationTotal += Number(r.metricValues?.[3]?.value || 0) * sessions
   })
 
   // Compare Source Table Data
   compareData?.source?.rows?.forEach((r: any) => {
-    const rawSource = r.dimensionValues[0].value
+    const rawSource = getGa4DimensionValue(r)
+    if (!rawSource) return
     const sourceClass = classifyLlmSource(rawSource)
     if (!sourceTableMap.has(sourceClass)) return; // Only show changes for sources active in current period or we could add them. It's usually better to just show current period items.
     
     const entry = sourceTableMap.get(sourceClass)
-    const sessions = Number(r.metricValues[0].value)
+    const sessions = Number(r.metricValues?.[0]?.value || 0)
     entry.prevSessions += sessions
-    entry.prevEngagedSessions += Number(r.metricValues[1].value)
-    entry.prevKeyEvents += Number(r.metricValues[2].value)
-    entry.prevAvgDurationTotal += Number(r.metricValues[3].value) * sessions
+    entry.prevEngagedSessions += Number(r.metricValues?.[1]?.value || 0)
+    entry.prevKeyEvents += Number(r.metricValues?.[2]?.value || 0)
+    entry.prevAvgDurationTotal += Number(r.metricValues?.[3]?.value || 0) * sessions
   })
 
   // Calculate final aggregated rates for Source table
@@ -306,8 +313,9 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   // Landing Page Table Data
   const lpTableMap = new Map()
   data.landingPage?.rows?.forEach((r: any) => {
-    const lp = r.dimensionValues[0].value
-    const rawSource = r.dimensionValues[1].value
+    const lp = getGa4DimensionValue(r, 0)
+    const rawSource = getGa4DimensionValue(r, 1)
+    if (!lp || !rawSource) return
     const sourceClass = classifyLlmSource(rawSource)
     const key = `${lp}-${sourceClass}`
 
@@ -326,24 +334,25 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
       })
     }
     const entry = lpTableMap.get(key)
-    entry.sessions = Number(r.metricValues[0].value)
-    entry.engagedSessions = Number(r.metricValues[1].value)
-    entry.keyEvents = Number(r.metricValues[2].value)
-    entry.averageSessionDuration = Number(r.metricValues[3].value)
+    entry.sessions = Number(r.metricValues?.[0]?.value || 0)
+    entry.engagedSessions = Number(r.metricValues?.[1]?.value || 0)
+    entry.keyEvents = Number(r.metricValues?.[2]?.value || 0)
+    entry.averageSessionDuration = Number(r.metricValues?.[3]?.value || 0)
   })
 
   compareData?.landingPage?.rows?.forEach((r: any) => {
-    const lp = r.dimensionValues[0].value
-    const rawSource = r.dimensionValues[1].value
+    const lp = getGa4DimensionValue(r, 0)
+    const rawSource = getGa4DimensionValue(r, 1)
+    if (!lp || !rawSource) return
     const sourceClass = classifyLlmSource(rawSource)
     const key = `${lp}-${sourceClass}`
     
     if (lpTableMap.has(key)) {
       const entry = lpTableMap.get(key)
-      entry.prevSessions = Number(r.metricValues[0].value)
-      entry.prevEngagedSessions = Number(r.metricValues[1].value)
-      entry.prevKeyEvents = Number(r.metricValues[2].value)
-      entry.prevAverageSessionDuration = Number(r.metricValues[3].value)
+      entry.prevSessions = Number(r.metricValues?.[0]?.value || 0)
+      entry.prevEngagedSessions = Number(r.metricValues?.[1]?.value || 0)
+      entry.prevKeyEvents = Number(r.metricValues?.[2]?.value || 0)
+      entry.prevAverageSessionDuration = Number(r.metricValues?.[3]?.value || 0)
     }
   })
 

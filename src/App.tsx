@@ -18,10 +18,11 @@ import { Ga4ApiService } from "./services/ga4Service"
 import { Input } from "@/components/ui/input"
 import { AnnotationsService, Annotation } from "./services/annotationsService"
 import { GlobalSyncPoller } from "./components/dashboard/GlobalSyncPoller"
+import { GscWarehouseAutoSync } from "./components/dashboard/GscWarehouseAutoSync"
 
 import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
-import { AppContent } from "./components/app/AppContent"
+import { AppContent, type Ga4DashboardTab, type GscDashboardTab } from "./components/app/AppContent"
 import { AppHeader } from "./components/app/AppHeader"
 import { OnboardingFlow } from "./components/app/OnboardingFlow"
 import { AppStatusPanels } from "./components/app/AppStatusPanels"
@@ -65,6 +66,7 @@ function MainApp() {
   const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [dataSource, setDataSource] = useState<DataSource>('gsc')
+  const [gscSyncVersion, setGscSyncVersion] = useState(0)
   
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>({
@@ -75,13 +77,13 @@ function MainApp() {
     name: "",
   })
 
-  const [useLiveData, setUseLiveData] = useState(true)
-
   const [annotations, setAnnotations] = useState<Annotation[]>([])
-  const [showSystemAnnotations, setShowSystemAnnotations] = useState(true)
-  const [showUserAnnotations, setShowUserAnnotations] = useState(true)
+  const [showSystemAnnotations, setShowSystemAnnotations] = useState(false)
+  const [showUserAnnotations, setShowUserAnnotations] = useState(false)
 
   const [activeMenu, setActiveMenu] = useState<string>("Dashboard")
+  const [gscDashboardTab, setGscDashboardTab] = useState<GscDashboardTab>("overview")
+  const [ga4DashboardTab, setGa4DashboardTab] = useState<Ga4DashboardTab>("overview")
 
   const openSettings = (tab: "profile" | "plan" | "workspace" | "integrations" = "profile") => {
     setSettingsInitialTab(tab)
@@ -103,6 +105,11 @@ function MainApp() {
       setDataSource('gsc')
     }
   }
+
+  useEffect(() => {
+    setGscDashboardTab("overview")
+    setGa4DashboardTab("overview")
+  }, [dataSource, selectedSite])
 
   const fetchAnnotations = async () => {
     if (user?.uid) {
@@ -244,8 +251,17 @@ function MainApp() {
   const [pendingGa4Property, setPendingGa4Property] = useState("")
 
   const getPreferredGa4PropertyId = (availableSites: SiteLike[]) => {
-    const preferred = selectedGa4Property || userProfile?.activatedGa4PropertyId || "";
-    return availableSites.some((site) => site.siteUrl === preferred) ? preferred : "";
+    const savedWorkspaceDefault = userProfile?.activatedGa4PropertyId || "";
+    const preferred = userProfile?.tier === 'enterprise'
+      ? selectedGa4Property || savedWorkspaceDefault
+      : savedWorkspaceDefault;
+    if (!preferred) {
+      return "";
+    }
+
+    return availableSites.some((site) => site.siteUrl === preferred) || preferred === userProfile?.activatedGa4PropertyId
+      ? preferred
+      : "";
   };
 
   useEffect(() => {
@@ -518,7 +534,16 @@ function MainApp() {
       await setBingApiKey(bingApiKey.trim());
     }
 
-    await completeOnboarding(selectedSite, activatedGa4Property);
+    const selectedGa4 = activatedGa4Property || (
+      selectedGa4Property
+        ? {
+          siteUrl: selectedGa4Property,
+          displayName: ga4Sites.find((site) => site.siteUrl === selectedGa4Property)?.displayName || selectedGa4Property,
+        }
+        : null
+    );
+
+    await completeOnboarding(selectedSite, selectedGa4);
   };
 
   const handleDisconnectGoogleData = async () => {
@@ -618,11 +643,20 @@ function MainApp() {
     }
   };
 
+  const savedGa4Property = userProfile?.activatedGa4PropertyId
+    ? {
+      siteUrl: userProfile.activatedGa4PropertyId,
+      displayName: userProfile.activatedGa4DisplayName || userProfile.activatedGa4PropertyId,
+    }
+    : null;
+  const ga4SitesWithSavedDefault = savedGa4Property && !ga4Sites.some((site) => site.siteUrl === savedGa4Property.siteUrl)
+    ? [savedGa4Property, ...ga4Sites]
+    : ga4Sites;
   const accessibleGa4Sites =
     userProfile?.tier === 'enterprise'
-      ? ga4Sites
-      : userProfile?.activatedGa4PropertyId
-        ? ga4Sites.filter((site) => site.siteUrl === userProfile.activatedGa4PropertyId)
+      ? ga4SitesWithSavedDefault
+      : savedGa4Property
+        ? ga4SitesWithSavedDefault.filter((site) => site.siteUrl === savedGa4Property.siteUrl)
         : [];
 
   const currentSites = dataSource === 'gsc' ? sites : dataSource === 'bing' ? bingSites : accessibleGa4Sites;
@@ -722,6 +756,16 @@ function MainApp() {
   }, [currentSites, currentSelection, dataSource, ga4Sites, isOnboarding, selectedGa4Property, selectedSite, userProfile?.activatedGa4PropertyId, userProfile?.tier, userProfile?.unlockedSites]);
 
   useEffect(() => {
+    if (!userProfile || isOnboarding || userProfile.tier === 'enterprise') {
+      return;
+    }
+
+    if (userProfile.activatedGa4PropertyId && selectedGa4Property !== userProfile.activatedGa4PropertyId) {
+      setSelectedGa4Property(userProfile.activatedGa4PropertyId);
+    }
+  }, [isOnboarding, selectedGa4Property, userProfile]);
+
+  useEffect(() => {
     if (!showGa4PropertyDialog) {
       return;
     }
@@ -770,6 +814,7 @@ function MainApp() {
   return (
     <SidebarProvider>
       <GlobalSyncPoller siteUrl={selectedSite} />
+      <GscWarehouseAutoSync dateRange={dateRange} onSyncComplete={() => setGscSyncVersion((version) => version + 1)} siteUrl={selectedSite} />
       <div className="app-shell-bg flex min-h-screen w-full">
         <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />
         <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
@@ -806,10 +851,9 @@ function MainApp() {
                 onCompareFromDateChange={handleCompareFromDateChange}
                 onCompareToDateChange={handleCompareToDateChange}
                 onFromDateChange={handleFromDateChange}
+                onGscSyncComplete={() => setGscSyncVersion((version) => version + 1)}
                 onToDateChange={handleToDateChange}
                 setIsCompareMode={setIsCompareMode}
-                setUseLiveData={setUseLiveData}
-                useLiveData={useLiveData}
               />
 
               {activeMenu !== "Settings" && activeMenu !== "AI Content Auditor" && (
@@ -830,12 +874,12 @@ function MainApp() {
                   onOpenPlan={() => openSettings("plan")}
                   selectedSite={currentSelection}
                   sessionExpired={sessionExpired}
-                  trialEndsAt={userProfile?.trialEndsAt}
                 />
               )}
 
               {(activeMenu === "Settings" || activeMenu === "AI Content Auditor" || !( !userProfile?.googleConnected && ((dataSource === 'gsc' && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) )) && (
                 <AppContent
+                  key={`${dataSource}-${selectedSite}-${selectedGa4Property}`}
                   activeMenu={activeMenu}
                   annotations={annotations}
                   apiError={apiError}
@@ -843,11 +887,15 @@ function MainApp() {
                   compareDateRange={compareDateRange}
                   dataSource={dataSource}
                   dateRange={dateRange}
+                  ga4DashboardTab={ga4DashboardTab}
                   ga4Sites={accessibleGa4Sites}
                   ga4UserDimension={ga4UserDimension}
+                  gscDashboardTab={gscDashboardTab}
                   isCompareMode={isCompareMode}
                   onAnnotationsChange={fetchAnnotations}
+                  onGa4DashboardTabChange={setGa4DashboardTab}
                   onGa4UserDimensionChange={setGa4UserDimension}
+                  onGscDashboardTabChange={setGscDashboardTab}
                   onOpenSettings={openSettings}
                   selectedSite={dataSource === 'ga4' ? selectedGa4Property : selectedSite}
                   setShowSystemAnnotations={setShowSystemAnnotations}
@@ -855,7 +903,7 @@ function MainApp() {
                   showSystemAnnotations={showSystemAnnotations}
                   showUserAnnotations={showUserAnnotations}
                   sites={sites}
-                  useLiveData={useLiveData}
+                  useLiveData={false}
                   userProfile={userProfile}
                 />
               )}

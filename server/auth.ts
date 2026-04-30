@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import type Database from 'better-sqlite3';
 import type { NextFunction, Request, Response } from 'express';
+import type { AppDatabase } from './database.js';
 import type { AuthedRequest } from './types.js';
 
 export const SESSION_COOKIE_NAME = 'nextgen_session';
@@ -74,37 +74,42 @@ export function verifyPassword(password: string, storedHash: string | null | und
   return crypto.timingSafeEqual(candidateKey, storedKeyBuffer);
 }
 
-export function createUserSession(db: Database.Database, userId: string) {
+export async function createUserSession(db: AppDatabase, userId: string) {
   const token = crypto.randomBytes(32).toString('hex');
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_MAX_AGE_SECONDS * 1000).toISOString();
 
-  db.prepare('INSERT INTO sessions (tokenHash, userId, expiresAt, createdAt) VALUES (?, ?, ?, ?)')
-    .run(hashSessionToken(token), userId, expiresAt, now.toISOString());
+  await db.run('INSERT INTO sessions (tokenHash, userId, expiresAt, createdAt) VALUES (?, ?, ?, ?)', [
+    hashSessionToken(token),
+    userId,
+    expiresAt,
+    now.toISOString(),
+  ]);
 
   return token;
 }
 
-export function destroySession(db: Database.Database, token: string | null) {
+export async function destroySession(db: AppDatabase, token: string | null) {
   if (!token) {
     return;
   }
 
-  db.prepare('DELETE FROM sessions WHERE tokenHash = ?').run(hashSessionToken(token));
+  await db.run('DELETE FROM sessions WHERE tokenHash = ?', [hashSessionToken(token)]);
 }
 
-export function readAuthedUser(req: Request, db: Database.Database) {
+export async function readAuthedUser(req: Request, db: AppDatabase) {
   const sessionToken = getSessionToken(req);
   if (!sessionToken) {
     return null;
   }
 
-  const session = db.prepare(
+  const session = await db.get<{ userId?: string }>(
     `SELECT sessions.userId
      FROM sessions
      WHERE sessions.tokenHash = ?
        AND sessions.expiresAt > ?`,
-  ).get(hashSessionToken(sessionToken), new Date().toISOString()) as { userId?: string } | undefined;
+    [hashSessionToken(sessionToken), new Date().toISOString()],
+  );
 
   if (!session?.userId) {
     return null;
@@ -116,10 +121,10 @@ export function readAuthedUser(req: Request, db: Database.Database) {
   };
 }
 
-export function requireAuth(db: Database.Database) {
-  return (req: AuthedRequest, res: Response, next: NextFunction) => {
+export function requireAuth(db: AppDatabase) {
+  return async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      const authedUser = readAuthedUser(req, db);
+      const authedUser = await readAuthedUser(req, db);
       if (!authedUser) {
         return res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED' });
       }

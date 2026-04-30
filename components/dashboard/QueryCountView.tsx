@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { GscApiService } from "@/src/services/gscService"
-import { format, parseISO } from "date-fns"
+import { addDays, format, parseISO } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Loader2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -46,6 +46,14 @@ const CustomYAxisTick = (props: any) => {
     </g>
   );
 };
+
+const hasPageKeys = (row: any) => (
+  typeof row?.keys?.[0] === "string" &&
+  row.keys[0].length > 0
+);
+
+const QUERY_VISIBILITY_NOTE =
+  "Search Console only exposes non-anonymized query rows here. Rare or privacy-filtered queries can be hidden by Google, so visible query counts may be lower than total site impressions suggest.";
 
 export function QueryCountView({ 
   siteUrl, 
@@ -94,22 +102,23 @@ export function QueryCountView({
       const res = await authFetch('/api/warehouse/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['page', 'query'] })
+        body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['page'] })
       })
       if (!res.ok) throw new Error("Failed to fetch warehouse data")
       const json = await res.json()
       return json.map((r: any) => ({
-        keys: [r.page, r.query],
+        keys: [r.page],
+        queryCount: Number(r.queryCount) || 0,
         clicks: r.clicks,
         impressions: r.impressions,
         ctr: r.ctr,
         position: r.position
-      }))
+      })).filter(hasPageKeys)
     }
 
     const promises = [
       useLiveData 
-        ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['page', 'query'])
+        ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['page', 'query'], undefined, true)
         : fetchWarehouseData(startDate, endDate)
     ];
 
@@ -118,7 +127,7 @@ export function QueryCountView({
       const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
       promises.push(
         useLiveData
-          ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['page', 'query'])
+          ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['page', 'query'], undefined, true)
           : fetchWarehouseData(compareStartDate, compareEndDate)
       )
     }
@@ -126,34 +135,54 @@ export function QueryCountView({
     Promise.all(promises)
       .then(([primaryRows, compareRows]) => {
         // Aggregate unique queries per page
-        const pageMap = new Map<string, { querySet: Set<string>, clicks: number, impressions: number, compareQuerySet?: Set<string>, compareClicks?: number, compareImpressions?: number }>()
+        const pageMap = new Map<string, {
+          querySet: Set<string>,
+          queryCount: number,
+          clicks: number,
+          impressions: number,
+          compareQuerySet?: Set<string>,
+          compareQueryCount?: number,
+          compareClicks?: number,
+          compareImpressions?: number
+        }>()
         
-        primaryRows.forEach(row => {
+        primaryRows.filter(hasPageKeys).forEach(row => {
           const page = row.keys[0]
           const query = row.keys[1]
           
           if (!pageMap.has(page)) {
-            pageMap.set(page, { querySet: new Set(), clicks: 0, impressions: 0 })
+            pageMap.set(page, { querySet: new Set(), queryCount: 0, clicks: 0, impressions: 0 })
           }
           
           const agg = pageMap.get(page)!
-          agg.querySet.add(query)
+          if (query) agg.querySet.add(query)
+          else agg.queryCount += Number(row.queryCount) || 0
           agg.clicks += row.clicks
           agg.impressions += row.impressions
         })
 
         if (isCompareMode && compareRows) {
-          compareRows.forEach(row => {
+          compareRows.filter(hasPageKeys).forEach(row => {
             const page = row.keys[0]
             const query = row.keys[1]
             
             if (!pageMap.has(page)) {
-              pageMap.set(page, { querySet: new Set(), clicks: 0, impressions: 0, compareQuerySet: new Set(), compareClicks: 0, compareImpressions: 0 })
+              pageMap.set(page, {
+                querySet: new Set(),
+                queryCount: 0,
+                clicks: 0,
+                impressions: 0,
+                compareQuerySet: new Set(),
+                compareQueryCount: 0,
+                compareClicks: 0,
+                compareImpressions: 0
+              })
             }
             
             const agg = pageMap.get(page)!
             if (!agg.compareQuerySet) agg.compareQuerySet = new Set();
-            agg.compareQuerySet.add(query)
+            if (query) agg.compareQuerySet.add(query)
+            else agg.compareQueryCount = (agg.compareQueryCount || 0) + (Number(row.queryCount) || 0)
             agg.compareClicks = (agg.compareClicks || 0) + row.clicks
             agg.compareImpressions = (agg.compareImpressions || 0) + row.impressions
           })
@@ -161,10 +190,10 @@ export function QueryCountView({
 
         const result = Array.from(pageMap.entries()).map(([page, data]) => ({
           page,
-          queryCount: data.querySet.size,
+          queryCount: data.querySet.size || data.queryCount,
           clicks: data.clicks,
           impressions: data.impressions,
-          compareQueryCount: data.compareQuerySet ? data.compareQuerySet.size : 0,
+          compareQueryCount: data.compareQuerySet?.size || data.compareQueryCount || 0,
           compareClicks: data.compareClicks || 0,
           compareImpressions: data.compareImpressions || 0
         }))
@@ -173,7 +202,7 @@ export function QueryCountView({
       })
       .catch(err => {
         if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token") || err.message.includes("GOOGLE_NOT_CONNECTED")) {
-          setError("Your Google connection needs attention. Please click 'Reconnect Google' at the top to restore live data.")
+          setError("Your Google connection needs attention. Please click 'Reconnect Google Data' at the top to restore reporting access.")
         } else if (err.message.includes("sufficient permission")) {
           setError("You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.")
         } else {
@@ -184,7 +213,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingTable(false)
       })
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, userProfile?.googleConnected, userProfile?.tier, useLiveData])
 
   // Fetch Chart Data (Historic Trend of Unique Queries)
   useEffect(() => {
@@ -204,71 +233,115 @@ export function QueryCountView({
       const res = await authFetch('/api/warehouse/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['date', 'query'], dimensionFilterGroups: filterGroups })
+        body: JSON.stringify({
+          siteUrl,
+          startDate: start,
+          endDate: end,
+          dimensions: selectedPage ? ['date', 'page'] : ['date'],
+          metric: 'queryCount',
+          dimensionFilterGroups: filterGroups
+        })
       })
       if (!res.ok) throw new Error("Failed to fetch warehouse data")
       const json = await res.json()
       return json.map((r: any) => ({
-        keys: [r.date, r.query],
+        keys: [r.date],
+        queryCount: Number(r.queryCount) || 0,
         clicks: r.clicks,
         impressions: r.impressions,
         ctr: r.ctr,
         position: r.position
-      }))
+      })).filter((row: any) => typeof row.keys?.[0] === "string" && row.keys[0].length > 0)
     }
 
+    const fetchLiveDateQueryRows = async (start: string, end: string) => {
+      const rows: any[] = [];
+      let cursor = parseISO(start);
+      const finalDate = parseISO(end);
+
+      // Unique-query counts are extremely sensitive to row caps. Fetch one day at
+      // a time so a busy day cannot steal rows from the rest of the range.
+      while (cursor <= finalDate) {
+        const day = format(cursor, 'yyyy-MM-dd');
+        const dayRows = await gscService.querySearchAnalytics(siteUrl, day, day, ['date', 'query'], filterGroups, true);
+        rows.push(...dayRows);
+        cursor = addDays(cursor, 1);
+      }
+
+      return rows;
+    };
+
+    const fetchQueryCountRows = async (start: string, end: string) => {
+      const warehouseRows = await fetchWarehouseData(start, end);
+      if (warehouseRows.some((row: any) => Number(row.queryCount) > 0)) {
+        return warehouseRows;
+      }
+
+      if (useLiveData || userProfile?.googleConnected) {
+        try {
+          return await fetchLiveDateQueryRows(start, end);
+        } catch (err) {
+          console.warn("Daily live query-count fetch failed; using warehouse counts.", err);
+        }
+      }
+
+      return warehouseRows;
+    };
+
     const promises = [
-      useLiveData
-        ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['date', 'query'], filterGroups)
-        : fetchWarehouseData(startDate, endDate)
+      fetchQueryCountRows(startDate, endDate)
     ];
 
     if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
       const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
       const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
       promises.push(
-        useLiveData
-          ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['date', 'query'], filterGroups)
-          : fetchWarehouseData(compareStartDate, compareEndDate)
+        fetchQueryCountRows(compareStartDate, compareEndDate)
       )
     }
 
     Promise.all(promises)
       .then(([primaryRows, compareRows]) => {
         // Aggregate unique queries per date
-        const dateMap = new Map<string, Set<string>>()
+        const dateMap = new Map<string, { querySet: Set<string>, queryCount: number }>()
         
         primaryRows.forEach(row => {
           const date = row.keys[0]
           const query = row.keys[1]
+          const explicitCount = Number(row.queryCount) || 0
           
           if (!dateMap.has(date)) {
-            dateMap.set(date, new Set())
+            dateMap.set(date, { querySet: new Set(), queryCount: 0 })
           }
           
-          dateMap.get(date)!.add(query)
+          const current = dateMap.get(date)!
+          if (query) current.querySet.add(query)
+          else current.queryCount += explicitCount
         })
 
-        const primaryResult = Array.from(dateMap.entries()).map(([date, querySet]) => ({
+        const primaryResult = Array.from(dateMap.entries()).map(([date, data]) => ({
           date: format(parseISO(date), 'MMM d, yyyy'),
           rawDate: date,
-          queryCount: querySet.size
+          queryCount: data.querySet.size || data.queryCount
         })).sort((a, b) => a.rawDate.localeCompare(b.rawDate))
 
         if (isCompareMode && compareRows) {
-          const compareDateMap = new Map<string, Set<string>>()
+          const compareDateMap = new Map<string, { querySet: Set<string>, queryCount: number }>()
           compareRows.forEach(row => {
             const date = row.keys[0]
             const query = row.keys[1]
+            const explicitCount = Number(row.queryCount) || 0
             if (!compareDateMap.has(date)) {
-              compareDateMap.set(date, new Set())
+              compareDateMap.set(date, { querySet: new Set(), queryCount: 0 })
             }
-            compareDateMap.get(date)!.add(query)
+            const current = compareDateMap.get(date)!
+            if (query) current.querySet.add(query)
+            else current.queryCount += explicitCount
           })
 
-          const compareResult = Array.from(compareDateMap.entries()).map(([date, querySet]) => ({
+          const compareResult = Array.from(compareDateMap.entries()).map(([date, data]) => ({
             rawDate: date,
-            compareQueryCount: querySet.size
+            compareQueryCount: data.querySet.size || data.queryCount
           })).sort((a, b) => a.rawDate.localeCompare(b.rawDate))
 
           // Align by index
@@ -283,7 +356,7 @@ export function QueryCountView({
       })
       .catch(err => {
         if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token") || err.message.includes("GOOGLE_NOT_CONNECTED")) {
-          setError("Your Google connection needs attention. Please click 'Reconnect Google' at the top to restore live data.")
+          setError("Your Google connection needs attention. Please click 'Reconnect Google Data' at the top to restore reporting access.")
         } else if (err.message.includes("sufficient permission")) {
           // Error is already handled by the table fetch
         } else {
@@ -293,7 +366,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingChart(false)
       })
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, selectedPage, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, selectedPage, userProfile?.googleConnected, userProfile?.tier, useLiveData])
 
   const sortedTableData = useMemo(() => {
     return [...tableData].sort((a, b) => {
@@ -350,9 +423,22 @@ export function QueryCountView({
       <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <div className="flex flex-col items-start justify-between gap-3 border-b border-[#E6ECE8] bg-white p-5 sm:flex-row sm:items-center">
           <div>
-            <h3 className="font-semibold text-lg">Historic Trend</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-lg">Daily Visible Queries</h3>
+              <span
+                className="rounded-full bg-[#EAF4EC] px-2 py-0.5 text-xs font-medium text-[#0F3D2E]"
+                title={QUERY_VISIBILITY_NOTE}
+              >
+                GSC filtered
+              </span>
+            </div>
             <p className="text-sm text-muted-foreground">
-              {selectedPage ? `Unique queries over time for: ${selectedPage.replace(siteUrl, '/')}` : 'Total unique queries over time for the entire property'}
+              {selectedPage
+                ? `Daily visible queries for: ${selectedPage.replace(siteUrl, '/')}`
+                : 'Daily visible queries for the entire property'}
+            </p>
+            <p className="mt-2 max-w-3xl text-xs leading-5 text-[#647067]">
+              {QUERY_VISIBILITY_NOTE}
             </p>
           </div>
           {selectedPage && (
@@ -399,12 +485,12 @@ export function QueryCountView({
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     labelStyle={{ fontWeight: 'bold', marginBottom: '4px', color: '#0f172a' }}
-                    formatter={(value: number) => [value.toLocaleString(), 'Unique Queries']}
+                    formatter={(value: number) => [value.toLocaleString(), 'Visible queries']}
                   />
                   <Area
                     type="monotone"
                     dataKey="queryCount"
-                    name="Unique Queries"
+                    name="Visible queries"
                     stroke="#6366f1"
                     strokeWidth={2}
                     fillOpacity={1}
@@ -415,7 +501,7 @@ export function QueryCountView({
                     <Line
                       type="monotone"
                       dataKey="compareQueryCount"
-                      name="Compare Unique Queries"
+                      name="Compare visible queries"
                       stroke="#6366f1"
                       strokeWidth={2}
                       strokeDasharray="5 5"
@@ -432,9 +518,9 @@ export function QueryCountView({
 
       <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <div className="border-b border-[#E6ECE8] bg-white p-5">
-          <h3 className="font-semibold text-lg">Query Count by Page</h3>
+          <h3 className="font-semibold text-lg">Visible Queries by Page</h3>
           <p className="text-sm text-muted-foreground">
-            Click a page to view its historic trend above.
+            Period totals include only non-anonymized Search Console query rows. Click a page to view its daily visible-query trend above.
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -449,7 +535,7 @@ export function QueryCountView({
                 </TableHead>
                 <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort('queryCount')}>
                   <div className="flex items-center justify-end">
-                    Total Unique Queries
+                    Visible Queries
                     {renderSortIcon('queryCount')}
                   </div>
                 </TableHead>

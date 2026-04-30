@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import type Database from 'better-sqlite3';
 import type { Request } from 'express';
+import type { AppDatabase } from '../database.js';
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_SCOPES = [
@@ -172,16 +172,16 @@ export async function exchangeGoogleCodeForTokens(req: Request, code: string) {
   return data;
 }
 
-export function storeGoogleRefreshToken(db: Database.Database, userId: string, refreshToken: string) {
-  db.prepare('UPDATE users SET gscRefreshToken = ? WHERE id = ?').run(encryptToken(refreshToken), userId);
+export async function storeGoogleRefreshToken(db: AppDatabase, userId: string, refreshToken: string) {
+  await db.run('UPDATE users SET gscRefreshToken = ? WHERE id = ?', [encryptToken(refreshToken), userId]);
 }
 
-export function clearGoogleRefreshToken(db: Database.Database, userId: string) {
-  db.prepare('UPDATE users SET gscRefreshToken = NULL WHERE id = ?').run(userId);
+export async function clearGoogleRefreshToken(db: AppDatabase, userId: string) {
+  await db.run('UPDATE users SET gscRefreshToken = NULL WHERE id = ?', [userId]);
 }
 
-export function getStoredGoogleRefreshToken(db: Database.Database, userId: string) {
-  const record = db.prepare('SELECT gscRefreshToken FROM users WHERE id = ?').get(userId) as { gscRefreshToken?: string | null } | undefined;
+export async function getStoredGoogleRefreshToken(db: AppDatabase, userId: string) {
+  const record = await db.get<{ gscRefreshToken?: string | null }>('SELECT gscRefreshToken FROM users WHERE id = ?', [userId]);
   if (!record?.gscRefreshToken) {
     return null;
   }
@@ -189,8 +189,8 @@ export function getStoredGoogleRefreshToken(db: Database.Database, userId: strin
   return decryptToken(record.gscRefreshToken);
 }
 
-export async function getGoogleAccessTokenForUser(db: Database.Database, userId: string) {
-  const refreshToken = getStoredGoogleRefreshToken(db, userId);
+export async function getGoogleAccessTokenForUser(db: AppDatabase, userId: string) {
+  const refreshToken = await getStoredGoogleRefreshToken(db, userId);
   if (!refreshToken) {
     throw new Error('GOOGLE_NOT_CONNECTED');
   }
@@ -214,7 +214,7 @@ export async function getGoogleAccessTokenForUser(db: Database.Database, userId:
 
   const data = await response.json() as GoogleTokenResponse;
   if (!response.ok || !data.access_token) {
-    clearGoogleRefreshToken(db, userId);
+    await clearGoogleRefreshToken(db, userId);
     throw new Error(data.error_description || data.error || 'GOOGLE_NOT_CONNECTED');
   }
 
@@ -222,7 +222,7 @@ export async function getGoogleAccessTokenForUser(db: Database.Database, userId:
 }
 
 export async function googleApiFetchJson(
-  db: Database.Database,
+  db: AppDatabase,
   userId: string,
   url: string,
   options: RequestInit = {},

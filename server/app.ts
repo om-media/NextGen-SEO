@@ -1,9 +1,10 @@
 import express from 'express';
 import multer from 'multer';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from './database.js';
 import { registerAccountDataRoutes } from './routes/accountData.js';
 import { registerLocalAuthRoutes } from './routes/auth.js';
 import { registerBillingRoutes } from './routes/billing.js';
+import { registerBlendedRoutes } from './routes/blended.js';
 import { registerIndexingRoutes } from './routes/indexing.js';
 import { registerLogRoutes } from './routes/logs.js';
 import { registerGoogleRoutes } from './routes/google.js';
@@ -20,7 +21,7 @@ export type SyncJobState = {
 };
 
 type BuildAppOptions = {
-  db: Database.Database;
+  db: AppDatabase;
   upload: multer.Multer;
   syncJobs: Map<string, SyncJobState>;
   getSyncJobKey: (ownerId: string, siteUrl: string) => string;
@@ -38,6 +39,7 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey }: BuildAppOption
   registerWorkspaceCrudRoutes(app, db);
   registerLogRoutes(app, db, upload);
   registerWarehouseRoutes(app, db);
+  registerBlendedRoutes(app, db);
   registerRankTrackingRoutes(app, db);
   registerIndexingRoutes(app, db, syncJobs, getSyncJobKey);
 

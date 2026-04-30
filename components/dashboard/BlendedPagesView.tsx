@@ -1,0 +1,654 @@
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
+import { ArrowDown, ArrowUp, BarChart3, Download, Filter, FileText, Search, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  fetchBlendedPagePerformance,
+  type BlendedPagePerformanceResponse,
+  type BlendedPagePerformanceRow,
+} from "@/src/services/blendedService";
+
+type BlendedPagesViewProps = {
+  compareDateRange?: DateRange;
+  dateRange?: DateRange;
+  ga4PropertyId?: string | null;
+  isCompareMode?: boolean;
+  siteUrl: string;
+};
+
+type SortColumn =
+  | "page"
+  | "clicks"
+  | "ctr"
+  | "queryCount"
+  | "sessions"
+  | "pageViews"
+  | "bounceRate"
+  | "position";
+
+type SortDirection = "asc" | "desc";
+
+const PAGE_SIZE = 100;
+
+const formatCompact = (value: number) =>
+  new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" }).format(value);
+
+const formatNumber = (value: number) => new Intl.NumberFormat("en-US").format(Math.round(value));
+
+const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
+
+const toFiniteNumber = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+function getDateStrings(dateRange?: DateRange) {
+  if (!dateRange?.from || !dateRange.to) return null;
+  return {
+    endDate: format(dateRange.to, "yyyy-MM-dd"),
+    startDate: format(dateRange.from, "yyyy-MM-dd"),
+  };
+}
+
+function getPageTitle(page: string) {
+  try {
+    const url = new URL(page);
+    const path = url.pathname === "/" ? "Home" : url.pathname.split("/").filter(Boolean).pop() || "Page";
+    return path
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  } catch {
+    const normalized = page.replace(/^https?:\/\//, "").replace(/^www\./, "");
+    const path = normalized.split("/").filter(Boolean).pop() || normalized || "Page";
+    return path
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+}
+
+function getDisplayPath(page: string) {
+  try {
+    const url = new URL(page);
+    return `${url.hostname}${url.pathname}`;
+  } catch {
+    return page.replace(/^https?:\/\//, "");
+  }
+}
+
+function getFolderKey(pageKey: string) {
+  if (!pageKey || pageKey === "/") return "/";
+  const parts = pageKey.split("/").filter(Boolean);
+  return parts.length > 1 ? `/${parts[0]}/` : "/";
+}
+
+function getSortValue(row: BlendedPagePerformanceRow, column: SortColumn) {
+  if (column === "page") return row.page.toLowerCase();
+  if (column === "clicks") return row.gsc?.clicks ?? 0;
+  if (column === "ctr") return row.gsc?.ctr ?? 0;
+  if (column === "queryCount") return row.gsc?.queryCount ?? 0;
+  if (column === "sessions") return row.ga4?.sessions ?? 0;
+  if (column === "pageViews") return row.ga4?.pageViews ?? 0;
+  if (column === "bounceRate") return row.ga4?.bounceRate ?? 0;
+  return row.gsc?.position ?? Number.MAX_SAFE_INTEGER;
+}
+
+function getChange(current: number, previous: number) {
+  if (!previous) return null;
+  return ((current - previous) / previous) * 100;
+}
+
+function downloadCsv(rows: BlendedPagePerformanceRow[]) {
+  const headers = [
+    "Page",
+    "Clicks",
+    "Impressions",
+    "CTR",
+    "Visible Queries",
+    "Position",
+    "GA4 Sessions",
+    "GA4 Users",
+    "GA4 Page Views",
+    "GA4 Bounce Rate",
+    "GA4 Events",
+  ];
+
+  const escape = (value: string | number) => {
+    const normalized = String(value);
+    return /[",\n]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
+  };
+
+  const body = rows.map((row) => [
+    row.page,
+    row.gsc?.clicks ?? 0,
+    row.gsc?.impressions ?? 0,
+    row.gsc ? `${(row.gsc.ctr * 100).toFixed(2)}%` : "",
+    row.gsc?.queryCount ?? 0,
+    row.gsc?.position?.toFixed(1) ?? "",
+    row.ga4?.sessions ?? "",
+    row.ga4?.totalUsers ?? "",
+    row.ga4?.pageViews ?? "",
+    row.ga4 ? `${(row.ga4.bounceRate * 100).toFixed(2)}%` : "",
+    row.ga4?.eventCount ?? "",
+  ]);
+
+  const csv = [headers, ...body].map((line) => line.map(escape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `nextgen-seo-blended-pages-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
+
+function MetricCard({
+  accentClass,
+  icon,
+  label,
+  sublabel,
+  value,
+}: {
+  accentClass: string;
+  icon: ReactNode;
+  label: string;
+  sublabel: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_10px_28px_rgba(15,61,46,0.045)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-[#34483E]">{label}</p>
+          <p className="mt-4 text-3xl font-semibold tracking-[-0.03em] text-[#0F172A]">{value}</p>
+        </div>
+        <div className={`flex h-11 w-11 items-center justify-center rounded-full ${accentClass}`}>{icon}</div>
+      </div>
+      <p className="mt-3 text-xs text-[#647067]">{sublabel}</p>
+    </div>
+  );
+}
+
+function ChangeBadge({ value, invert = false }: { value: number | null; invert?: boolean }) {
+  if (value === null) {
+    return <span className="text-xs text-[#647067]">No compare</span>;
+  }
+
+  const isGood = invert ? value <= 0 : value >= 0;
+  const Icon = value >= 0 ? ArrowUp : ArrowDown;
+
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-medium ${isGood ? "text-[#15803D]" : "text-[#DC2626]"}`}>
+      <Icon className="h-3 w-3" />
+      {Math.abs(value).toFixed(1)}%
+    </span>
+  );
+}
+
+export function BlendedPagesView({
+  compareDateRange,
+  dateRange,
+  ga4PropertyId,
+  isCompareMode = false,
+  siteUrl,
+}: BlendedPagesViewProps) {
+  const [compareRows, setCompareRows] = useState<BlendedPagePerformanceRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [rows, setRows] = useState<BlendedPagePerformanceRow[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sourceMeta, setSourceMeta] = useState<BlendedPagePerformanceResponse["meta"] | null>(null);
+  const [sortColumn, setSortColumn] = useState<SortColumn>("clicks");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [trafficFilter, setTrafficFilter] = useState("all");
+
+  const dateStrings = getDateStrings(dateRange);
+  const compareDateStrings = getDateStrings(compareDateRange);
+
+  useEffect(() => {
+    if (!siteUrl || !dateStrings) return;
+
+    let isMounted = true;
+    setLoading(true);
+    setError(null);
+
+    const primaryPromise = fetchBlendedPagePerformance({
+      endDate: dateStrings.endDate,
+      ga4PropertyId,
+      limit: 1000,
+      siteUrl,
+      startDate: dateStrings.startDate,
+    });
+
+    const comparePromise =
+      isCompareMode && compareDateStrings
+        ? fetchBlendedPagePerformance({
+            endDate: compareDateStrings.endDate,
+            ga4PropertyId,
+            limit: 1000,
+            siteUrl,
+            startDate: compareDateStrings.startDate,
+          }).catch(() => ({ rows: [] }))
+        : Promise.resolve({ rows: [] });
+
+    Promise.all([primaryPromise, comparePromise])
+      .then(([primary, compare]) => {
+        if (!isMounted) return;
+        setRows(primary.rows || []);
+        setCompareRows(compare.rows || []);
+        setSourceMeta(primary.meta);
+        setPage(1);
+      })
+      .catch((err: Error) => {
+        if (!isMounted) return;
+        setError(err.message || "Failed to fetch blended page data");
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [compareDateStrings?.endDate, compareDateStrings?.startDate, dateStrings?.endDate, dateStrings?.startDate, ga4PropertyId, isCompareMode, siteUrl]);
+
+  const compareByPageKey = useMemo(() => new Map(compareRows.map((row) => [row.pageKey, row])), [compareRows]);
+
+  const filteredRows = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return rows
+      .filter((row) => {
+        if (normalizedSearch && !row.page.toLowerCase().includes(normalizedSearch) && !row.pageKey.toLowerCase().includes(normalizedSearch)) {
+          return false;
+        }
+        if (trafficFilter === "with-ga4" && !row.ga4) return false;
+        if (trafficFilter === "without-ga4" && row.ga4) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aValue = getSortValue(a, sortColumn);
+        const bValue = getSortValue(b, sortColumn);
+        if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
+        if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
+        return 0;
+      });
+  }, [rows, searchTerm, sortColumn, sortDirection, trafficFilter]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const paginatedRows = filteredRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const hasGa4Rows = rows.some((row) => row.ga4);
+
+  const totals = useMemo(() => {
+    const aggregate = rows.reduce(
+      (acc, row) => {
+        acc.clicks += row.gsc?.clicks ?? 0;
+        acc.impressions += row.gsc?.impressions ?? 0;
+        acc.queryCount += row.gsc?.queryCount ?? 0;
+        acc.weightedPosition += (row.gsc?.position ?? 0) * (row.gsc?.impressions ?? 0);
+        acc.sessions += row.ga4?.sessions ?? 0;
+        acc.users += row.ga4?.totalUsers ?? 0;
+        acc.pageViews += row.ga4?.pageViews ?? 0;
+        acc.events += row.ga4?.eventCount ?? 0;
+        acc.weightedBounce += (row.ga4?.bounceRate ?? 0) * (row.ga4?.sessions ?? 0);
+        return acc;
+      },
+      {
+        clicks: 0,
+        events: 0,
+        impressions: 0,
+        pageViews: 0,
+        queryCount: 0,
+        sessions: 0,
+        users: 0,
+        weightedBounce: 0,
+        weightedPosition: 0,
+      },
+    );
+
+    return {
+      ...aggregate,
+      bounceRate: aggregate.sessions ? aggregate.weightedBounce / aggregate.sessions : 0,
+      ctr: aggregate.impressions ? aggregate.clicks / aggregate.impressions : 0,
+      position: aggregate.impressions ? aggregate.weightedPosition / aggregate.impressions : 0,
+    };
+  }, [rows]);
+
+  const compareTotals = useMemo(() => {
+    return compareRows.reduce(
+      (acc, row) => {
+        acc.clicks += row.gsc?.clicks ?? 0;
+        acc.sessions += row.ga4?.sessions ?? 0;
+        return acc;
+      },
+      { clicks: 0, sessions: 0 },
+    );
+  }, [compareRows]);
+
+  const folderRows = useMemo(() => {
+    const folders = new Map<string, { clicks: number; pages: number; sessions: number }>();
+    rows.forEach((row) => {
+      const key = getFolderKey(row.pageKey);
+      const current = folders.get(key) || { clicks: 0, pages: 0, sessions: 0 };
+      current.clicks += row.gsc?.clicks ?? 0;
+      current.sessions += row.ga4?.sessions ?? 0;
+      current.pages += 1;
+      folders.set(key, current);
+    });
+    return Array.from(folders.entries())
+      .map(([folder, value]) => ({ folder, ...value }))
+      .sort((a, b) => b.clicks - a.clicks)
+      .slice(0, 6);
+  }, [rows]);
+
+  const opportunities = useMemo(() => {
+    return rows
+      .filter((row) => (row.gsc?.impressions ?? 0) >= 100 && (row.gsc?.ctr ?? 0) < 0.02)
+      .sort((a, b) => (b.gsc?.impressions ?? 0) - (a.gsc?.impressions ?? 0))
+      .slice(0, 4);
+  }, [rows]);
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortColumn(column);
+    setSortDirection(column === "position" || column === "bounceRate" ? "asc" : "desc");
+  };
+
+  const sortIndicator = (column: SortColumn) => {
+    if (sortColumn !== column) return <span className="text-[#A8B3AC]">↕</span>;
+    return sortDirection === "asc" ? "↑" : "↓";
+  };
+
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">
+        {error}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 lg:grid-cols-5">
+        <MetricCard
+          accentClass="bg-[#EAF4EC] text-[#0F3D2E]"
+          icon={<FileText className="h-5 w-5" />}
+          label="Top pages"
+          sublabel={`${formatNumber(rows.filter((row) => (row.gsc?.clicks ?? 0) > 0).length)} pages with clicks`}
+          value={formatNumber(rows.length)}
+        />
+        <MetricCard
+          accentClass="bg-[#EAF2FF] text-[#2F7DF6]"
+          icon={<ArrowUp className="h-5 w-5" />}
+          label="Clicks"
+          sublabel={isCompareMode ? `${getChange(totals.clicks, compareTotals.clicks)?.toFixed(1) ?? "0.0"}% vs compare` : "Current period"}
+          value={formatCompact(totals.clicks)}
+        />
+        <MetricCard
+          accentClass="bg-[#ECFEFF] text-[#0891B2]"
+          icon={<BarChart3 className="h-5 w-5" />}
+          label="GA4 sessions"
+          sublabel={hasGa4Rows ? "Matched by page path" : "Run Sync Data to populate"}
+          value={hasGa4Rows ? formatCompact(totals.sessions) : "Not synced"}
+        />
+        <MetricCard
+          accentClass="bg-[#FFF2E8] text-[#F97316]"
+          icon={<ArrowDown className="h-5 w-5" />}
+          label="Bounce rate"
+          sublabel={hasGa4Rows ? "Weighted by sessions" : "Waiting for GA4 warehouse"}
+          value={hasGa4Rows ? formatPercent(totals.bounceRate) : "-"}
+        />
+        <MetricCard
+          accentClass="bg-[#F4ECFF] text-[#7C3AED]"
+          icon={<Sparkles className="h-5 w-5" />}
+          label="Visible queries"
+          sublabel="Summed across listed pages"
+          value={formatCompact(totals.queryCount)}
+        />
+      </div>
+
+      {!hasGa4Rows && ga4PropertyId && (
+        <div className="rounded-2xl border border-[#D9E5DE] bg-[#F4FAF6] p-4 text-sm text-[#34483E]">
+          GA4 is connected, but page-level GA4 data has not been warehoused for this range yet. Click <strong>Sync Data</strong> to pull GA4 landing-page metrics into the local warehouse.
+        </div>
+      )}
+
+      {sourceMeta && (
+        <div className="flex flex-wrap gap-2 text-xs text-[#647067]">
+          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
+            GSC rows: {formatNumber(sourceMeta.freshness.gsc.rowCount)}
+            {sourceMeta.freshness.gsc.latestDate ? `, latest ${sourceMeta.freshness.gsc.latestDate}` : ""}
+          </span>
+          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
+            GA4 rows: {formatNumber(sourceMeta.freshness.ga4.rowCount)}
+            {sourceMeta.freshness.ga4.latestDate ? `, latest ${sourceMeta.freshness.ga4.latestDate}` : ""}
+          </span>
+        </div>
+      )}
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+        <section className="rounded-2xl border border-[#E6ECE8] bg-white shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
+          <div className="flex flex-col gap-4 border-b border-[#E6ECE8] p-5 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h3 className="text-xl font-semibold tracking-[-0.02em] text-[#0F172A]">Top Pages ({filteredRows.length})</h3>
+              <p className="mt-1 text-sm text-[#647067]">
+                Blends Search Console visibility with GA4 engagement for matching page paths.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 rounded-xl border-[#D8C8FF] bg-[#F7F3FF] text-[#6D28D9]"
+                disabled
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                Analyze with AI
+              </Button>
+              <Button variant="outline" size="sm" className="h-9 rounded-xl border-[#E6ECE8] bg-white" onClick={() => downloadCsv(filteredRows)}>
+                <Download className="mr-2 h-4 w-4" />
+                Export CSV
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-4 p-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-[#8A968F]" />
+                <Input
+                  className="h-11 rounded-xl border-[#E6ECE8] bg-white pl-10"
+                  onChange={(event) => {
+                    setSearchTerm(event.target.value);
+                    setPage(1);
+                  }}
+                  placeholder="Filter pages..."
+                  value={searchTerm}
+                />
+              </div>
+              <Select value={trafficFilter} onValueChange={(value) => { setTrafficFilter(value); setPage(1); }}>
+                <SelectTrigger className="h-11 w-full rounded-xl border-[#E6ECE8] bg-white lg:w-[180px]">
+                  <SelectValue placeholder="Traffic source" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All pages</SelectItem>
+                  <SelectItem value="with-ga4">With GA4 data</SelectItem>
+                  <SelectItem value="without-ga4">Missing GA4 data</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="secondary" className="h-11 rounded-xl bg-[#EEF3F0] text-[#0F172A]">
+                <Filter className="mr-2 h-4 w-4" />
+                Filters
+              </Button>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-[#E6ECE8]">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] text-sm">
+                  <thead className="bg-[#FBFCFB] text-xs font-semibold text-[#34483E]">
+                    <tr>
+                      <th className="w-[34%] px-4 py-3 text-left">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("page")}>
+                          Page {sortIndicator("page")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("clicks")}>
+                          Clicks {sortIndicator("clicks")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("ctr")}>
+                          CTR {sortIndicator("ctr")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("queryCount")}>
+                          Queries {sortIndicator("queryCount")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("sessions")}>
+                          Sessions {sortIndicator("sessions")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("pageViews")}>
+                          Page views {sortIndicator("pageViews")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("bounceRate")}>
+                          Bounce {sortIndicator("bounceRate")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("position")}>
+                          Position {sortIndicator("position")}
+                        </button>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-16 text-center text-[#647067]">
+                          Loading blended page data...
+                        </td>
+                      </tr>
+                    ) : paginatedRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-16 text-center text-[#647067]">
+                          No page rows match this view.
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedRows.map((row) => {
+                        const compareRow = compareByPageKey.get(row.pageKey);
+                        const clickChange = getChange(row.gsc?.clicks ?? 0, compareRow?.gsc?.clicks ?? 0);
+                        const sessionChange = getChange(row.ga4?.sessions ?? 0, compareRow?.ga4?.sessions ?? 0);
+
+                        return (
+                          <tr key={row.pageKey || row.page} className="border-t border-[#E6ECE8] hover:bg-[#F8FAF9]">
+                            <td className="px-4 py-4">
+                              <div className="max-w-[420px]">
+                                <div className="truncate font-semibold text-[#24443A]">{getPageTitle(row.page)}</div>
+                                <div className="mt-1 truncate text-xs text-[#647067]">{getDisplayPath(row.page)}</div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <div className="font-medium text-[#0F172A]">{formatNumber(row.gsc?.clicks ?? 0)}</div>
+                              {isCompareMode && <ChangeBadge value={clickChange} />}
+                            </td>
+                            <td className="px-4 py-4 text-right">{row.gsc ? formatPercent(row.gsc.ctr) : "-"}</td>
+                            <td className="px-4 py-4 text-right font-semibold text-[#6B5CFF]">{formatNumber(row.gsc?.queryCount ?? 0)}</td>
+                            <td className="px-4 py-4 text-right">
+                              <div>{row.ga4 ? formatNumber(row.ga4.sessions) : "-"}</div>
+                              {isCompareMode && row.ga4 && <ChangeBadge value={sessionChange} />}
+                            </td>
+                            <td className="px-4 py-4 text-right">{row.ga4 ? formatNumber(row.ga4.pageViews) : "-"}</td>
+                            <td className="px-4 py-4 text-right">{row.ga4 ? formatPercent(row.ga4.bounceRate) : "-"}</td>
+                            <td className="px-4 py-4 text-right">{row.gsc ? row.gsc.position.toFixed(1) : "-"}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 text-sm text-[#647067] sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Showing {filteredRows.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, filteredRows.length)} of {filteredRows.length} pages
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" className="rounded-xl" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+                  Previous
+                </Button>
+                <span className="text-[#0F172A]">Page {page} of {pageCount}</span>
+                <Button variant="outline" size="sm" className="rounded-xl" disabled={page >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
+                  Next
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside className="space-y-5">
+          <section className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
+            <h3 className="text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Performance by Folder</h3>
+            <p className="mt-1 text-sm text-[#647067]">Grouped from real page paths.</p>
+            <div className="mt-5 space-y-3">
+              {folderRows.map((folder) => (
+                <div key={folder.folder} className="flex items-center justify-between gap-3 rounded-xl border border-[#E6ECE8] p-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-[#0F172A]">{folder.folder}</div>
+                    <div className="text-xs text-[#647067]">{formatNumber(folder.pages)} pages</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-semibold text-[#0F172A]">{formatCompact(folder.clicks)}</div>
+                    <div className="text-xs text-[#647067]">{hasGa4Rows ? `${formatCompact(folder.sessions)} sessions` : "GSC only"}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Top Opportunities</h3>
+                <p className="mt-1 text-sm text-[#647067]">High impressions, low CTR pages.</p>
+              </div>
+            </div>
+            <div className="mt-5 space-y-3">
+              {opportunities.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[#E6ECE8] p-4 text-sm text-[#647067]">
+                  No low-CTR opportunities in this filtered range.
+                </div>
+              ) : (
+                opportunities.map((row) => (
+                  <div key={row.pageKey} className="rounded-xl border border-[#E6ECE8] p-4">
+                    <div className="font-semibold text-[#0F172A]">{getPageTitle(row.page)}</div>
+                    <p className="mt-1 text-xs leading-5 text-[#647067]">
+                      {formatCompact(row.gsc?.impressions ?? 0)} impressions at {formatPercent(row.gsc?.ctr ?? 0)} CTR.
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
+}

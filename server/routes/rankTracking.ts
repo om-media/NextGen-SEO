@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import { syncRankTrackingForSite } from '../services/rankTracking.js';
 import type { AuthedRequest } from '../types.js';
@@ -12,31 +12,31 @@ import {
   isStringRecord,
 } from '../validation.js';
 
-export function registerRankTrackingRoutes(app: Express, db: Database.Database) {
+export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
 
-  app.get('/api/rank-tracking/keywords', authRequired, (req: AuthedRequest, res) => {
+  app.get('/api/rank-tracking/keywords', authRequired, async (req: AuthedRequest, res) => {
     const siteUrl = asTrimmedString(req.query.siteUrl);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
     try {
-      const keywords = db.prepare('SELECT * FROM tracked_keywords WHERE ownerId = ? AND siteUrl = ? ORDER BY createdAt DESC').all(req.authUser!.uid, siteUrl);
+      const keywords = await db.all<any>('SELECT * FROM tracked_keywords WHERE ownerId = ? AND siteUrl = ? ORDER BY createdAt DESC', [req.authUser!.uid, siteUrl]);
 
-      const enriched = (keywords as any[]).map((kw: any) => {
-        const latestRank = db.prepare('SELECT position, rankingUrl, date FROM keyword_rankings WHERE keywordId = ? ORDER BY date DESC LIMIT 1').get(kw.id) as any;
+      const enriched = await Promise.all(keywords.map(async (kw: any) => {
+        const latestRank = await db.get<any>('SELECT position, rankingUrl, date FROM keyword_rankings WHERE keywordId = ? ORDER BY date DESC LIMIT 1', [kw.id]);
         return {
           ...kw,
           currentPosition: latestRank ? latestRank.position : null,
           rankingUrl: latestRank ? latestRank.rankingUrl : null,
           lastUpdated: latestRank ? latestRank.date : null,
         };
-      });
+      }));
       res.json(enriched);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post('/api/rank-tracking/keywords', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/rank-tracking/keywords', authRequired, async (req: AuthedRequest, res) => {
     const { siteUrl, keywords, location, device, tags, targetDomain, initialPositions } = req.body;
     if (!isNonEmptyString(siteUrl) || !isStringArray(keywords)) return res.status(400).json({ error: 'Invalid payload' });
     if (location !== undefined && location !== null && !isNonEmptyString(location)) return res.status(400).json({ error: 'Invalid location' });
@@ -46,19 +46,9 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
     if (initialPositions !== undefined && !isStringRecord(initialPositions) && !isPlainObject(initialPositions)) return res.status(400).json({ error: 'Invalid initialPositions' });
 
     try {
-      const stmt = db.prepare(`
-        INSERT OR IGNORE INTO tracked_keywords (id, siteUrl, ownerId, keyword, location, device, tags, targetDomain, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      const rankStmt = db.prepare(`
-        INSERT OR REPLACE INTO keyword_rankings (keywordId, date, position, rankingUrl)
-        VALUES (?, ?, ?, ?)
-      `);
-
       const today = new Date().toISOString().split('T')[0];
 
-      const insertMany = db.transaction((kws: string[]) => {
+      const insertMany = db.transaction(async (kws: string[]) => {
         let inserted = 0;
         let skipped = 0;
 
@@ -70,7 +60,11 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
           }
 
           const id = crypto.randomUUID();
-          const result = stmt.run(
+          const result = await db.run(`
+            INSERT INTO tracked_keywords (id, siteUrl, ownerId, keyword, location, device, tags, targetDomain, createdAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ownerId, siteUrl, keyword, location, device) DO NOTHING
+          `, [
             id,
             siteUrl,
             req.authUser!.uid,
@@ -80,7 +74,7 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
             tags || '',
             targetDomain || '',
             new Date().toISOString(),
-          );
+          ]);
 
           if (result.changes === 0) {
             skipped += 1;
@@ -92,7 +86,13 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
           if (isPlainObject(initialPositions) && initialPositions[kStr] !== undefined) {
             const initialPosition = Number(initialPositions[kStr]);
             if (Number.isFinite(initialPosition)) {
-              rankStmt.run(id, today, Math.round(initialPosition), null);
+              await db.run(`
+                INSERT INTO keyword_rankings (keywordId, date, position, rankingUrl)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(keywordId, date) DO UPDATE SET
+                  position=excluded.position,
+                  rankingUrl=excluded.rankingUrl
+              `, [id, today, Math.round(initialPosition), null]);
             }
           }
         }
@@ -100,36 +100,36 @@ export function registerRankTrackingRoutes(app: Express, db: Database.Database) 
         return { inserted, skipped };
       });
 
-      const result = insertMany(keywords);
+      const result = await insertMany(keywords);
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete('/api/rank-tracking/keywords/:id', authRequired, (req: AuthedRequest, res) => {
+  app.delete('/api/rank-tracking/keywords/:id', authRequired, async (req: AuthedRequest, res) => {
     try {
-      const keyword = db.prepare('SELECT id FROM tracked_keywords WHERE id = ? AND ownerId = ?').get(req.params.id, req.authUser!.uid) as { id: string } | undefined;
+      const keyword = await db.get<{ id: string }>('SELECT id FROM tracked_keywords WHERE id = ? AND ownerId = ?', [req.params.id, req.authUser!.uid]);
       if (!keyword) {
         return res.status(404).json({ error: 'Keyword not found' });
       }
-      db.prepare('DELETE FROM tracked_keywords WHERE id = ? AND ownerId = ?').run(req.params.id, req.authUser!.uid);
-      db.prepare('DELETE FROM keyword_rankings WHERE keywordId = ?').run(req.params.id);
+      await db.run('DELETE FROM tracked_keywords WHERE id = ? AND ownerId = ?', [req.params.id, req.authUser!.uid]);
+      await db.run('DELETE FROM keyword_rankings WHERE keywordId = ?', [req.params.id]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/rank-tracking/history', authRequired, (req: AuthedRequest, res) => {
+  app.get('/api/rank-tracking/history', authRequired, async (req: AuthedRequest, res) => {
     const keywordId = asTrimmedString(req.query.keywordId);
     if (!keywordId) return res.status(400).json({ error: 'Missing keywordId' });
     try {
-      const keyword = db.prepare('SELECT id FROM tracked_keywords WHERE id = ? AND ownerId = ?').get(keywordId, req.authUser!.uid) as { id: string } | undefined;
+      const keyword = await db.get<{ id: string }>('SELECT id FROM tracked_keywords WHERE id = ? AND ownerId = ?', [keywordId, req.authUser!.uid]);
       if (!keyword) {
         return res.status(404).json({ error: 'Keyword not found' });
       }
-      const history = db.prepare('SELECT * FROM keyword_rankings WHERE keywordId = ? ORDER BY date ASC').all(keywordId);
+      const history = await db.all('SELECT * FROM keyword_rankings WHERE keywordId = ? ORDER BY date ASC', [keywordId]);
       res.json(history);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

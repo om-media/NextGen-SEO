@@ -12,6 +12,7 @@ type GscHistoricTrendCardProps = {
   onClose: () => void;
   selectedRowKey: string;
   siteUrl: string;
+  useLiveData?: boolean;
 };
 
 export function GscHistoricTrendCard({
@@ -22,6 +23,7 @@ export function GscHistoricTrendCard({
   onClose,
   selectedRowKey,
   siteUrl,
+  useLiveData,
 }: GscHistoricTrendCardProps) {
   return (
     <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
@@ -44,6 +46,7 @@ export function GscHistoricTrendCard({
           filterValue={selectedRowKey}
           isCompareMode={isCompareMode}
           compareDateRange={compareDateRange}
+          useLiveData={useLiveData}
         />
       </div>
     </Card>

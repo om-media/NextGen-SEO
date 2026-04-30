@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "../../contexts/AuthContext"
 import { AlertCircle, BarChart3, CheckCircle2 } from "lucide-react"
+import { toast } from "sonner"
 
 const SIGNED_OUT_NOTICE_SESSION_KEY = "signed_out_notice";
 
@@ -62,6 +63,50 @@ export function AuthScreen() {
     }
   }
 
+  const handleProviderAuth = (provider: "Google" | "Microsoft") => {
+    toast.info(`${provider} app sign-in is not configured yet`, {
+      description: "Use email and password for now. Search Console, GA4, and Bing data connections stay separate after login.",
+    })
+  }
+
+  const ProviderButtons = ({ mode }: { mode: "login" | "register" }) => (
+    <div className="w-full space-y-3">
+      <div className="relative py-1 text-center">
+        <div className="absolute inset-x-0 top-1/2 h-px bg-[#E6ECE8]" />
+        <span className="relative bg-white px-3 text-xs font-medium text-[#647067]">
+          or {mode === "login" ? "sign in" : "register"} with
+        </span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11 rounded-2xl border-[#E6ECE8] bg-white text-[#0F172A] shadow-sm hover:bg-[#FBFCFB]"
+          onClick={() => handleProviderAuth("Google")}
+        >
+          <span className="mr-2 flex h-5 w-5 items-center justify-center rounded-full border border-[#E6ECE8] text-[11px] font-bold text-[#4285F4]">
+            G
+          </span>
+          Google
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11 rounded-2xl border-[#E6ECE8] bg-white text-[#0F172A] shadow-sm hover:bg-[#FBFCFB]"
+          onClick={() => handleProviderAuth("Microsoft")}
+        >
+          <span className="mr-2 grid h-4 w-4 grid-cols-2 gap-0.5">
+            <span className="bg-[#F25022]" />
+            <span className="bg-[#7FBA00]" />
+            <span className="bg-[#00A4EF]" />
+            <span className="bg-[#FFB900]" />
+          </span>
+          Microsoft
+        </Button>
+      </div>
+    </div>
+  )
+
   return (
     <div className="relative flex min-h-dvh w-full items-center justify-center overflow-hidden bg-[#F8FAF9] p-4 sm:p-6">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(15,61,46,0.12),transparent_28%),radial-gradient(circle_at_82%_72%,rgba(47,125,246,0.10),transparent_34%),linear-gradient(180deg,#FBFCFB_0%,#F8FAF9_52%,#F4F8F7_100%)]" />
@@ -86,13 +131,13 @@ export function AuthScreen() {
                   Start with a clean local account.
                 </h1>
                 <p className="mt-5 text-base leading-7 text-[#647067]">
-                  Google data is connected after account creation, so signing up never requires OAuth, face verification, or a browser account switch.
+                  Search Console, GA4, and Bing are connected after account creation, so signing up can start with email and password.
                 </p>
               </div>
             </div>
 
             <div className="grid gap-3">
-              {["Email and password login", "Google data connected later", "First site chosen during setup"].map((item) => (
+              {["Email and password login", "Search Console, GA4, and Bing connected later", "First site chosen during setup"].map((item) => (
                 <div key={item} className="flex items-center gap-3 rounded-2xl border border-[#E6ECE8] bg-white/80 px-4 py-3 text-sm font-medium text-[#0F172A]">
                   <CheckCircle2 className="h-4 w-4 text-[#0F3D2E]" />
                   {item}
@@ -122,7 +167,7 @@ export function AuthScreen() {
               <p className="text-sm font-semibold text-[#0F3D2E]">Workspace login</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-[#0F172A]">Sign in or create an account</h2>
               <p className="mt-2 text-sm leading-6 text-[#647067]">
-                Use a local account for the SaaS. Reporting permissions are connected inside onboarding.
+                Use email first, or continue with a provider below. Reporting data connections happen after registration.
               </p>
             </div>
 
@@ -163,7 +208,8 @@ export function AuthScreen() {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? "Signing in..." : "Sign in"}
                   </Button>
-                  <p className="text-center text-xs text-muted-foreground">Google reporting access is separate from your app login.</p>
+                  <ProviderButtons mode="login" />
+                  <p className="text-center text-xs text-muted-foreground">Search Console, GA4, and Bing access are separate from app login.</p>
                 </CardFooter>
               </form>
             </Card>
@@ -173,7 +219,7 @@ export function AuthScreen() {
             <Card className="overflow-hidden rounded-2xl border-[#E6ECE8] bg-white/92 shadow-[0_20px_60px_rgba(15,61,46,0.10)] backdrop-blur-xl">
               <CardHeader>
                 <CardTitle>Create your workspace</CardTitle>
-                <CardDescription>Start with email and password. Connect Search Console and GA4 after this step.</CardDescription>
+                <CardDescription>Start with email and password. Connect Search Console, GA4, and Bing after this step.</CardDescription>
               </CardHeader>
               <form onSubmit={handleRegister}>
                 <CardContent className="space-y-4">
@@ -191,7 +237,8 @@ export function AuthScreen() {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? "Creating account..." : "Create account"}
                   </Button>
-                  <p className="text-center text-xs text-muted-foreground">This creates a local workspace login. No Google account is required to create the app account itself.</p>
+                  <ProviderButtons mode="register" />
+                  <p className="text-center text-xs text-muted-foreground">This creates an app login. Reporting connections are configured during onboarding.</p>
                 </CardFooter>
               </form>
             </Card>

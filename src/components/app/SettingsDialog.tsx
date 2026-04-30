@@ -116,8 +116,7 @@ export function SettingsDialog({
   const planName = getPlanDisplayName(userProfile?.tier);
   const propertyLimit = getPlanPropertyLimit(userProfile?.tier);
   const slotsRemaining = getRemainingPropertySlots(userProfile?.tier, unlockedSites.length);
-  const billingStatus = userProfile?.billingStatus || "trialing";
-  const trialEndsLabel = formatDateLabel(userProfile?.trialEndsAt);
+  const billingStatus = userProfile?.billingStatus === "trialing" ? "active" : (userProfile?.billingStatus || "active");
   const periodEndLabel = formatDateLabel(userProfile?.currentPeriodEnd);
   const billingTone = billingStatus === "active"
     ? "secondary"
@@ -210,14 +209,14 @@ export function SettingsDialog({
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <p className="text-sm font-medium">Billing status</p>
-                    <p className="text-sm text-muted-foreground">Trials, billing issues, and active subscriptions are now surfaced as first-class account state.</p>
+                    <p className="text-sm text-muted-foreground">Plan access and billing issues are surfaced clearly when billing is configured.</p>
                   </div>
                   <Badge variant={billingTone}>{billingStatus.replace("_", " ")}</Badge>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-3 text-sm">
-                    <p className="font-medium">Trial ends</p>
-                    <p className="mt-1 text-muted-foreground">{trialEndsLabel || "Not set"}</p>
+                    <p className="font-medium">Plan access</p>
+                    <p className="mt-1 text-muted-foreground">{billingStatus === "active" ? "Active" : billingStatus.replace("_", " ")}</p>
                   </div>
                   <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-3 text-sm">
                     <p className="font-medium">Current period end</p>

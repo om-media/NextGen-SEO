@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { ComposedChart, Area, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, ReferenceLine } from "recharts"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { GscApiService } from "@/src/services/gscService"
-import { format, parseISO, startOfWeek, startOfMonth } from "date-fns"
+import { addDays, differenceInCalendarDays, format, parseISO, startOfWeek, startOfMonth } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
 import { Check, Download, MoreVertical, Info } from "lucide-react"
@@ -53,6 +53,76 @@ const CustomYAxisTick = (props: any) => {
   );
 };
 
+const getDateKey = (row: any) => {
+  const key = row?.keys?.[0];
+  return typeof key === "string" && key.length > 0 ? key : "";
+};
+
+const getQueryKey = (row: any) => {
+  const explicitQuery = row?.query;
+  if (typeof explicitQuery === "string" && explicitQuery.length > 0) return explicitQuery;
+
+  const keyQuery = row?.keys?.[1];
+  return typeof keyQuery === "string" && keyQuery.length > 0 ? keyQuery : "";
+};
+
+const toFiniteNumber = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+type MetricKey = "clicks" | "impressions" | "ctr" | "queries" | "position";
+
+const getAnnotationLabel = (annotation: Annotation) =>
+  annotation.type === "system" ? "Google update" : annotation.title;
+
+const getAnnotationTooltip = (annotation: Annotation) => {
+  const date = (() => {
+    try {
+      return format(parseISO(annotation.date), "MMM d, yyyy");
+    } catch {
+      return annotation.date;
+    }
+  })();
+
+  return [
+    getAnnotationLabel(annotation),
+    annotation.title,
+    date,
+    annotation.description,
+  ].filter(Boolean).join("\n");
+};
+
+function AnnotationReferenceLabel(props: any) {
+  const { annotation, fill, offsetIndex = 0, viewBox, x, y } = props;
+  const labelX = Number(x ?? viewBox?.x ?? 0) + 6;
+  const labelY = Math.max(12, Number(y ?? viewBox?.y ?? 0) + 12 + offsetIndex * 16);
+
+  return (
+    <g className="cursor-help">
+      <title>{getAnnotationTooltip(annotation)}</title>
+      <rect
+        x={labelX - 4}
+        y={labelY - 11}
+        width={Math.min(154, Math.max(82, getAnnotationLabel(annotation).length * 6.5 + 12))}
+        height={15}
+        rx={5}
+        fill="white"
+        fillOpacity={0.88}
+      />
+      <text
+        x={labelX}
+        y={labelY}
+        fill={fill}
+        fontSize={11}
+        fontWeight={700}
+      >
+        {getAnnotationLabel(annotation)}
+      </text>
+    </g>
+  );
+}
+
 export function Overview({ 
   siteUrl, 
   dateRange,
@@ -84,6 +154,7 @@ export function Overview({
     clicks: true,
     impressions: true,
     ctr: false,
+    queries: true,
     position: false
   })
 
@@ -93,13 +164,15 @@ export function Overview({
     clicks: "#2F7DF6",
     impressions: "#7C3AED",
     ctr: "#0891B2",
+    queries: "#0F3D2E",
     position: "#F97316"
   }
+  const hasQueryMetric = filterDimension === "page" && Boolean(filterValue);
   const isConnectionIssue = error?.startsWith("Your Google data connection needs attention.") ?? false
 
   const getFriendlyOverviewError = (message: string) => {
     if (message === 'UNAUTHORIZED' || message.includes("invalid authentication credentials") || message.includes("OAuth 2 access token") || message.includes("GOOGLE_NOT_CONNECTED")) {
-      return "Your Google data connection needs attention. Please click 'Reconnect Google Data' at the top to restore live reporting."
+      return "Your Google data connection needs attention. Please click 'Reconnect Google Data' at the top to restore reporting access."
     }
 
     if (message.includes("sufficient permission")) {
@@ -121,41 +194,169 @@ export function Overview({
         filters: [{ dimension: filterDimension, expression: filterValue, operator: 'equals' }]
       }] : undefined;
 
+      const getWarehouseDimensions = () => {
+        if (filterDimension === "page") return ["date", "page"];
+        if (filterDimension === "query") return ["date", "query"];
+        return ["date"];
+      };
+
+      const mergeQueryCounts = (rows: any[], queryRows: any[]) => {
+        if (!queryRows.length) return rows;
+
+        const queriesByDate = new Map<string, Set<string>>();
+        queryRows.forEach((row) => {
+          const rowDate = getDateKey(row);
+          const query = getQueryKey(row);
+          if (!rowDate || !query) return;
+          if (!queriesByDate.has(rowDate)) queriesByDate.set(rowDate, new Set());
+          queriesByDate.get(rowDate)?.add(query);
+        });
+
+        return rows.map((row) => ({
+          ...row,
+          queryKeys: Array.from(queriesByDate.get(getDateKey(row)) || []),
+          queryCount: queriesByDate.get(getDateKey(row))?.size || Number(row.queryCount) || 0,
+        }));
+      };
+
       const fetchWarehouseData = async (start: string, end: string) => {
         const res = await authFetch('/api/warehouse/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['date'], dimensionFilterGroups: filterGroups })
+          body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: getWarehouseDimensions(), dimensionFilterGroups: filterGroups })
         })
         if (!res.ok) throw new Error("Failed to fetch warehouse data")
         const json = await res.json()
         return json.map((r: any) => ({
           keys: [r.date],
-          clicks: r.clicks,
-          impressions: r.impressions,
-          ctr: r.ctr,
-          position: r.position
-        }))
+          clicks: toFiniteNumber(r.clicks),
+          impressions: toFiniteNumber(r.impressions),
+          ctr: toFiniteNumber(r.ctr),
+          position: toFiniteNumber(r.position),
+          queryCount: toFiniteNumber(r.queryCount)
+        })).filter((row: any) => getDateKey(row))
       }
 
-      const primaryPromise = useLiveData 
-        ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['date'], filterGroups)
-        : fetchWarehouseData(startDate, endDate)
+      const fetchWarehouseQueryRows = async (start: string, end: string) => {
+        if (!hasQueryMetric) return [];
+
+        const res = await authFetch('/api/warehouse/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            siteUrl,
+            startDate: start,
+            endDate: end,
+            dimensions: ["date", "page", "query"],
+            dimensionFilterGroups: filterGroups,
+          })
+        });
+        if (!res.ok) throw new Error("Failed to fetch warehouse query data");
+
+        const json = await res.json();
+        return json.map((r: any) => ({
+          keys: [r.date, r.query],
+          query: r.query,
+          queryCount: 1,
+        })).filter((row: any) => getDateKey(row) && getQueryKey(row));
+      };
+
+      const fetchLiveQueryCounts = async (start: string, end: string) => {
+        if (!hasQueryMetric) return [];
+
+        const rows: any[] = [];
+        let cursor = parseISO(start);
+        const finalDate = parseISO(end);
+
+        // Query-count charts need detail rows. Fetching a whole range in one
+        // request can hit GSC row caps and create fake drops, so keep windows small.
+        while (cursor <= finalDate) {
+          const chunkEnd = addDays(cursor, 6) > finalDate ? finalDate : addDays(cursor, 6);
+          const chunkRows = await gscService.querySearchAnalytics(
+            siteUrl,
+            format(cursor, "yyyy-MM-dd"),
+            format(chunkEnd, "yyyy-MM-dd"),
+            ['date', 'query'],
+            filterGroups,
+            true
+          );
+          rows.push(...chunkRows);
+          cursor = addDays(chunkEnd, 1);
+        }
+
+        return rows.map((row: any) => {
+          const date = row.keys?.[0];
+          const query = row.keys?.[1];
+          if (typeof date !== "string" || typeof query !== "string") return null;
+          return {
+            keys: [date],
+            query,
+            queryCount: 1,
+          };
+        }).filter(Boolean);
+      };
+
+      const fetchPreferredQueryRows = async (start: string, end: string) => {
+        if (!hasQueryMetric) return [];
+
+        if (userProfile?.googleConnected) {
+          try {
+            return await fetchLiveQueryCounts(start, end);
+          } catch (err) {
+            console.warn("Live page query-count fetch failed; falling back to warehouse query detail.", err);
+          }
+        }
+
+        return fetchWarehouseQueryRows(start, end);
+      };
+
+      const shouldPreferLiveDrilldown = Boolean(filterDimension && filterValue && userProfile?.googleConnected);
+      const fetchPrimaryMetricRows = (start: string, end: string) => {
+        if (useLiveData || shouldPreferLiveDrilldown) {
+          // Exact drilldowns are bounded to one row per day, so live GSC is safer
+          // than potentially capped/stale warehouse detail for a selected query/page.
+          return gscService.querySearchAnalytics(siteUrl, start, end, ['date'], filterGroups, true);
+        }
+
+        return fetchWarehouseData(start, end);
+      };
+
+      const fetchPreferredMetricRows = async (start: string, end: string) => {
+        if (!shouldPreferLiveDrilldown) {
+          return fetchPrimaryMetricRows(start, end);
+        }
+
+        try {
+          return await fetchPrimaryMetricRows(start, end);
+        } catch (err) {
+          console.warn("Live exact GSC drilldown failed; falling back to warehouse metrics.", err);
+          return fetchWarehouseData(start, end);
+        }
+      };
+
+      const primaryPromise = fetchPreferredMetricRows(startDate, endDate)
+      const primaryQueryCountPromise = fetchPreferredQueryRows(startDate, endDate)
 
       const comparePromise =
         isCompareMode && compareDateRange?.from && compareDateRange?.to
           ? (() => {
               const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
               const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
-              return useLiveData
-                ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['date'], filterGroups)
-                : fetchWarehouseData(compareStartDate, compareEndDate)
+              return fetchPreferredMetricRows(compareStartDate, compareEndDate)
             })()
           : null
+      const compareQueryCountPromise =
+        hasQueryMetric && isCompareMode && compareDateRange?.from && compareDateRange?.to
+          ? fetchPreferredQueryRows(format(compareDateRange.from, 'yyyy-MM-dd'), format(compareDateRange.to, 'yyyy-MM-dd'))
+          : Promise.resolve([])
 
       primaryPromise
         .then(async (primaryRows) => {
-          setRawData(primaryRows)
+          const primaryQueryRows = await primaryQueryCountPromise.catch((err) => {
+            console.warn("Failed to fetch query counts for GSC overview; continuing without the query metric.", err);
+            return [];
+          });
+          setRawData(mergeQueryCounts(primaryRows, primaryQueryRows))
           setError(null)
 
           if (!comparePromise) {
@@ -175,7 +376,12 @@ export function Overview({
             return
           }
 
-          setCompareRawData(compareResult.compareRows)
+          const compareQueryRows = await compareQueryCountPromise.catch((err) => {
+            console.warn("Failed to fetch compare query counts for GSC overview; continuing without compare query counts.", err);
+            return [];
+          });
+
+          setCompareRawData(mergeQueryCounts(compareResult.compareRows, compareQueryRows))
         })
         .catch(err => {
           const friendlyMessage = getFriendlyOverviewError(err.message)
@@ -188,28 +394,32 @@ export function Overview({
           setLoading(false)
         })
     }
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected, userProfile?.tier, useLiveData])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
     if (!rawData.length || !dateRange?.from || !dateRange?.to) {
-      return { chartData: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 }, compareSummary: null };
+      return { chartData: [], summary: { clicks: 0, impressions: 0, ctr: 0, queries: 0, position: 0 }, compareSummary: null };
     }
 
     // Sort ascending by date
-    const sortedRows = [...rawData].sort((a, b) => a.keys[0].localeCompare(b.keys[0]));
-    const sortedCompareRows = [...compareRawData].sort((a, b) => a.keys[0].localeCompare(b.keys[0]));
+    const sortedRows = rawData.filter(getDateKey).sort((a, b) => getDateKey(a).localeCompare(getDateKey(b)));
+    const sortedCompareRows = compareRawData.filter(getDateKey).sort((a, b) => getDateKey(a).localeCompare(getDateKey(b)));
 
     const aggregatedData = new Map<string, { 
-      clicks: number, impressions: number, sumPosition: number, count: number,
-      compareClicks?: number, compareImpressions?: number, compareSumPosition?: number, compareCount?: number
+      clicks: number, impressions: number, queries: number, querySet: Set<string>, sumPosition: number, count: number,
+      compareClicks?: number, compareImpressions?: number, compareQueries?: number, compareQuerySet?: Set<string>, compareSumPosition?: number, compareCount?: number
     }>();
 
     let totalClicks = 0;
     let totalImpressions = 0;
+    let totalQueries = 0;
+    const totalQuerySet = new Set<string>();
     let sumPositionTotal = 0;
 
     let compareTotalClicks = 0;
     let compareTotalImpressions = 0;
+    let compareTotalQueries = 0;
+    const compareTotalQuerySet = new Set<string>();
     let compareSumPositionTotal = 0;
 
     // Use exact daily boundaries from the date picker to avoid timezone shifting
@@ -227,48 +437,76 @@ export function Overview({
     
     const keysArray: string[] = [];
 
-    // Initialize all chart buckets so there are no visual gaps
-    allPrimaryDates.forEach(date => {
-      let key = '';
-      if (timeframe === 'Day') {
-        key = format(date, 'MMM d, yyyy');
-      } else if (timeframe === 'Week') {
-        key = format(startOfWeek(date), 'MMM d, yyyy');
-      } else if (timeframe === 'Month') {
-        key = format(startOfMonth(date), 'MMM yyyy');
-      }
-      keysArray.push(key);
+    const getBucketKey = (date: Date) => {
+      if (timeframe === 'Day') return format(date, 'MMM d, yyyy');
+      if (timeframe === 'Week') return format(startOfWeek(date), 'MMM d, yyyy');
+      return format(startOfMonth(date), 'MMM yyyy');
+    };
 
+    const ensureBucket = (key: string) => {
       if (!aggregatedData.has(key)) {
-        aggregatedData.set(key, { clicks: 0, impressions: 0, sumPosition: 0, count: 0, compareClicks: 0, compareImpressions: 0, compareSumPosition: 0, compareCount: 0 });
+        aggregatedData.set(key, {
+          clicks: 0,
+          impressions: 0,
+          queries: 0,
+          querySet: new Set<string>(),
+          sumPosition: 0,
+          count: 0,
+          compareClicks: 0,
+          compareImpressions: 0,
+          compareQueries: 0,
+          compareQuerySet: new Set<string>(),
+          compareSumPosition: 0,
+          compareCount: 0,
+        });
+        keysArray.push(key);
       }
+
+      return aggregatedData.get(key);
+    };
+
+    // Daily charts benefit from visible zero days. Weekly/monthly charts should not
+    // manufacture empty edge buckets, because that creates false drops to zero.
+    allPrimaryDates.forEach(date => {
+      if (timeframe === 'Day') ensureBucket(getBucketKey(date));
     });
 
     // Process primary data
     sortedRows.forEach((row) => {
-      const date = parseISO(row.keys[0]);
-      let key = '';
-      
-      if (timeframe === 'Day') {
-        key = format(date, 'MMM d, yyyy');
-      } else if (timeframe === 'Week') {
-        key = format(startOfWeek(date), 'MMM d, yyyy');
-      } else if (timeframe === 'Month') {
-        key = format(startOfMonth(date), 'MMM yyyy');
-      }
+      const rowDate = getDateKey(row);
+      if (!rowDate) return;
 
-      // If outside bounds, skip buckets but add to totals
-      const current = aggregatedData.get(key);
+      const date = parseISO(rowDate);
+      const key = getBucketKey(date);
+      const queryKeys = Array.isArray(row.queryKeys) ? row.queryKeys.filter(Boolean) : [];
+
+      const current = ensureBucket(key);
       if (current) {
-        current.clicks += row.clicks;
-        current.impressions += row.impressions;
-        current.sumPosition += (row.position * row.impressions);
+        const clicks = toFiniteNumber(row.clicks);
+        const impressions = toFiniteNumber(row.impressions);
+        const position = toFiniteNumber(row.position);
+        current.clicks += clicks;
+        current.impressions += impressions;
+        if (queryKeys.length > 0) {
+          queryKeys.forEach((query: string) => current.querySet.add(query));
+        } else {
+          current.queries += Number(row.queryCount) || 0;
+        }
+        current.sumPosition += (position * impressions);
         current.count += 1;
       }
 
-      totalClicks += row.clicks;
-      totalImpressions += row.impressions;
-      sumPositionTotal += (row.position * row.impressions);
+      const clicks = toFiniteNumber(row.clicks);
+      const impressions = toFiniteNumber(row.impressions);
+      const position = toFiniteNumber(row.position);
+      totalClicks += clicks;
+      totalImpressions += impressions;
+      if (queryKeys.length > 0) {
+        queryKeys.forEach((query: string) => totalQuerySet.add(query));
+      } else {
+        totalQueries += Number(row.queryCount) || 0;
+      }
+      sumPositionTotal += (position * impressions);
     });
 
     // Process compare data and align by precise logical day offset
@@ -276,25 +514,48 @@ export function Overview({
       const startCompareExact = parseISO(format(compareDateRange.from, 'yyyy-MM-dd'));
       
       sortedCompareRows.forEach((row) => {
-        const date = parseISO(row.keys[0]);
+        const rowDate = getDateKey(row);
+        if (!rowDate) return;
+
+        const date = parseISO(rowDate);
         // Difference measured in whole days
         const offset = Math.round((date.getTime() - startCompareExact.getTime()) / (24 * 60 * 60 * 1000));
         
         // If the offset falls cleanly into our chart array length, match it up
         if (offset >= 0 && offset < keysArray.length) {
-          const key = keysArray[offset];
+          const targetDate = new Date(startPrimaryExact.getTime() + offset * 24 * 60 * 60 * 1000);
+          const key = getBucketKey(targetDate);
           const current = aggregatedData.get(key);
           if (current) {
-            current.compareClicks = (current.compareClicks || 0) + row.clicks;
-            current.compareImpressions = (current.compareImpressions || 0) + row.impressions;
-            current.compareSumPosition = (current.compareSumPosition || 0) + (row.position * row.impressions);
+            const queryKeys = Array.isArray(row.queryKeys) ? row.queryKeys.filter(Boolean) : [];
+            const clicks = toFiniteNumber(row.clicks);
+            const impressions = toFiniteNumber(row.impressions);
+            const position = toFiniteNumber(row.position);
+            current.compareClicks = (current.compareClicks || 0) + clicks;
+            current.compareImpressions = (current.compareImpressions || 0) + impressions;
+            if (queryKeys.length > 0) {
+              if (!current.compareQuerySet) current.compareQuerySet = new Set<string>();
+              queryKeys.forEach((query: string) => current.compareQuerySet?.add(query));
+            } else {
+              current.compareQueries = (current.compareQueries || 0) + (Number(row.queryCount) || 0);
+            }
+            current.compareSumPosition = (current.compareSumPosition || 0) + (position * impressions);
             current.compareCount = (current.compareCount || 0) + 1;
           }
         }
 
-        compareTotalClicks += row.clicks;
-        compareTotalImpressions += row.impressions;
-        compareSumPositionTotal += (row.position * row.impressions);
+        const clicks = toFiniteNumber(row.clicks);
+        const impressions = toFiniteNumber(row.impressions);
+        const position = toFiniteNumber(row.position);
+        compareTotalClicks += clicks;
+        compareTotalImpressions += impressions;
+        const queryKeys = Array.isArray(row.queryKeys) ? row.queryKeys.filter(Boolean) : [];
+        if (queryKeys.length > 0) {
+          queryKeys.forEach((query: string) => compareTotalQuerySet.add(query));
+        } else {
+          compareTotalQueries += Number(row.queryCount) || 0;
+        }
+        compareSumPositionTotal += (position * impressions);
       });
     }
 
@@ -303,11 +564,13 @@ export function Overview({
       clicks: data.clicks,
       impressions: data.impressions,
       ctr: data.impressions > 0 ? (data.clicks / data.impressions) * 100 : 0,
+      queries: data.querySet.size > 0 ? data.querySet.size : data.queries,
       position: data.impressions > 0 ? data.sumPosition / data.impressions : 0,
       ...(isCompareMode ? {
         compareClicks: data.compareClicks || 0,
         compareImpressions: data.compareImpressions || 0,
         compareCtr: data.compareImpressions && data.compareImpressions > 0 ? ((data.compareClicks || 0) / data.compareImpressions) * 100 : 0,
+        compareQueries: data.compareQuerySet && data.compareQuerySet.size > 0 ? data.compareQuerySet.size : data.compareQueries || 0,
         comparePosition: data.compareImpressions && data.compareImpressions > 0 ? (data.compareSumPosition || 0) / data.compareImpressions : 0,
       } : {})
     }));
@@ -318,18 +581,20 @@ export function Overview({
         clicks: totalClicks,
         impressions: totalImpressions,
         ctr: totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0,
+        queries: totalQuerySet.size > 0 ? totalQuerySet.size : totalQueries,
         position: totalImpressions > 0 ? sumPositionTotal / totalImpressions : 0
       },
       compareSummary: isCompareMode ? {
         clicks: compareTotalClicks,
         impressions: compareTotalImpressions,
         ctr: compareTotalImpressions > 0 ? (compareTotalClicks / compareTotalImpressions) * 100 : 0,
+        queries: compareTotalQuerySet.size > 0 ? compareTotalQuerySet.size : compareTotalQueries,
         position: compareTotalImpressions > 0 ? compareSumPositionTotal / compareTotalImpressions : 0
       } : null
     };
   }, [rawData, compareRawData, timeframe, isCompareMode, dateRange, compareDateRange]);
 
-  const toggleMetric = (metric: keyof typeof activeMetrics) => {
+  const toggleMetric = (metric: MetricKey) => {
     setActiveMetrics(prev => ({
       ...prev,
       [metric]: !prev[metric]
@@ -339,7 +604,7 @@ export function Overview({
   const exportChartCsv = () => {
     if (chartData.length === 0) return;
 
-    const headers = ["date", "clicks", "impressions", "ctr", "position"];
+    const headers = ["date", "clicks", "impressions", "ctr", "queries", "position"];
     const csvRows = chartData.map((row) =>
       headers.map((header) => {
         const value = row[header as keyof typeof row] ?? "";
@@ -359,9 +624,12 @@ export function Overview({
     document.getElementById("gsc-data-grid")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const activeMetricsList = (['clicks', 'impressions', 'ctr', 'position'] as const).filter(m => activeMetrics[m]);
+  const metricOrder = (hasQueryMetric
+    ? ['clicks', 'impressions', 'ctr', 'queries', 'position']
+    : ['clicks', 'impressions', 'ctr', 'position']) as MetricKey[];
+  const activeMetricsList = metricOrder.filter(m => activeMetrics[m]);
 
-  const getAxisProps = (metric: 'clicks' | 'impressions' | 'ctr' | 'position') => {
+  const getAxisProps = (metric: MetricKey) => {
     const index = activeMetricsList.indexOf(metric);
     const isRight = index === 1;
     return {
@@ -398,7 +666,7 @@ export function Overview({
     };
   };
 
-  const getMetricSeries = (metric: keyof typeof activeMetrics) => chartData.map((point) => Number(point[metric]) || 0);
+  const getMetricSeries = (metric: MetricKey) => chartData.map((point) => Number(point[metric]) || 0);
 
   const buildSparklinePath = (values: number[]) => {
     if (values.length < 2) return { line: "", area: "" };
@@ -422,7 +690,7 @@ export function Overview({
     };
   };
 
-  const miniSparkline = (metric: keyof typeof activeMetrics, color: string) => {
+  const miniSparkline = (metric: MetricKey, color: string) => {
     const { line, area } = buildSparklinePath(getMetricSeries(metric));
     if (!line) {
       return <div className="h-10 w-24 rounded-lg bg-[#F8FAF9]" />;
@@ -436,6 +704,9 @@ export function Overview({
     );
   };
 
+  const selectedDayCount = dateRange?.from && dateRange?.to
+    ? Math.max(1, differenceInCalendarDays(dateRange.to, dateRange.from) + 1)
+    : Math.max(1, chartData.length);
   const formatRate = (value: number) => `${formatCompactNumber(value)}/day`;
 
   const formatCompareRange = () => {
@@ -454,7 +725,7 @@ export function Overview({
       title: "Total Clicks",
       value: formatCompactNumber(summary.clicks),
       color: colors.clicks,
-      suffix: formatRate(summary.clicks / Math.max(1, chartData.length)),
+      suffix: formatRate(summary.clicks / selectedDayCount),
       change: compareSummary ? getChange(summary.clicks, compareSummary.clicks) : null,
     },
     {
@@ -462,7 +733,7 @@ export function Overview({
       title: "Total Impressions",
       value: formatCompactNumber(summary.impressions),
       color: colors.impressions,
-      suffix: formatRate(summary.impressions / Math.max(1, chartData.length)),
+      suffix: formatRate(summary.impressions / selectedDayCount),
       change: compareSummary ? getChange(summary.impressions, compareSummary.impressions) : null,
     },
     {
@@ -473,6 +744,14 @@ export function Overview({
       suffix: compareSummary ? `vs ${compareSummary.ctr.toFixed(1)}%` : `${summary.ctr.toFixed(1)}%`,
       change: compareSummary ? getChange(summary.ctr, compareSummary.ctr) : null,
     },
+    ...(hasQueryMetric ? [{
+      key: "queries" as const,
+      title: "Visible Queries",
+      value: formatCompactNumber(summary.queries),
+      color: colors.queries,
+      suffix: formatRate(summary.queries / selectedDayCount),
+      change: compareSummary ? getChange(summary.queries, compareSummary.queries) : null,
+    }] : []),
     {
       key: "position" as const,
       title: "Average Position",
@@ -502,6 +781,28 @@ export function Overview({
   };
 
   const visibleAnnotations = getVisibleAnnotations();
+  const annotationOffsets = useMemo(() => {
+    const offsets = new Map<string, number>();
+    const sorted = [...visibleAnnotations].sort((a, b) => a.date.localeCompare(b.date));
+    const recentDates: string[] = [];
+
+    sorted.forEach((annotation) => {
+      const date = annotation.date;
+      const nearbyCount = recentDates.filter((existingDate) => {
+        try {
+          return Math.abs(differenceInCalendarDays(parseISO(date), parseISO(existingDate))) <= 4;
+        } catch {
+          return existingDate === date;
+        }
+      }).length;
+
+      offsets.set(annotation.id, nearbyCount % 4);
+      recentDates.push(date);
+      if (recentDates.length > 8) recentDates.shift();
+    });
+
+    return offsets;
+  }, [visibleAnnotations]);
 
   const getPrimaryAxisId = () => activeMetricsList[0] || "clicks";
 
@@ -527,7 +828,7 @@ export function Overview({
           {error}
         </div>
       )}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className={cn("grid gap-4 md:grid-cols-2", hasQueryMetric ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
         {metricCards.map((metric) => (
           <button
             key={metric.key}
@@ -639,6 +940,10 @@ export function Overview({
                       <stop offset="5%" stopColor={colors.ctr} stopOpacity={0.1}/>
                       <stop offset="95%" stopColor={colors.ctr} stopOpacity={0}/>
                     </linearGradient>
+                    <linearGradient id="color_queries" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.queries} stopOpacity={0.14}/>
+                      <stop offset="95%" stopColor={colors.queries} stopOpacity={0}/>
+                    </linearGradient>
                     <linearGradient id="color_position" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={colors.position} stopOpacity={0.1}/>
                       <stop offset="95%" stopColor={colors.position} stopOpacity={0}/>
@@ -745,6 +1050,34 @@ export function Overview({
                       )}
                     </>
                   )}
+                  {hasQueryMetric && activeMetrics.queries && (
+                    <>
+                      <Area
+                        yAxisId="queries"
+                        type="monotone"
+                        dataKey="queries"
+                        name="Visible Queries"
+                        stroke={colors.queries}
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#color_queries)"
+                        activeDot={{ r: 6 }}
+                      />
+                      {isCompareMode && (
+                        <Line
+                          yAxisId="queries"
+                          type="monotone"
+                          dataKey="compareQueries"
+                          name="Compare Visible Queries"
+                          stroke={colors.queries}
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                          activeDot={{ r: 4 }}
+                        />
+                      )}
+                    </>
+                  )}
                   {activeMetrics.position && (
                     <>
                       <Area
@@ -818,6 +1151,20 @@ export function Overview({
                       tick={<CustomYAxisTick fill={colors.ctr} formatter={(v: number) => `${v.toFixed(1)}%`} />}
                     />
                   )}
+                  {hasQueryMetric && activeMetrics.queries && (
+                    <YAxis
+                      yAxisId="queries"
+                      orientation={getAxisProps('queries').orientation}
+                      mirror={getAxisProps('queries').mirror}
+                      hide={getAxisProps('queries').hide}
+                      tickFormatter={formatCompactNumber}
+                      axisLine={false}
+                      tickLine={false}
+                      tickCount={5}
+                      domain={[0, 'auto']}
+                      tick={<CustomYAxisTick fill={colors.queries} formatter={formatCompactNumber} />}
+                    />
+                  )}
                   {activeMetrics.position && (
                     <YAxis
                       yAxisId="position"
@@ -843,13 +1190,13 @@ export function Overview({
                       strokeDasharray="4 4"
                       strokeWidth={2}
                       ifOverflow="extendDomain"
-                      label={{
-                        position: 'insideTopLeft',
-                        value: ann.type === 'system' ? 'Google update' : ann.title,
-                        fill: ann.type === 'system' ? '#0F3D2E' : '#7C3AED',
-                        fontSize: 11,
-                        fontWeight: 700,
-                      }}
+                      label={
+                        <AnnotationReferenceLabel
+                          annotation={ann}
+                          fill={ann.type === 'system' ? '#0F3D2E' : '#7C3AED'}
+                          offsetIndex={annotationOffsets.get(ann.id) || 0}
+                        />
+                      }
                     />
                   ))}
 
@@ -859,6 +1206,7 @@ export function Overview({
                     formatter={(value: number, name: string) => {
                       if (name === 'CTR') return [`${value.toFixed(2)}%`, name];
                       if (name === 'Position') return [value.toFixed(1), name];
+                      if (name === 'Visible Queries') return [value.toLocaleString(), name];
                       return [value.toLocaleString(), name];
                     }}
                   />

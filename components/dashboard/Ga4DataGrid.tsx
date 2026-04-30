@@ -27,6 +27,11 @@ type ExtendedGa4DataRow = Ga4DataRow & {
   compareMetricValues?: { value: string }[];
 };
 
+const getGa4DimensionValue = (row: any, index = 0) => {
+  const value = row?.dimensionValues?.[index]?.value;
+  return typeof value === "string" ? value : "";
+};
+
 export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'] }: Ga4DataGridProps) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<ExtendedGa4DataRow[]>([])
@@ -44,10 +49,10 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   const [pageIndex, setPageIndex] = useState(0)
   const pageSize = 100
 
-  // Reset selected row when props change
+  // Keep an opened historic trend visible while users adjust date and compare controls.
   useEffect(() => {
     setSelectedRowKey(null)
-  }, [siteUrl, dimension, dateRange, isCompareMode, compareDateRange])
+  }, [siteUrl, dimension])
 
   useEffect(() => {
     if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
@@ -85,18 +90,18 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
         }
         
         const results = await Promise.all(promises);
-        const primaryRows = results[0].rows || [];
+        const primaryRows = (results[0].rows || []).filter((row: any) => getGa4DimensionValue(row));
 
         if (!isCompareMode || !results[1]) {
            setData(primaryRows);
         } else {
-           const compareRows = results[1].rows || [];
+           const compareRows = (results[1].rows || []).filter((row: any) => getGa4DimensionValue(row));
            let mergedData = [];
            
            if (dimension === 'date') {
              // For dates, map by index after sorting chronologically, so day 1 matches compare day 1
-             const sortedPrimary = [...primaryRows].sort((a: any, b: any) => a.dimensionValues[0].value.localeCompare(b.dimensionValues[0].value));
-             const sortedCompare = [...compareRows].sort((a: any, b: any) => a.dimensionValues[0].value.localeCompare(b.dimensionValues[0].value));
+             const sortedPrimary = [...primaryRows].sort((a: any, b: any) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)));
+             const sortedCompare = [...compareRows].sort((a: any, b: any) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)));
              
              mergedData = sortedPrimary.map((row: any, index: number) => {
                const compareRow = sortedCompare[index];
@@ -106,10 +111,10 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                };
              });
            } else {
-             const compareMap = new Map(compareRows.map((row: any) => [row.dimensionValues[0].value, row]));
+             const compareMap = new Map(compareRows.map((row: any) => [getGa4DimensionValue(row), row]));
              
              mergedData = primaryRows.map((row: any) => {
-               const compareRow: any = compareMap.get(row.dimensionValues[0].value);
+               const compareRow: any = compareMap.get(getGa4DimensionValue(row));
                return {
                  ...row,
                  compareMetricValues: compareRow ? compareRow.metricValues : undefined
@@ -157,8 +162,8 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
       let bVal: any;
 
       if (sortColumn === 'dimension') {
-        aVal = a.dimensionValues[0].value;
-        bVal = b.dimensionValues[0].value;
+        aVal = getGa4DimensionValue(a);
+        bVal = getGa4DimensionValue(b);
       } else {
         let metricName = "";
         if (sortColumn === 'sessions') metricName = 'sessions';
@@ -187,22 +192,22 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   }, [data, sortColumn, sortDirection]);
 
   const pieData = useMemo(() => {
-    if (dimension === 'date' || dimension === 'pagePath' || sortedData.length === 0) return null;
+    if (dimension === 'date' || dimension === 'pagePath' || dimension === 'sessionSourceMedium' || sortedData.length === 0) return null;
     
     // Hide the generic pie charts if dimension is one of the demographics (since we have Ga4Demographics)
     const demographicDimensions = ['country', 'city', 'region', 'deviceCategory', 'browser', 'operatingSystem'];
     if (demographicDimensions.includes(dimension!)) return null;
     
-    const sessionsSorted = [...data].sort((a, b) => parseFloat(b.metricValues[0].value) - parseFloat(a.metricValues[0].value));
+    const sessionsSorted = [...data].sort((a, b) => parseFloat(b.metricValues?.[0]?.value || "0") - parseFloat(a.metricValues?.[0]?.value || "0"));
     
     const topSessions = sessionsSorted.slice(0, 5).map(item => ({
-      name: item.dimensionValues[0].value.replace(siteUrl, '') || item.dimensionValues[0].value,
-      value: parseInt(item.metricValues[0].value)
+      name: getGa4DimensionValue(item).replace(siteUrl, '') || getGa4DimensionValue(item),
+      value: parseInt(item.metricValues?.[0]?.value || "0")
     }));
     
     const topUsers = sessionsSorted.slice(0, 5).map(item => ({
-      name: item.dimensionValues[0].value.replace(siteUrl, '') || item.dimensionValues[0].value,
-      value: parseInt(item.metricValues[1].value)
+      name: getGa4DimensionValue(item).replace(siteUrl, '') || getGa4DimensionValue(item),
+      value: parseInt(item.metricValues?.[1]?.value || "0")
     }));
 
     return { sessions: topSessions, users: topUsers };
@@ -436,7 +441,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                 </TableRow>
               ) : (
                 currentData.map((row, i) => {
-                  const dimStr = row.dimensionValues[0].value;
+                  const dimStr = getGa4DimensionValue(row);
                   let formattedDim = dimStr;
                   if (dimension === 'date' && dimStr.length === 8) {
                     formattedDim = format(new Date(parseInt(dimStr.substring(0, 4)), parseInt(dimStr.substring(4, 6)) - 1, parseInt(dimStr.substring(6, 8))), 'MMM d, yyyy');

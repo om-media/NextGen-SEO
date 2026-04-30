@@ -2,6 +2,10 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { WarehouseSync } from "@/components/dashboard/WarehouseSync";
+import { authFetch } from "@/src/lib/authFetch";
+import { format, parseISO } from "date-fns";
+import { CheckCircle2, Clock3 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { DateRange } from "react-day-picker";
 
 type DataSource = "gsc" | "bing" | "ga4";
@@ -17,10 +21,9 @@ type AppToolbarProps = {
   onCompareFromDateChange: (date: Date | undefined) => void;
   onCompareToDateChange: (date: Date | undefined) => void;
   onFromDateChange: (date: Date | undefined) => void;
+  onGscSyncComplete?: () => void;
   onToDateChange: (date: Date | undefined) => void;
   setIsCompareMode: (value: boolean) => void;
-  setUseLiveData: (value: boolean) => void;
-  useLiveData: boolean;
 };
 
 export function AppToolbar({
@@ -34,13 +37,13 @@ export function AppToolbar({
   onCompareFromDateChange,
   onCompareToDateChange,
   onFromDateChange,
+  onGscSyncComplete,
   onToDateChange,
   setIsCompareMode,
-  setUseLiveData,
-  useLiveData,
 }: AppToolbarProps) {
   const sectionCopy = getSectionCopy(activeMenu, dataSource);
   const showDataControls = activeMenu !== "Settings" && activeMenu !== "AI Content Auditor";
+  const [syncRefreshKey, setSyncRefreshKey] = useState(0);
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-[#E6ECE8] bg-white px-5 py-4 shadow-[0_12px_36px_rgba(15,61,46,0.04)] sm:px-6">
@@ -67,14 +70,15 @@ export function AppToolbar({
           {dataSource === "gsc" && (
             <>
               <div className="[&>button]:h-9 [&>button]:rounded-xl [&>button]:border-[#E6ECE8] [&>button]:shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-                <WarehouseSync siteUrl={currentSiteUrl} />
+                <WarehouseSync
+                  siteUrl={currentSiteUrl}
+                  onSyncComplete={() => {
+                    setSyncRefreshKey((key) => key + 1);
+                    onGscSyncComplete?.();
+                  }}
+                />
               </div>
-              <div className="flex h-9 items-center gap-2 rounded-xl border border-[#E6ECE8] bg-white px-3 shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-                <Switch id="warehouse-mode" checked={useLiveData} onCheckedChange={setUseLiveData} />
-                <Label htmlFor="warehouse-mode" className="text-sm font-medium cursor-pointer whitespace-nowrap">
-                  Live Data
-                </Label>
-              </div>
+              <GscSyncStatusBadge refreshKey={syncRefreshKey} siteUrl={currentSiteUrl} />
             </>
           )}
           <div className="flex h-9 items-center gap-2 rounded-xl border border-[#E6ECE8] bg-white px-3 shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
@@ -111,6 +115,65 @@ export function AppToolbar({
         </div>
       )}
       </div>
+    </div>
+  );
+}
+
+function GscSyncStatusBadge({ refreshKey, siteUrl }: { refreshKey: number; siteUrl: string }) {
+  const [lastMetricDate, setLastMetricDate] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!siteUrl) {
+      setLastMetricDate(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    authFetch(`/api/warehouse/status?siteUrl=${encodeURIComponent(siteUrl)}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Failed to load sync status");
+        }
+        return response.json();
+      })
+      .then((status) => {
+        if (!cancelled) {
+          setLastMetricDate(status.lastMetricDate || null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLastMetricDate(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey, siteUrl]);
+
+  const label = loading
+    ? "Checking sync"
+    : lastMetricDate
+      ? `Synced through ${format(parseISO(lastMetricDate), "MMM d")}`
+      : "Not synced yet";
+
+  return (
+    <div className="flex h-9 items-center gap-2 rounded-xl border border-[#E6ECE8] bg-white px-3 text-sm font-medium text-[#647067] shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
+      {lastMetricDate ? (
+        <CheckCircle2 className="h-4 w-4 text-[#0F3D2E]" />
+      ) : (
+        <Clock3 className="h-4 w-4 text-amber-600" />
+      )}
+      <span className="whitespace-nowrap">{label}</span>
     </div>
   );
 }

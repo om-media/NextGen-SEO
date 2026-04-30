@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import { isNonEmptyString } from '../validation.js';
 import { getBillingConfig, updateUserBillingState, updateUserBillingStateByEmail, type BillingStatus } from '../services/billing.js';
@@ -18,7 +18,7 @@ function getCheckoutUrl(targetPlan: string) {
 
 const allowedBillingStatuses = new Set<BillingStatus>(['trialing', 'active', 'past_due', 'canceled', 'incomplete']);
 
-export function registerBillingRoutes(app: Express, db: Database.Database) {
+export function registerBillingRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
   app.get('/api/billing/config', authRequired, (_req, res) => {
     return res.json(getBillingConfig());
@@ -52,7 +52,7 @@ export function registerBillingRoutes(app: Express, db: Database.Database) {
     return res.json({ url });
   });
 
-  app.post('/api/billing/webhook', (req, res) => {
+  app.post('/api/billing/webhook', async (req, res) => {
     const configuredSecret = process.env.BILLING_WEBHOOK_SECRET;
     if (!configuredSecret) {
       return res.status(501).json({ error: 'Billing webhook is not configured yet.' });
@@ -90,11 +90,11 @@ export function registerBillingRoutes(app: Express, db: Database.Database) {
 
     try {
       if (isNonEmptyString(userId)) {
-        updateUserBillingState(db, userId, update);
+        await updateUserBillingState(db, userId, update);
         return res.json({ success: true, matchedBy: 'userId' });
       }
 
-      const updated = updateUserBillingStateByEmail(db, email, update);
+      const updated = await updateUserBillingStateByEmail(db, email, update);
       if (!updated) {
         return res.status(404).json({ error: 'No matching user found for billing webhook' });
       }

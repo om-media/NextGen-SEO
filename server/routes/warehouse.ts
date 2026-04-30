@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import {
@@ -9,118 +9,204 @@ import {
   isValidWarehouseDimensions,
   validateDimensionFilterGroups,
 } from '../validation.js';
+import { canonicalPageKey } from '../reporting/url.js';
 
-export function registerWarehouseRoutes(app: Express, db: Database.Database) {
+export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
+  const toFiniteNumber = (value: unknown) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  };
 
-  app.post('/api/warehouse/ingest/site', authRequired, (req: AuthedRequest, res) => {
+  const getReplaceDates = (value: unknown) => {
+    if (!Array.isArray(value)) return [];
+    return value.filter((date): date is string => typeof date === 'string' && isIsoDateString(date));
+  };
+
+  app.post('/api/warehouse/ingest/site', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, rows } = req.body;
     if (!isNonEmptyString(siteUrl) || !hasValidMetricRows(rows, 1)) return res.status(400).json({ error: 'Invalid payload' });
     try {
-      const stmt = db.prepare(`
-        INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(ownerId, siteUrl, date) DO UPDATE SET
-          clicks=excluded.clicks,
-          impressions=excluded.impressions,
-          ctr=excluded.ctr,
-          position=excluded.position
-      `);
-      const insertMany = db.transaction((metrics: any[]) => {
+      const insertMany = db.transaction(async (metrics: any[]) => {
         for (const row of metrics) {
           const date = row.keys[0];
-          stmt.run(ownerId, siteUrl, date, row.clicks, row.impressions, row.ctr, row.position);
+          await db.run(`
+            INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ownerId, siteUrl, date) DO UPDATE SET
+              clicks=excluded.clicks,
+              impressions=excluded.impressions,
+              ctr=excluded.ctr,
+              position=excluded.position
+          `, [ownerId, siteUrl, date, row.clicks, row.impressions, row.ctr, row.position]);
         }
       });
-      insertMany(rows);
+      await insertMany(rows);
       res.json({ success: true, count: rows.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post('/api/warehouse/ingest/query', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/ingest/query', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
-    const { siteUrl, rows } = req.body;
-    if (!isNonEmptyString(siteUrl) || !hasValidMetricRows(rows, 2)) return res.status(400).json({ error: 'Invalid payload' });
+    const { siteUrl, rows, replaceDates } = req.body;
+    const datesToReplace = getReplaceDates(replaceDates);
+    if (!isNonEmptyString(siteUrl) || (!hasValidMetricRows(rows, 2) && datesToReplace.length === 0)) return res.status(400).json({ error: 'Invalid payload' });
+    if (replaceDates !== undefined && datesToReplace.length !== replaceDates.length) return res.status(400).json({ error: 'Invalid replaceDates' });
     try {
-      const stmt = db.prepare(`
-        INSERT INTO gsc_query_metrics (ownerId, siteUrl, date, query, clicks, impressions, ctr, position)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(ownerId, siteUrl, date, query) DO UPDATE SET
-          clicks=excluded.clicks,
-          impressions=excluded.impressions,
-          ctr=excluded.ctr,
-          position=excluded.position
-      `);
-      const insertMany = db.transaction((metrics: any[]) => {
+      const insertMany = db.transaction(async (metrics: any[]) => {
+        for (const date of datesToReplace) {
+          await db.run('DELETE FROM gsc_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [ownerId, siteUrl, date]);
+        }
         for (const row of metrics) {
           const date = row.keys[0];
           const query = row.keys[1] || '';
-          stmt.run(ownerId, siteUrl, date, query, row.clicks, row.impressions, row.ctr, row.position);
+          await db.run(`
+            INSERT INTO gsc_query_metrics (ownerId, siteUrl, date, query, clicks, impressions, ctr, position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ownerId, siteUrl, date, query) DO UPDATE SET
+              clicks=excluded.clicks,
+              impressions=excluded.impressions,
+              ctr=excluded.ctr,
+              position=excluded.position
+          `, [ownerId, siteUrl, date, query, row.clicks, row.impressions, row.ctr, row.position]);
         }
       });
-      insertMany(rows);
-      res.json({ success: true, count: rows.length });
+      const rowsToInsert = Array.isArray(rows) ? rows : [];
+      await insertMany(rowsToInsert);
+      res.json({ success: true, count: rowsToInsert.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post('/api/warehouse/ingest/page_query', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/ingest/page_query', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
-    const { siteUrl, rows } = req.body;
-    if (!isNonEmptyString(siteUrl) || !hasValidMetricRows(rows, 3)) return res.status(400).json({ error: 'Invalid payload' });
+    const { siteUrl, rows, replaceDates } = req.body;
+    const datesToReplace = getReplaceDates(replaceDates);
+    if (!isNonEmptyString(siteUrl) || (!hasValidMetricRows(rows, 3) && datesToReplace.length === 0)) return res.status(400).json({ error: 'Invalid payload' });
+    if (replaceDates !== undefined && datesToReplace.length !== replaceDates.length) return res.status(400).json({ error: 'Invalid replaceDates' });
     try {
-      const stmt = db.prepare(`
-        INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, query, clicks, impressions, ctr, position)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(ownerId, siteUrl, date, page, query) DO UPDATE SET
-          clicks=excluded.clicks,
-          impressions=excluded.impressions,
-          ctr=excluded.ctr,
-          position=excluded.position
-      `);
-      const insertMany = db.transaction((metrics: any[]) => {
+      const insertMany = db.transaction(async (metrics: any[]) => {
+        for (const date of datesToReplace) {
+          await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [ownerId, siteUrl, date]);
+        }
         for (const row of metrics) {
           const date = row.keys[0];
           const page = row.keys[1] || '';
           const query = row.keys[2] || '';
-          stmt.run(ownerId, siteUrl, date, page, query, row.clicks, row.impressions, row.ctr, row.position);
+          await db.run(`
+            INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, query, clicks, impressions, ctr, position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ownerId, siteUrl, date, page, query) DO UPDATE SET
+              clicks=excluded.clicks,
+              impressions=excluded.impressions,
+              ctr=excluded.ctr,
+              position=excluded.position
+          `, [ownerId, siteUrl, date, page, query, row.clicks, row.impressions, row.ctr, row.position]);
         }
       });
-      insertMany(rows);
-      res.json({ success: true, count: rows.length });
+      const rowsToInsert = Array.isArray(rows) ? rows : [];
+      await insertMany(rowsToInsert);
+      res.json({ success: true, count: rowsToInsert.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/warehouse/status', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/ingest/ga4-page', authRequired, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const { propertyId, siteUrl, rows, replaceDates } = req.body;
+    const datesToReplace = getReplaceDates(replaceDates);
+    if (!isNonEmptyString(propertyId) || !isNonEmptyString(siteUrl) || (!Array.isArray(rows) && datesToReplace.length === 0)) {
+      return res.status(400).json({ error: 'Invalid payload' });
+    }
+    if (replaceDates !== undefined && datesToReplace.length !== replaceDates.length) return res.status(400).json({ error: 'Invalid replaceDates' });
+
+    try {
+      const insertMany = db.transaction(async (metrics: any[]) => {
+        for (const date of datesToReplace) {
+          await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date = ?', [ownerId, propertyId, date]);
+        }
+        for (const row of metrics) {
+          const date = row.date || row.keys?.[0];
+          const pagePath = row.pagePath || row.keys?.[1];
+          if (!isIsoDateString(date) || !isNonEmptyString(pagePath)) continue;
+          const pageKey = canonicalPageKey(pagePath, siteUrl);
+          await db.run(`
+            INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
+              siteUrl=excluded.siteUrl,
+              pagePath=excluded.pagePath,
+              sessions=excluded.sessions,
+              totalUsers=excluded.totalUsers,
+              pageViews=excluded.pageViews,
+              bounceRate=excluded.bounceRate,
+              eventCount=excluded.eventCount
+          `, [
+            ownerId,
+            propertyId,
+            siteUrl,
+            date,
+            pagePath,
+            pageKey,
+            toFiniteNumber(row.sessions),
+            toFiniteNumber(row.totalUsers),
+            toFiniteNumber(row.pageViews),
+            toFiniteNumber(row.bounceRate),
+            toFiniteNumber(row.eventCount),
+          ]);
+        }
+      });
+      const rowsToInsert = Array.isArray(rows) ? rows : [];
+      await insertMany(rowsToInsert);
+      res.json({ success: true, count: rowsToInsert.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/warehouse/status', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const siteUrl = req.query.siteUrl;
     if (siteUrl !== undefined && !isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Invalid siteUrl' });
     try {
       if (siteUrl) {
-        const status = db.prepare('SELECT * FROM warehouse_sync_status WHERE ownerId = ? AND siteUrl = ?').get(ownerId, siteUrl);
-        res.json(status || { siteUrl, status: 'uninitialized' });
+        const status = await db.get<Record<string, unknown>>('SELECT * FROM warehouse_sync_status WHERE ownerId = ? AND siteUrl = ?', [ownerId, siteUrl]);
+        const metricStatus = await db.get<any>(`
+          SELECT
+            MIN(date) as earliestMetricDate,
+            MAX(date) as lastMetricDate,
+            COUNT(DISTINCT date) as metricDayCount
+          FROM gsc_site_metrics
+          WHERE ownerId = ? AND siteUrl = ?
+        `, [ownerId, siteUrl]);
+
+        res.json({
+          ...(status || { siteUrl, status: 'uninitialized' }),
+          earliestMetricDate: metricStatus?.earliestMetricDate || null,
+          lastMetricDate: metricStatus?.lastMetricDate || null,
+          metricDayCount: metricStatus?.metricDayCount || 0,
+        });
       } else {
         const allSites = new Set<string>();
 
-        const statuses = db.prepare('SELECT siteUrl FROM warehouse_sync_status WHERE ownerId = ?').all(ownerId) as any[];
+        const statuses = await db.all<any>('SELECT siteUrl FROM warehouse_sync_status WHERE ownerId = ?', [ownerId]);
         statuses.forEach((s) => allSites.add(s.siteUrl));
 
-        const queries = db.prepare('SELECT DISTINCT siteUrl FROM gsc_site_metrics WHERE ownerId = ?').all(ownerId) as any[];
+        const queries = await db.all<any>('SELECT DISTINCT siteUrl FROM gsc_site_metrics WHERE ownerId = ?', [ownerId]);
         queries.forEach((s) => allSites.add(s.siteUrl));
 
-        const logs = db.prepare('SELECT DISTINCT siteUrl FROM server_logs WHERE ownerId = ?').all(ownerId) as any[];
+        const logs = await db.all<any>('SELECT DISTINCT siteUrl FROM server_logs WHERE ownerId = ?', [ownerId]);
         logs.forEach((s) => allSites.add(s.siteUrl));
 
-        const caches = db.prepare('SELECT DISTINCT siteUrl FROM url_inspection_cache WHERE ownerId = ?').all(ownerId) as any[];
+        const caches = await db.all<any>('SELECT DISTINCT siteUrl FROM url_inspection_cache WHERE ownerId = ?', [ownerId]);
         caches.forEach((s) => allSites.add(s.siteUrl));
 
-        const keywords = db.prepare('SELECT DISTINCT siteUrl FROM tracked_keywords WHERE ownerId = ?').all(ownerId) as any[];
+        const keywords = await db.all<any>('SELECT DISTINCT siteUrl FROM tracked_keywords WHERE ownerId = ?', [ownerId]);
         keywords.forEach((s) => allSites.add(s.siteUrl));
 
         const result = Array.from(allSites).map((url) => ({ siteUrl: url }));
@@ -131,7 +217,7 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/warehouse/status', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/status', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, lastSyncDate, earliestSyncDate, status } = req.body;
     if (!isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Invalid siteUrl' });
@@ -139,24 +225,34 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
     if (earliestSyncDate !== undefined && earliestSyncDate !== null && !isIsoDateString(earliestSyncDate)) return res.status(400).json({ error: 'Invalid earliestSyncDate' });
     if (status !== undefined && status !== null && !isNonEmptyString(status)) return res.status(400).json({ error: 'Invalid status' });
     try {
-      db.prepare(`
+      await db.run(`
         INSERT INTO warehouse_sync_status (ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, lastUpdated)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(ownerId, siteUrl) DO UPDATE SET
-          lastSyncDate=IFNULL(excluded.lastSyncDate, lastSyncDate),
-          earliestSyncDate=IFNULL(excluded.earliestSyncDate, earliestSyncDate),
+          lastSyncDate=CASE
+            WHEN excluded.lastSyncDate IS NULL THEN lastSyncDate
+            WHEN lastSyncDate IS NULL THEN excluded.lastSyncDate
+            WHEN excluded.lastSyncDate > lastSyncDate THEN excluded.lastSyncDate
+            ELSE lastSyncDate
+          END,
+          earliestSyncDate=CASE
+            WHEN excluded.earliestSyncDate IS NULL THEN earliestSyncDate
+            WHEN earliestSyncDate IS NULL THEN excluded.earliestSyncDate
+            WHEN excluded.earliestSyncDate < earliestSyncDate THEN excluded.earliestSyncDate
+            ELSE earliestSyncDate
+          END,
           status=IFNULL(excluded.status, status),
           lastUpdated=excluded.lastUpdated
-      `).run(ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, new Date().toISOString());
+      `, [ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, new Date().toISOString()]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post('/api/warehouse/query', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/warehouse/query', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
-    const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups } = req.body;
+    const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups, metric } = req.body;
     if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
       return res.status(400).json({ error: 'Missing or invalid parameters' });
     }
@@ -172,6 +268,12 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
       const hasDate = dims.includes('date');
       const hasQuery = dims.includes('query');
       const hasPage = dims.includes('page');
+      const wantsQueryCount = metric === 'queryCount';
+      const hasPageFilter = Array.isArray(dimensionFilterGroups)
+        && dimensionFilterGroups.some((group: any) =>
+          Array.isArray(group.filters)
+          && group.filters.some((filter: any) => filter.dimension === 'page' && isNonEmptyString(filter.expression))
+        );
 
       const selectClauseElements: string[] = [];
       const groupByClauseElements: string[] = [];
@@ -194,6 +296,9 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
       }
 
       const selectCols = selectClauseElements.length > 0 ? `${selectClauseElements.join(', ')}, ` : '';
+      const queryCountCol = ((hasPage && !hasQuery) || (wantsQueryCount && hasDate && !hasQuery))
+        ? 'COUNT(DISTINCT query) as queryCount,'
+        : '';
       const groupByClause = groupByClauseElements.length > 0 ? `GROUP BY ${groupByClauseElements.join(', ')}` : '';
 
       let whereClause = 'WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @startDate AND date <= @endDate';
@@ -205,7 +310,10 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
             for (const filter of group.filters) {
               if (filter.dimension === 'query' && filter.expression) {
                 const paramIdx = Object.keys(params).length;
-                if (filter.operator === 'contains') {
+                if (filter.operator === 'equals') {
+                  whereClause += ` AND query = @queryFilter${paramIdx}`;
+                  params[`queryFilter${paramIdx}`] = filter.expression;
+                } else if (filter.operator === 'contains') {
                   whereClause += ` AND query LIKE @queryFilter${paramIdx}`;
                   params[`queryFilter${paramIdx}`] = `%${filter.expression}%`;
                 } else if (filter.operator === 'notContains') {
@@ -232,57 +340,77 @@ export function registerWarehouseRoutes(app: Express, db: Database.Database) {
       }
 
       let rows: any[] = [];
-      if (hasPage && hasQuery) {
-        rows = db.prepare(`
+      if (hasPage || (hasQuery && hasPageFilter)) {
+        rows = await db.all<any>(`
           SELECT ${selectCols} 
+                 ${queryCountCol}
                  SUM(clicks) as clicks, 
                  SUM(impressions) as impressions, 
-                 SUM(clicks)*1.0/MAX(SUM(impressions), 1) as ctr, 
-                 SUM(position * impressions)*1.0/MAX(SUM(impressions), 1) as position
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr, 
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
           FROM gsc_page_query_metrics
           ${whereClause}
           ${groupByClause}
           ${orderClause}
           LIMIT 50000
-        `).all(params);
-      } else if (hasQuery) {
-        rows = db.prepare(`
-          SELECT ${selectCols} 
-                 SUM(clicks) as clicks, 
-                 SUM(impressions) as impressions, 
-                 SUM(clicks)*1.0/MAX(SUM(impressions), 1) as ctr, 
-                 SUM(position * impressions)*1.0/MAX(SUM(impressions), 1) as position
+        `, params);
+      } else if (wantsQueryCount && hasDate && !hasQuery) {
+        rows = await db.all<any>(`
+          SELECT ${selectCols}
+                 ${queryCountCol}
+                 SUM(clicks) as clicks,
+                 SUM(impressions) as impressions,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
           FROM gsc_query_metrics
           ${whereClause}
           ${groupByClause}
           ${orderClause}
           LIMIT 50000
-        `).all(params);
-      } else {
-        rows = db.prepare(`
-          SELECT ${selectCols} 
+        `, params);
+      } else if (hasQuery) {
+        rows = await db.all<any>(`
+                 SELECT ${selectCols} 
                  SUM(clicks) as clicks, 
                  SUM(impressions) as impressions, 
-                 SUM(clicks)*1.0/MAX(SUM(impressions), 1) as ctr, 
-                 SUM(position * impressions)*1.0/MAX(SUM(impressions), 1) as position
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr, 
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
+          FROM gsc_query_metrics
+          ${whereClause}
+          ${groupByClause}
+          ${orderClause}
+          LIMIT 50000
+        `, params);
+      } else {
+        rows = await db.all<any>(`
+                 SELECT ${selectCols} 
+                 SUM(clicks) as clicks, 
+                 SUM(impressions) as impressions, 
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr, 
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
           FROM gsc_site_metrics
           ${whereClause}
           ${groupByClause}
           ${orderClause}
           LIMIT 50000
-        `).all(params);
+        `, params);
       }
 
       rows = rows.map((r: any) => {
         const keys = [];
         if (hasDate) keys.push(r.date);
+        if (hasPage) keys.push(r.page);
         if (hasQuery) keys.push(r.query);
         return {
+          date: r.date,
+          page: r.page,
+          query: r.query,
+          queryCount: r.queryCount === undefined ? undefined : toFiniteNumber(r.queryCount),
           keys: keys.length > 0 ? keys : undefined,
-          clicks: r.clicks,
-          impressions: r.impressions,
-          ctr: r.ctr,
-          position: r.position,
+          clicks: toFiniteNumber(r.clicks),
+          impressions: toFiniteNumber(r.impressions),
+          ctr: toFiniteNumber(r.ctr),
+          position: toFiniteNumber(r.position),
         };
       });
 

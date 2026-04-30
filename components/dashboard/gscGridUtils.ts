@@ -1,6 +1,6 @@
 import type { GscSearchAnalyticsRow } from "@/src/services/gscService";
 
-export type SortColumn = "key" | "intent" | "clicks" | "impressions" | "ctr" | "position" | null;
+export type SortColumn = "key" | "intent" | "clicks" | "impressions" | "ctr" | "position" | "queryCount" | null;
 export type GridDimension = "query" | "page" | "country";
 
 export type GridRow = GscSearchAnalyticsRow & {
@@ -8,6 +8,8 @@ export type GridRow = GscSearchAnalyticsRow & {
   compareImpressions?: number;
   compareCtr?: number;
   comparePosition?: number;
+  queryCount?: number;
+  compareQueryCount?: number;
 };
 
 export type GridFilters = {
@@ -21,7 +23,7 @@ export type GridFilters = {
 };
 
 export function classifyIntent(query: string, siteUrl: string) {
-  const normalizedQuery = query.toLowerCase();
+  const normalizedQuery = String(query || "").toLowerCase();
   let brand = "";
 
   try {
@@ -49,7 +51,11 @@ export function classifyIntent(query: string, siteUrl: string) {
 
 export function filterGridData(data: GridRow[], dimension: GridDimension, filters: GridFilters, siteUrl: string) {
   return data.filter((row) => {
-    const rowKey = row.keys[0];
+    const rowKey = typeof row.keys?.[0] === "string" ? row.keys[0] : "";
+    if (!rowKey) {
+      return false;
+    }
+
     if (!rowKey.toLowerCase().includes(filters.searchTerm.toLowerCase())) {
       return false;
     }
@@ -97,11 +103,14 @@ export function sortGridData(data: GridRow[], sortColumn: SortColumn, sortDirect
     let valueB: string | number = b[sortColumn as keyof GridRow] as string | number;
 
     if (sortColumn === "key") {
-      valueA = a.keys[0];
-      valueB = b.keys[0];
+      valueA = typeof a.keys?.[0] === "string" ? a.keys[0] : "";
+      valueB = typeof b.keys?.[0] === "string" ? b.keys[0] : "";
     } else if (sortColumn === "intent") {
-      valueA = classifyIntent(a.keys[0], siteUrl);
-      valueB = classifyIntent(b.keys[0], siteUrl);
+      valueA = classifyIntent(typeof a.keys?.[0] === "string" ? a.keys[0] : "", siteUrl);
+      valueB = classifyIntent(typeof b.keys?.[0] === "string" ? b.keys[0] : "", siteUrl);
+    } else if (sortColumn === "queryCount") {
+      valueA = a.queryCount || 0;
+      valueB = b.queryCount || 0;
     }
 
     if (valueA < valueB) return sortDirection === "asc" ? -1 : 1;

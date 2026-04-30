@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 
 export type BillingStatus = 'trialing' | 'active' | 'past_due' | 'canceled' | 'incomplete';
 
@@ -22,33 +22,33 @@ export function getBillingConfig() {
 }
 
 export function updateUserBillingState(
-  db: Database.Database,
+  db: AppDatabase,
   userId: string,
   update: BillingUpdate,
 ) {
-  db.prepare(`
+  return db.run(`
     UPDATE users
     SET billingStatus = ?, subscriptionId = ?, trialEndsAt = ?, currentPeriodEnd = ?
     WHERE id = ?
-  `).run(
+  `, [
     update.billingStatus,
     update.subscriptionId || null,
     update.trialEndsAt || null,
     update.currentPeriodEnd || null,
     userId,
-  );
+  ]);
 }
 
-export function updateUserBillingStateByEmail(
-  db: Database.Database,
+export async function updateUserBillingStateByEmail(
+  db: AppDatabase,
   email: string,
   update: BillingUpdate,
 ) {
-  const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as { id?: string } | undefined;
+  const user = await db.get<{ id?: string }>('SELECT id FROM users WHERE email = ?', [email]);
   if (!user?.id) {
     return false;
   }
 
-  updateUserBillingState(db, user.id, update);
+  await updateUserBillingState(db, user.id, update);
   return true;
 }

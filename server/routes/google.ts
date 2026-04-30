@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from 'express';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString, isNonEmptyString } from '../validation.js';
@@ -39,7 +39,7 @@ function sendOauthPopupResponse(res: Response, success: boolean, message: string
 </html>`);
 }
 
-export function registerGoogleRoutes(app: Express, db: Database.Database) {
+export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
 
   app.get('/api/google/oauth/start', authRequired, (req: AuthedRequest, res) => {
@@ -71,7 +71,7 @@ export function registerGoogleRoutes(app: Express, db: Database.Database) {
         return sendOauthPopupResponse(res, false, 'Google did not return a refresh token. Please try again.');
       }
 
-      storeGoogleRefreshToken(db, userId, tokens.refresh_token);
+      await storeGoogleRefreshToken(db, userId, tokens.refresh_token);
       return sendOauthPopupResponse(res, true, 'Google account connected successfully. You can close this window.');
     } catch (err: any) {
       return sendOauthPopupResponse(res, false, err.message || 'Google connection failed.');
@@ -128,9 +128,9 @@ export function registerGoogleRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.delete('/api/google/connection', authRequired, (req: AuthedRequest, res) => {
+  app.delete('/api/google/connection', authRequired, async (req: AuthedRequest, res) => {
     try {
-      clearGoogleRefreshToken(db, req.authUser!.uid);
+      await clearGoogleRefreshToken(db, req.authUser!.uid);
       res.json({ success: true, googleConnected: false });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import type multer from 'multer';
 import fs from 'fs';
 import readline from 'readline';
@@ -9,7 +9,7 @@ import { getBotType, NGINX_LOG_REGEX, parseLogDate } from '../logs.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
 
-export function registerLogRoutes(app: Express, db: Database.Database, upload: multer.Multer) {
+export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.Multer) {
   const authRequired = requireAuth(db);
 
   app.post('/api/logs/upload', authRequired, upload.single('logfile'), async (req: AuthedRequest, res) => {
@@ -33,14 +33,9 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
         crlfDelay: Infinity,
       });
 
-      const stmt = db.prepare(`
-        INSERT INTO server_logs (ownerId, siteUrl, timestamp, ipAddress, httpMethod, urlPath, statusCode, userAgent, botType)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
       let count = 0;
 
-      const insertMany = db.transaction((lines: string[]) => {
+      const insertMany = db.transaction(async (lines: string[]) => {
         for (const line of lines) {
           const match = line.match(NGINX_LOG_REGEX);
           if (match) {
@@ -55,7 +50,10 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
             const timestamp = parseLogDate(dateStr);
             const botType = getBotType(userAgent);
 
-            stmt.run(ownerId, siteUrl, timestamp, ipAddress, httpMethod, urlPath, parseInt(statusCode, 10), userAgent || '', botType);
+            await db.run(`
+              INSERT INTO server_logs (ownerId, siteUrl, timestamp, ipAddress, httpMethod, urlPath, statusCode, userAgent, botType)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [ownerId, siteUrl, timestamp, ipAddress, httpMethod, urlPath, parseInt(statusCode, 10), userAgent || '', botType]);
             count++;
           }
         }
@@ -65,13 +63,13 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
       for await (const line of rl) {
         currentBatch.push(line);
         if (currentBatch.length >= 1000) {
-          insertMany(currentBatch);
+          await insertMany(currentBatch);
           currentBatch = [];
         }
       }
 
       if (currentBatch.length > 0) {
-        insertMany(currentBatch);
+        await insertMany(currentBatch);
       }
 
       fs.unlinkSync(file.path);
@@ -82,7 +80,7 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     }
   });
 
-  app.post('/api/logs/webhook', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/logs/webhook', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, logs } = req.body;
     if (!isNonEmptyString(siteUrl) || !isStringArray(logs)) {
@@ -90,13 +88,8 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     }
 
     try {
-      const stmt = db.prepare(`
-        INSERT INTO server_logs (ownerId, siteUrl, timestamp, ipAddress, httpMethod, urlPath, statusCode, userAgent, botType)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
       let count = 0;
-      const insertManyWebhook = db.transaction((lines: string[]) => {
+      const insertManyWebhook = db.transaction(async (lines: string[]) => {
         for (const line of lines) {
           const match = line.match(NGINX_LOG_REGEX);
           if (match) {
@@ -111,20 +104,23 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
             const timestamp = parseLogDate(dateStr);
             const botType = getBotType(userAgent);
 
-            stmt.run(ownerId, siteUrl, timestamp, ipAddress, httpMethod, urlPath, parseInt(statusCode, 10), userAgent || '', botType);
+            await db.run(`
+              INSERT INTO server_logs (ownerId, siteUrl, timestamp, ipAddress, httpMethod, urlPath, statusCode, userAgent, botType)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [ownerId, siteUrl, timestamp, ipAddress, httpMethod, urlPath, parseInt(statusCode, 10), userAgent || '', botType]);
             count++;
           }
         }
       });
 
-      insertManyWebhook(logs);
+      await insertManyWebhook(logs);
       res.json({ success: true, count });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/logs/stats', authRequired, (req: AuthedRequest, res) => {
+  app.get('/api/logs/stats', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const siteUrl = asTrimmedString(req.query.siteUrl);
     const startDate = req.query.startDate;
@@ -134,7 +130,7 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
 
     try {
-      const stats = db.prepare(`
+      const stats = await db.all(`
         SELECT 
           substr(timestamp, 1, 10) as date,
           botType,
@@ -143,14 +139,14 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
         WHERE ownerId = ? AND siteUrl = ? AND timestamp >= ? AND timestamp <= ?
         GROUP BY substr(timestamp, 1, 10), botType
         ORDER BY date ASC
-      `).all(ownerId, siteUrl, startDate ? String(startDate) + 'T00:00:00' : '2000-01-01', endDate ? String(endDate) + 'T23:59:59' : '2099-12-31');
+      `, [ownerId, siteUrl, startDate ? String(startDate) + 'T00:00:00' : '2000-01-01', endDate ? String(endDate) + 'T23:59:59' : '2099-12-31']);
       res.json(stats);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/logs/errors', authRequired, (req: AuthedRequest, res) => {
+  app.get('/api/logs/errors', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const siteUrl = asTrimmedString(req.query.siteUrl);
     const startDate = req.query.startDate;
@@ -160,21 +156,21 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
 
     try {
-      const errors = db.prepare(`
+      const errors = await db.all(`
         SELECT urlPath, statusCode, botType, COUNT(*) as count
         FROM server_logs
         WHERE ownerId = ? AND siteUrl = ? AND timestamp >= ? AND timestamp <= ? AND statusCode >= 400
         GROUP BY urlPath, statusCode, botType
         ORDER BY count DESC
         LIMIT 100
-      `).all(ownerId, siteUrl, startDate ? String(startDate) + 'T00:00:00' : '2000-01-01', endDate ? String(endDate) + 'T23:59:59' : '2099-12-31');
+      `, [ownerId, siteUrl, startDate ? String(startDate) + 'T00:00:00' : '2000-01-01', endDate ? String(endDate) + 'T23:59:59' : '2099-12-31']);
       res.json(errors);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/logs/insights', authRequired, (req: AuthedRequest, res) => {
+  app.get('/api/logs/insights', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const siteUrl = asTrimmedString(req.query.siteUrl);
     const startDate = req.query.startDate;
@@ -187,7 +183,7 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
     const end = endDate ? String(endDate) + 'T23:59:59' : '2099-12-31';
 
     try {
-      const mostCrawled = db.prepare(`
+      const mostCrawled = await db.all(`
         SELECT urlPath, count(*) as count, botType
         FROM server_logs
         WHERE ownerId = ? AND siteUrl = ? AND timestamp >= ? AND timestamp <= ? 
@@ -195,9 +191,9 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
         GROUP BY urlPath, botType
         ORDER BY count DESC
         LIMIT 50
-      `).all(ownerId, siteUrl, start, end);
+      `, [ownerId, siteUrl, start, end]);
 
-      const llmTraffic = db.prepare(`
+      const llmTraffic = await db.all(`
         SELECT botType, urlPath, count(*) as count
         FROM server_logs
         WHERE ownerId = ? AND siteUrl = ? AND timestamp >= ? AND timestamp <= ? 
@@ -205,15 +201,15 @@ export function registerLogRoutes(app: Express, db: Database.Database, upload: m
         GROUP BY botType, urlPath
         ORDER BY count DESC
         LIMIT 50
-      `).all(ownerId, siteUrl, start, end);
+      `, [ownerId, siteUrl, start, end]);
 
-      const efficiency = db.prepare(`
+      const efficiency = await db.all(`
         SELECT statusCode, count(*) as count
         FROM server_logs
         WHERE ownerId = ? AND siteUrl = ? AND timestamp >= ? AND timestamp <= ? 
           AND botType = 'Googlebot'
         GROUP BY statusCode
-      `).all(ownerId, siteUrl, start, end);
+      `, [ownerId, siteUrl, start, end]);
 
       res.json({ mostCrawled, llmTraffic, efficiency });
     } catch (err: any) {

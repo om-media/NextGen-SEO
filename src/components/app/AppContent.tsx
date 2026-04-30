@@ -3,6 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Overview } from "@/components/dashboard/Overview";
 import { AnnotationsSettings } from "@/components/dashboard/AnnotationsSettings";
+import { BlendedPagesView } from "@/components/dashboard/BlendedPagesView";
 import { GscDataGrid } from "@/components/dashboard/GscDataGrid";
 import { QueryCountView } from "@/components/dashboard/QueryCountView";
 import { Ga4DataGrid } from "@/components/dashboard/Ga4DataGrid";
@@ -21,6 +22,8 @@ import type { UserProfile } from "../../contexts/AuthContext";
 
 type DataSource = "gsc" | "bing" | "ga4";
 type Ga4Dimension = "country" | "city" | "region" | "deviceCategory" | "browser" | "operatingSystem";
+export type GscDashboardTab = "overview" | "pages" | "queries" | "countries" | "query-count";
+export type Ga4DashboardTab = "overview" | "events" | "pages" | "sources" | "countries";
 
 type AppContentProps = {
   activeMenu: string;
@@ -30,11 +33,15 @@ type AppContentProps = {
   compareDateRange: DateRange;
   dataSource: DataSource;
   dateRange: DateRange;
+  ga4DashboardTab: Ga4DashboardTab;
   ga4Sites: Array<{ siteUrl: string; displayName: string }>;
   ga4UserDimension: Ga4Dimension;
+  gscDashboardTab: GscDashboardTab;
   isCompareMode: boolean;
   onAnnotationsChange: () => Promise<void>;
+  onGa4DashboardTabChange: (value: Ga4DashboardTab) => void;
   onGa4UserDimensionChange: (value: Ga4Dimension) => void;
+  onGscDashboardTabChange: (value: GscDashboardTab) => void;
   onOpenSettings: (tab?: "profile" | "plan" | "workspace" | "integrations") => void;
   selectedSite: string;
   setShowSystemAnnotations: (value: boolean) => void;
@@ -62,11 +69,15 @@ export function AppContent({
   compareDateRange,
   dataSource,
   dateRange,
+  ga4DashboardTab,
   ga4Sites,
   ga4UserDimension,
+  gscDashboardTab,
   isCompareMode,
   onAnnotationsChange,
+  onGa4DashboardTabChange,
   onGa4UserDimensionChange,
+  onGscDashboardTabChange,
   onOpenSettings,
   selectedSite,
   setShowSystemAnnotations,
@@ -86,13 +97,17 @@ export function AppContent({
   return (
     <>
       {selectedSite && !apiError && dataSource === "gsc" && sites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
-        <Tabs defaultValue="overview" className="space-y-4">
+        <Tabs
+          value={gscDashboardTab}
+          onValueChange={(value) => onGscDashboardTabChange(value as GscDashboardTab)}
+          className="space-y-4"
+        >
           <TabsList variant="line" className={dashboardTabListClass}>
             <TabsTrigger value="overview" className={dashboardTabTriggerClass}>Overview</TabsTrigger>
             <TabsTrigger value="pages" className={dashboardTabTriggerClass}>Pages</TabsTrigger>
             <TabsTrigger value="queries" className={dashboardTabTriggerClass}>Queries</TabsTrigger>
             <TabsTrigger value="countries" className={dashboardTabTriggerClass}>Countries</TabsTrigger>
-            <TabsTrigger value="query-count" className={dashboardTabTriggerClass}>Query Count</TabsTrigger>
+            <TabsTrigger value="query-count" className={dashboardTabTriggerClass}>Visible Queries</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
             <Overview
@@ -101,6 +116,7 @@ export function AppContent({
               isCompareMode={isCompareMode}
               compareDateRange={compareDateRange}
               annotations={visibleAnnotations}
+              useLiveData={useLiveData}
               annotationControls={
                 <AnnotationsSettings
                   currentSiteUrl={selectedSite}
@@ -119,13 +135,19 @@ export function AppContent({
             <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
           </TabsContent>
           <TabsContent value="pages" className="space-y-4">
-            <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
+            <BlendedPagesView
+              siteUrl={selectedSite}
+              dateRange={dateRange}
+              isCompareMode={isCompareMode}
+              compareDateRange={compareDateRange}
+              ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+            />
           </TabsContent>
           <TabsContent value="countries" className="space-y-4">
             <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
           </TabsContent>
           <TabsContent value="query-count" className="space-y-4">
-            <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
           </TabsContent>
         </Tabs>
       )}
@@ -141,7 +163,11 @@ export function AppContent({
       )}
 
       {selectedSite && !apiError && dataSource === "ga4" && ga4Sites.some((site) => site.siteUrl === selectedSite) && activeMenu === "Dashboard" && (
-        <Tabs defaultValue="overview" className="space-y-4">
+        <Tabs
+          value={ga4DashboardTab}
+          onValueChange={(value) => onGa4DashboardTabChange(value as Ga4DashboardTab)}
+          className="space-y-4"
+        >
           <TabsList variant="line" className={dashboardTabListClass}>
             <TabsTrigger value="overview" className={dashboardTabTriggerClass}>Overview</TabsTrigger>
             <TabsTrigger value="events" className={dashboardTabTriggerClass}>Events</TabsTrigger>

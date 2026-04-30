@@ -1,21 +1,15 @@
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AppDatabase } from '../database.js';
 import { requireAuth, requireMatchingParam } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
 import { getPlanPropertyLimit } from '../../shared/plans.js';
 
-export function registerAccountDataRoutes(app: Express, db: Database.Database) {
+export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
-  const createTrialEndDate = () => {
-    const date = new Date();
-    date.setDate(date.getDate() + 14);
-    return date.toISOString();
-  };
-
-  app.get('/api/users/:id', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.get('/api/users/:id', authRequired, requireMatchingParam('id'), async (req, res) => {
     try {
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
+      const user = await db.get<any>('SELECT * FROM users WHERE id = ?', [req.params.id]);
       if (user) {
         user.unlockedSites = JSON.parse(user.unlockedSites || '[]');
         user.knownSites = JSON.parse(user.knownSites || '[]');
@@ -24,7 +18,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
         user.activatedGa4PropertyId = user.activatedGa4PropertyId || null;
         user.activatedGa4DisplayName = user.activatedGa4DisplayName || null;
         user.googleConnected = Boolean(user.gscRefreshToken);
-        user.billingStatus = user.billingStatus || 'trialing';
+        user.billingStatus = user.billingStatus === 'trialing' ? 'active' : (user.billingStatus || 'active');
         user.subscriptionId = user.subscriptionId || null;
         user.trialEndsAt = user.trialEndsAt || null;
         user.currentPeriodEnd = user.currentPeriodEnd || null;
@@ -33,7 +27,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
         const limit = getPlanPropertyLimit(user.tier);
         if (limit !== null && user.unlockedSites.length > limit) {
           user.unlockedSites = user.unlockedSites.slice(0, limit);
-          db.prepare('UPDATE users SET unlockedSites = ? WHERE id = ?').run(JSON.stringify(user.unlockedSites), req.params.id);
+          await db.run('UPDATE users SET unlockedSites = ? WHERE id = ?', [JSON.stringify(user.unlockedSites), req.params.id]);
         }
 
         res.json(user);
@@ -45,7 +39,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post('/api/users', authRequired, (req: AuthedRequest, res) => {
+  app.post('/api/users', authRequired, async (req: AuthedRequest, res) => {
     const { email, name, avatarUrl, createdAt } = req.body;
     if (!isNonEmptyString(email)) return res.status(400).json({ error: 'Invalid email' });
     if (name !== undefined && name !== null && typeof name !== 'string') return res.status(400).json({ error: 'Invalid name' });
@@ -53,18 +47,19 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     if (createdAt !== undefined && createdAt !== null && !isNonEmptyString(createdAt)) return res.status(400).json({ error: 'Invalid createdAt' });
     try {
       const id = req.authUser!.uid;
-      db.prepare(`
-        INSERT OR IGNORE INTO users (
+      await db.run(`
+        INSERT INTO users (
           id, email, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, activatedGa4PropertyId, activatedGa4DisplayName, billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, email, name || null, null, avatarUrl || null, null, 'free', JSON.stringify([]), createdAt, null, 0, null, null, null, 'trialing', null, createTrialEndDate(), null);
+        ON CONFLICT(id) DO NOTHING
+      `, [id, email, name || null, null, avatarUrl || null, null, 'free', JSON.stringify([]), createdAt, null, 0, null, null, null, 'active', null, null, null]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.put('/api/users/:id/profile', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.put('/api/users/:id/profile', authRequired, requireMatchingParam('id'), async (req, res) => {
     const { name, company, avatarUrl, bio } = req.body;
     if (name !== undefined && name !== null && typeof name !== 'string') return res.status(400).json({ error: 'Invalid name' });
     if (company !== undefined && company !== null && typeof company !== 'string') return res.status(400).json({ error: 'Invalid company' });
@@ -72,8 +67,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     if (bio !== undefined && bio !== null && typeof bio !== 'string') return res.status(400).json({ error: 'Invalid bio' });
 
     try {
-      db.prepare('UPDATE users SET name = ?, company = ?, avatarUrl = ?, bio = ? WHERE id = ?')
-        .run(name || null, company || null, avatarUrl || null, bio || null, req.params.id);
+      await db.run('UPDATE users SET name = ?, company = ?, avatarUrl = ?, bio = ? WHERE id = ?', [name || null, company || null, avatarUrl || null, bio || null, req.params.id]);
       res.json({
         success: true,
         profile: {
@@ -88,7 +82,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.put('/api/users/:id/onboarding', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.put('/api/users/:id/onboarding', authRequired, requireMatchingParam('id'), async (req, res) => {
     const { onboardingCompleted, activatedSiteUrl, activatedGa4PropertyId, activatedGa4DisplayName } = req.body;
     if (typeof onboardingCompleted !== 'boolean') {
       return res.status(400).json({ error: 'Invalid onboardingCompleted' });
@@ -104,7 +98,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     }
 
     try {
-      const user = db.prepare('SELECT tier, unlockedSites, onboardingCompleted FROM users WHERE id = ?').get(req.params.id) as any;
+      const user = await db.get<any>('SELECT tier, unlockedSites, onboardingCompleted FROM users WHERE id = ?', [req.params.id]);
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
       }
@@ -124,15 +118,14 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
         }
       }
 
-      db.prepare('UPDATE users SET onboardingCompleted = ?, activatedSiteUrl = ?, activatedGa4PropertyId = ?, activatedGa4DisplayName = ?, unlockedSites = ? WHERE id = ?')
-        .run(
+      await db.run('UPDATE users SET onboardingCompleted = ?, activatedSiteUrl = ?, activatedGa4PropertyId = ?, activatedGa4DisplayName = ?, unlockedSites = ? WHERE id = ?', [
           onboardingCompleted ? 1 : 0,
           activatedSiteUrl || null,
           activatedGa4PropertyId || null,
           activatedGa4DisplayName || null,
           JSON.stringify(unlockedSites),
           req.params.id,
-        );
+        ]);
       res.json({
         success: true,
         onboardingCompleted,
@@ -145,22 +138,21 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.put('/api/users/:id/default-site', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.put('/api/users/:id/default-site', authRequired, requireMatchingParam('id'), async (req, res) => {
     const { activatedSiteUrl } = req.body;
     if (!isNonEmptyString(activatedSiteUrl)) {
       return res.status(400).json({ error: 'Invalid activatedSiteUrl' });
     }
 
     try {
-      db.prepare('UPDATE users SET activatedSiteUrl = ? WHERE id = ?')
-        .run(activatedSiteUrl, req.params.id);
+      await db.run('UPDATE users SET activatedSiteUrl = ? WHERE id = ?', [activatedSiteUrl, req.params.id]);
       res.json({ success: true, activatedSiteUrl });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.put('/api/users/:id/default-ga4-property', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.put('/api/users/:id/default-ga4-property', authRequired, requireMatchingParam('id'), async (req, res) => {
     const { activatedGa4PropertyId, activatedGa4DisplayName } = req.body;
     if (!isNonEmptyString(activatedGa4PropertyId)) {
       return res.status(400).json({ error: 'Invalid activatedGa4PropertyId' });
@@ -170,8 +162,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     }
 
     try {
-      db.prepare('UPDATE users SET activatedGa4PropertyId = ?, activatedGa4DisplayName = ? WHERE id = ?')
-        .run(activatedGa4PropertyId, activatedGa4DisplayName || null, req.params.id);
+      await db.run('UPDATE users SET activatedGa4PropertyId = ?, activatedGa4DisplayName = ? WHERE id = ?', [activatedGa4PropertyId, activatedGa4DisplayName || null, req.params.id]);
       res.json({
         success: true,
         activatedGa4PropertyId,
@@ -182,17 +173,17 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.put('/api/users/:id/unlock', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.put('/api/users/:id/unlock', authRequired, requireMatchingParam('id'), async (req, res) => {
     const { siteUrl } = req.body;
     if (!isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Invalid siteUrl' });
     try {
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
+      const user = await db.get<any>('SELECT * FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
 
       const unlockedSites = JSON.parse(user.unlockedSites || '[]');
       if (!unlockedSites.includes(siteUrl)) {
         unlockedSites.push(siteUrl);
-        db.prepare('UPDATE users SET unlockedSites = ? WHERE id = ?').run(JSON.stringify(unlockedSites), req.params.id);
+        await db.run('UPDATE users SET unlockedSites = ? WHERE id = ?', [JSON.stringify(unlockedSites), req.params.id]);
       }
       res.json({ success: true, unlockedSites });
     } catch (err: any) {
@@ -204,7 +195,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     return res.status(403).json({ error: 'Tier changes must be handled by an admin flow' });
   });
 
-  app.put('/api/users/:id/billing', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.put('/api/users/:id/billing', authRequired, requireMatchingParam('id'), async (req, res) => {
     const { billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd } = req.body;
     const allowedStatuses = new Set(['trialing', 'active', 'past_due', 'canceled', 'incomplete']);
 
@@ -222,8 +213,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     }
 
     try {
-      db.prepare('UPDATE users SET billingStatus = ?, subscriptionId = ?, trialEndsAt = ?, currentPeriodEnd = ? WHERE id = ?')
-        .run(billingStatus, subscriptionId || null, trialEndsAt || null, currentPeriodEnd || null, req.params.id);
+      await db.run('UPDATE users SET billingStatus = ?, subscriptionId = ?, trialEndsAt = ?, currentPeriodEnd = ? WHERE id = ?', [billingStatus, subscriptionId || null, trialEndsAt || null, currentPeriodEnd || null, req.params.id]);
       res.json({
         success: true,
         billing: {
@@ -238,31 +228,31 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.put('/api/users/:id/bing-key', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.put('/api/users/:id/bing-key', authRequired, requireMatchingParam('id'), async (req, res) => {
     const { bingApiKey } = req.body;
     if (bingApiKey !== undefined && bingApiKey !== null && typeof bingApiKey !== 'string') {
       return res.status(400).json({ error: 'Invalid bingApiKey' });
     }
     try {
-      db.prepare('UPDATE users SET bingApiKey = ? WHERE id = ?').run(bingApiKey, req.params.id);
+      await db.run('UPDATE users SET bingApiKey = ? WHERE id = ?', [bingApiKey, req.params.id]);
       res.json({ success: true, bingApiKey });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.put('/api/users/:id/known-sites', authRequired, requireMatchingParam('id'), (req, res) => {
+  app.put('/api/users/:id/known-sites', authRequired, requireMatchingParam('id'), async (req, res) => {
     const { knownSites } = req.body;
     if (!isStringArray(knownSites)) return res.status(400).json({ error: 'Invalid knownSites' });
     try {
-      db.prepare('UPDATE users SET knownSites = ? WHERE id = ?').run(JSON.stringify(knownSites), req.params.id);
+      await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(knownSites), req.params.id]);
       res.json({ success: true, knownSites });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/annotations/:userId', authRequired, requireMatchingParam('userId'), (req, res) => {
+  app.get('/api/annotations/:userId', authRequired, requireMatchingParam('userId'), async (req, res) => {
     try {
       const siteUrl = req.query.siteUrl;
       if (siteUrl !== undefined && siteUrl !== 'null' && !isNonEmptyString(siteUrl)) {
@@ -270,15 +260,15 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
       }
 
       const annotations = siteUrl && siteUrl !== 'null'
-        ? db.prepare('SELECT * FROM annotations WHERE userId = ? AND (siteUrl = ? OR siteUrl IS NULL) ORDER BY date DESC').all(req.params.userId, siteUrl as string)
-        : db.prepare('SELECT * FROM annotations WHERE userId = ? ORDER BY date DESC').all(req.params.userId);
+        ? await db.all('SELECT * FROM annotations WHERE userId = ? AND (siteUrl = ? OR siteUrl IS NULL) ORDER BY date DESC', [req.params.userId, siteUrl as string])
+        : await db.all('SELECT * FROM annotations WHERE userId = ? ORDER BY date DESC', [req.params.userId]);
       res.json(annotations);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post('/api/annotations/:userId', authRequired, requireMatchingParam('userId'), (req, res) => {
+  app.post('/api/annotations/:userId', authRequired, requireMatchingParam('userId'), async (req, res) => {
     const { id, siteUrl, date, title, description, type } = req.body;
     if (id !== undefined && id !== null && !isNonEmptyString(id)) return res.status(400).json({ error: 'Invalid id' });
     if (siteUrl !== undefined && siteUrl !== null && !isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Invalid siteUrl' });
@@ -287,10 +277,10 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     if (description !== undefined && description !== null && typeof description !== 'string') return res.status(400).json({ error: 'Invalid description' });
     if (type !== undefined && type !== null && !isAllowedAnnotationType(type)) return res.status(400).json({ error: 'Invalid type' });
     try {
-      db.prepare(`
+      await db.run(`
         INSERT INTO annotations (id, userId, siteUrl, date, title, description, type, createdAt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
+      `, [
         id || crypto.randomUUID(),
         req.params.userId,
         siteUrl || null,
@@ -299,16 +289,16 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
         description || '',
         type || 'user',
         new Date().toISOString(),
-      );
+      ]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete('/api/annotations/:userId/:id', authRequired, requireMatchingParam('userId'), (req, res) => {
+  app.delete('/api/annotations/:userId/:id', authRequired, requireMatchingParam('userId'), async (req, res) => {
     try {
-      db.prepare('DELETE FROM annotations WHERE id = ? AND userId = ?').run(req.params.id, req.params.userId);
+      await db.run('DELETE FROM annotations WHERE id = ? AND userId = ?', [req.params.id, req.params.userId]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -317,7 +307,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
 
   app.get('/api/bing/sites', authRequired, async (req: AuthedRequest, res) => {
     try {
-      const user = db.prepare('SELECT bingApiKey FROM users WHERE id = ?').get(req.authUser!.uid) as any;
+      const user = await db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [req.authUser!.uid]);
       if (!user || !user.bingApiKey) {
         return res.status(400).json({ error: 'Bing API key not configured' });
       }
@@ -335,7 +325,7 @@ export function registerAccountDataRoutes(app: Express, db: Database.Database) {
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 
     try {
-      const user = db.prepare('SELECT bingApiKey FROM users WHERE id = ?').get(req.authUser!.uid) as any;
+      const user = await db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [req.authUser!.uid]);
       if (!user || !user.bingApiKey) {
         return res.status(400).json({ error: 'Bing API key not configured' });
       }
