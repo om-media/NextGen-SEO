@@ -28,7 +28,7 @@ function renderNoPropertiesMessage(dataSource: DataSource) {
   }
 
   if (dataSource === "bing") {
-    return "We couldn't find any Bing Webmaster Tools properties yet. Add your Bing API key in Settings and make sure you have verified sites in Bing Webmaster Tools.";
+    return "We couldn't find any Bing Webmaster Tools properties yet. Connect Bing in Settings and make sure you have verified sites in Bing Webmaster Tools.";
   }
 
   if (dataSource === "blended") {
@@ -89,22 +89,22 @@ export function AppStatusPanels({
 
   if (hasNoSites) {
     return (
-      <div className="mt-8 flex flex-col items-center justify-center space-y-6 rounded-2xl border border-[#E6ECE8] bg-white p-12 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
-        <div className="rounded-2xl bg-[#EAF4EC] p-4 text-[#0F3D2E]">
+      <div className="mt-8 flex flex-col items-center justify-center space-y-6 rounded-2xl border border-border bg-card p-12 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+        <div className="rounded-2xl bg-secondary p-4 text-secondary-foreground">
           <BarChart3 className="h-12 w-12 text-primary" />
         </div>
         <div className="space-y-2 max-w-md">
           {sessionExpired ? (
             <>
-              <h2 className="text-2xl font-semibold tracking-[-0.02em] text-[#0F172A]">Offline and empty</h2>
-              <p className="text-[#647067]">
+              <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">Offline and empty</h2>
+              <p className="text-muted-foreground">
                 Your Google API access token has expired securely. We attempted to fall back to Offline Mode, but we don't have any cached data available for your current sites.
               </p>
             </>
           ) : (
             <>
-              <h2 className="text-2xl font-semibold tracking-[-0.02em] text-[#0F172A]">Connect your data</h2>
-              <p className="text-[#647067]">
+              <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">Connect your data</h2>
+              <p className="text-muted-foreground">
                 To view your Google Search Console and Google Analytics 4 performance, connect your Google data sources. Your app login is already active, and we only request read-only access to the reporting APIs.
               </p>
             </>
@@ -135,14 +135,14 @@ export function AppStatusPanels({
       )}
 
       {showDisconnectedBanner && (
-        <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-amber-700 sm:flex-row">
+        <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200 sm:flex-row">
           <div className="flex items-center gap-2">
             <AlertCircle className="h-5 w-5" />
             <div className="text-sm">
               <strong>Google data needs attention</strong> - Your app login is still active, but the saved Google reporting connection needs attention. The dashboard is showing the latest synced warehouse data until you reconnect.
             </div>
           </div>
-          <Button onClick={onConnectGoogle} variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-700 hover:bg-amber-500/20" disabled={isConnectingGoogle}>
+          <Button onClick={onConnectGoogle} variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-700 hover:bg-amber-500/20 dark:border-amber-900/60 dark:text-amber-100 dark:hover:bg-amber-900/30" disabled={isConnectingGoogle}>
             {isConnectingGoogle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {isConnectingGoogle ? "Connecting..." : "Reconnect Google Data"}
           </Button>
@@ -150,7 +150,7 @@ export function AppStatusPanels({
       )}
 
       {apiError && (
-        <div className="flex flex-col items-start space-y-4 rounded-2xl border border-red-200 bg-red-50/90 p-6 shadow-[0_16px_44px_rgba(127,29,29,0.06)]">
+        <div className="flex flex-col items-start space-y-4 rounded-2xl border border-red-200 bg-red-50/90 p-6 shadow-[0_16px_44px_rgba(127,29,29,0.06)] dark:border-red-900/50 dark:bg-red-950/35">
           <div className="flex items-center gap-2 font-semibold text-red-600">
             <AlertCircle className="h-5 w-5" />
             <h3>API Access Required</h3>
@@ -176,17 +176,17 @@ export function AppStatusPanels({
       )}
 
       {showGa4PropertySetup && (
-        <div className="relative overflow-hidden rounded-2xl border border-[#E6ECE8] bg-white p-6 shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_70%_30%,rgba(15,61,46,0.08),transparent_45%)]" />
+        <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_70%_30%,rgba(15,61,46,0.08),transparent_45%)] dark:bg-[radial-gradient(circle_at_70%_30%,rgba(59,130,246,0.18),transparent_45%)]" />
           <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="flex max-w-2xl items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#EAF4EC] text-[#0F3D2E]">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground">
                 <PlugZap className="h-6 w-6" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-[#0F3D2E]">Analytics setup needed</p>
-                <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-[#0F172A]">Choose your GA4 property</h3>
-                <p className="mt-2 text-sm leading-6 text-[#647067]">
+                <p className="text-sm font-semibold text-primary">Analytics setup needed</p>
+                <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-foreground">Choose your GA4 property</h3>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
                   Your Google account has GA4 properties available, but this workspace does not have one assigned yet. Pick the property that should power Analytics reports here.
                 </p>
               </div>
@@ -197,22 +197,22 @@ export function AppStatusPanels({
       )}
 
       {showNoProperties && !showGa4PropertySetup && (
-        <div className="flex flex-col items-center justify-center space-y-3 rounded-2xl border border-[#E6ECE8] bg-white p-8 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F8FAF9] text-[#647067]">
+        <div className="flex flex-col items-center justify-center space-y-3 rounded-2xl border border-border bg-card p-8 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
             <AlertCircle className="h-6 w-6" />
           </div>
-          <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">No properties found</h3>
-          <p className="max-w-md text-sm leading-6 text-[#647067]">{renderNoPropertiesMessage(dataSource)}</p>
+          <h3 className="text-lg font-semibold tracking-[-0.01em] text-foreground">No properties found</h3>
+          <p className="max-w-md text-sm leading-6 text-muted-foreground">{renderNoPropertiesMessage(dataSource)}</p>
         </div>
       )}
 
       {showInvalidSelection && (
-        <div className="flex flex-col items-center justify-center space-y-3 rounded-2xl border border-[#E6ECE8] bg-white p-8 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F8FAF9] text-[#647067]">
+        <div className="flex flex-col items-center justify-center space-y-3 rounded-2xl border border-border bg-card p-8 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
             <AlertCircle className="h-6 w-6" />
           </div>
-          <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">Choose a property for this data source</h3>
-          <p className="max-w-md text-sm leading-6 text-[#647067]">
+          <h3 className="text-lg font-semibold tracking-[-0.01em] text-foreground">Choose a property for this data source</h3>
+          <p className="max-w-md text-sm leading-6 text-muted-foreground">
             Your previous selection doesn&apos;t belong to the current {dataSource === "ga4" ? "Google Analytics 4" : dataSource === "bing" ? "Bing Webmaster" : dataSource === "blended" ? "Blended page performance" : "Google Search Console"} view. Pick one from the selector in the top bar to continue.
           </p>
         </div>

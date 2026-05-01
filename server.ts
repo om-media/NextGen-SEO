@@ -7,7 +7,12 @@ import { attachFrontend } from './server/frontend.js';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({
+  dest: 'uploads/',
+  limits: {
+    fileSize: 50 * 1024 * 1024,
+  },
+});
 const syncJobs = new Map<string, SyncJobState>();
 const getSyncJobKey = (ownerId: string, siteUrl: string) => `${ownerId}:${siteUrl}`;
 

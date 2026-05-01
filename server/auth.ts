@@ -38,7 +38,12 @@ function hashSessionToken(token: string) {
 }
 
 function createSessionCookie(token: string, maxAgeSeconds = SESSION_MAX_AGE_SECONDS) {
-  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+  const secure =
+    process.env.NODE_ENV === 'production'
+    || process.env.APP_BASE_URL?.startsWith('https://')
+    || process.env.GOOGLE_OAUTH_REDIRECT_URI?.startsWith('https://');
+
+  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${secure ? ' Secure;' : ' '} Max-Age=${maxAgeSeconds}`;
 }
 
 export function clearSessionCookie(res: Response) {

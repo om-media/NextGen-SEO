@@ -824,7 +824,7 @@ export function Overview({
   return (
     <div className="space-y-6">
       {!isConnectionIssue && error && (
-        <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-sm text-red-600 shadow-[0_10px_24px_rgba(127,29,29,0.05)]">
+        <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-sm text-red-600 shadow-[0_10px_24px_rgba(127,29,29,0.05)] dark:border-red-900/50 dark:bg-red-950/35 dark:text-red-200">
           {error}
         </div>
       )}
@@ -834,21 +834,21 @@ export function Overview({
             key={metric.key}
             onClick={() => toggleMetric(metric.key)}
             className={cn(
-              "rounded-2xl border border-[#E9F0EB] bg-white p-4 text-left shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2] hover:shadow-[0_14px_30px_rgba(15,61,46,0.065)]",
-              activeMetrics[metric.key] && "border-[#DCEAE1] ring-1 ring-inset ring-[#EAF4EC]"
+              "rounded-2xl border border-border bg-card p-4 text-left shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-border/80 hover:shadow-[0_14px_30px_rgba(15,61,46,0.065)]",
+              activeMetrics[metric.key] && "border-border ring-1 ring-inset ring-secondary"
             )}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-medium text-[#334155]">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                   <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ backgroundColor: metric.color }}>
                     {activeMetrics[metric.key] && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
                   </span>
                   {metric.title}
-                  <Info className="h-3.5 w-3.5 text-[#94A3B8]" />
+                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
-                <div className="mt-4 text-3xl font-semibold text-[#0F172A]">
-                  {loading ? <span className="block h-8 w-20 animate-pulse rounded-xl bg-[#EEF3F0]" /> : metric.value}
+                <div className="mt-4 text-3xl font-semibold text-foreground">
+                  {loading ? <span className="block h-8 w-20 animate-pulse rounded-xl bg-muted" /> : metric.value}
                 </div>
               </div>
               {miniSparkline(metric.key, metric.color)}
@@ -863,12 +863,12 @@ export function Overview({
         ))}
       </div>
 
-      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+      <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="p-5">
           <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <h3 className="text-lg font-semibold text-[#0F172A]">Performance Over Time</h3>
-              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-[#334155]">
+              <h3 className="text-lg font-semibold text-foreground">Performance Over Time</h3>
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
                 {metricCards
                   .filter((metric) => activeMetrics[metric.key])
                   .map((metric) => (
@@ -880,14 +880,14 @@ export function Overview({
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex rounded-lg border border-[#E6ECE8] bg-[#FBFCFB] p-1">
+              <div className="flex rounded-lg border border-border bg-background p-1">
               {(['Day', 'Week', 'Month'] as const).map((t) => (
                 <button 
                   key={t}
                   onClick={() => setTimeframe(t)}
                   className={cn(
                     "h-8 px-5 text-xs font-medium rounded-md transition-colors",
-                    timeframe === t ? "bg-white shadow-sm text-[#0F172A]" : "text-[#647067] hover:text-[#0F172A]"
+                    timeframe === t ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   {t}
@@ -897,14 +897,14 @@ export function Overview({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 rounded-lg border-[#E6ECE8] bg-white"
+                className="h-9 rounded-lg border-border bg-card"
                 disabled={chartData.length === 0}
                 onClick={exportChartCsv}
               >
                 <Download className="mr-2 h-4 w-4" />
                 Export
               </Button>
-              <Button variant="outline" size="icon" className="h-9 w-9 rounded-lg border-[#E6ECE8] bg-white" disabled>
+              <Button variant="outline" size="icon" className="h-9 w-9 rounded-lg border-border bg-card" disabled>
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </div>
@@ -912,15 +912,15 @@ export function Overview({
 
           {/* Chart */}
           {loading ? (
-            <div className="h-[320px] w-full rounded-2xl bg-[linear-gradient(180deg,#FFFFFF_0%,#FBFCFB_100%)] p-6">
-              <div className="relative h-full overflow-hidden rounded-xl border border-[#E6ECE8] bg-white">
-                <div className="absolute inset-x-0 top-[18%] h-px bg-[#E6ECE8]" />
-                <div className="absolute inset-x-0 top-[42%] h-px bg-[#E6ECE8]" />
-                <div className="absolute inset-x-0 top-[66%] h-px bg-[#E6ECE8]" />
-                <div className="absolute bottom-8 left-8 right-8 h-24 animate-pulse rounded-[60%_42%_0_0] bg-gradient-to-t from-[#EAF2FF] to-transparent" />
-                <div className="absolute bottom-12 left-16 right-16 h-28 animate-pulse rounded-[42%_60%_0_0] bg-gradient-to-t from-[#F1E8FF] to-transparent [animation-delay:120ms]" />
-                <div className="absolute left-6 top-6 h-4 w-16 animate-pulse rounded-full bg-[#EEF3F0]" />
-                <div className="absolute right-6 top-6 h-4 w-20 animate-pulse rounded-full bg-[#EEF3F0]" />
+            <div className="h-[320px] w-full rounded-2xl bg-background p-6">
+              <div className="relative h-full overflow-hidden rounded-xl border border-border bg-card">
+                <div className="absolute inset-x-0 top-[18%] h-px bg-border" />
+                <div className="absolute inset-x-0 top-[42%] h-px bg-border" />
+                <div className="absolute inset-x-0 top-[66%] h-px bg-border" />
+                <div className="absolute bottom-8 left-8 right-8 h-24 animate-pulse rounded-[60%_42%_0_0] bg-gradient-to-t from-primary/15 to-transparent" />
+                <div className="absolute bottom-12 left-16 right-16 h-28 animate-pulse rounded-[42%_60%_0_0] bg-gradient-to-t from-secondary/40 to-transparent [animation-delay:120ms]" />
+                <div className="absolute left-6 top-6 h-4 w-16 animate-pulse rounded-full bg-muted" />
+                <div className="absolute right-6 top-6 h-4 w-20 animate-pulse rounded-full bg-muted" />
               </div>
             </div>
           ) : (
@@ -951,12 +951,12 @@ export function Overview({
                   </defs>
                   <CartesianGrid 
                     vertical={false} 
-                    stroke="#E6ECE8"
+                    stroke="var(--border)"
                     yAxisId={getPrimaryAxisId()}
                   />
                   <XAxis
                     dataKey="date"
-                    stroke="#888888"
+                    stroke="var(--muted-foreground)"
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
@@ -1186,14 +1186,14 @@ export function Overview({
                       key={ann.id}
                       yAxisId={getPrimaryAxisId()}
                       x={getAnnotationXParam(ann.date)}
-                      stroke={ann.type === 'system' ? '#0F3D2E' : '#7C3AED'}
+                      stroke={ann.type === 'system' ? 'var(--primary)' : '#8b5cf6'}
                       strokeDasharray="4 4"
                       strokeWidth={2}
                       ifOverflow="extendDomain"
                       label={
                         <AnnotationReferenceLabel
                           annotation={ann}
-                          fill={ann.type === 'system' ? '#0F3D2E' : '#7C3AED'}
+                          fill={ann.type === 'system' ? 'var(--primary)' : '#8b5cf6'}
                           offsetIndex={annotationOffsets.get(ann.id) || 0}
                         />
                       }
@@ -1201,8 +1201,8 @@ export function Overview({
                   ))}
 
                   <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    labelStyle={{ fontWeight: 'bold', marginBottom: '4px', color: '#0f172a' }}
+                    contentStyle={{ borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--popover)', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    labelStyle={{ fontWeight: 'bold', marginBottom: '4px', color: 'var(--foreground)' }}
                     formatter={(value: number, name: string) => {
                       if (name === 'CTR') return [`${value.toFixed(2)}%`, name];
                       if (name === 'Position') return [value.toFixed(1), name];
@@ -1215,9 +1215,9 @@ export function Overview({
             </div>
           )}
           {annotationControls && (
-            <div className="mt-5 flex flex-col gap-3 border-t border-[#E6ECE8] pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mt-5 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
               {annotationControls}
-              <Button variant="ghost" size="sm" className="w-fit text-[#2563EB] hover:text-[#1D4ED8]" onClick={scrollToFullReport}>
+              <Button variant="ghost" size="sm" className="w-fit text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300" onClick={scrollToFullReport}>
                 View full report
                 <span className="ml-2">-&gt;</span>
               </Button>

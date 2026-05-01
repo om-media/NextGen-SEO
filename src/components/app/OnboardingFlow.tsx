@@ -12,7 +12,6 @@ import type { SiteLike } from "../../lib/siteSelection";
 import { PLAN_DEFINITIONS, getPlanDefinition, getPlanDisplayName, getPlanPropertyLimit, getRemainingPropertySlots, type PlanTier } from "../../../shared/plans";
 
 type OnboardingFlowProps = {
-  bingApiKey?: string;
   fetchingSites: boolean;
   fetchingGa4Sites: boolean;
   ga4Sites: SiteLike[];
@@ -46,7 +45,6 @@ function getGa4PropertyLabel(site: SiteLike) {
 }
 
 export function OnboardingFlow({
-  bingApiKey,
   fetchingSites,
   fetchingGa4Sites,
   ga4Sites,
@@ -64,7 +62,7 @@ export function OnboardingFlow({
   userProfile,
 }: OnboardingFlowProps) {
   const [step, setStep] = useState<OnboardingStep>(googleConnected ? "plan" : "connect");
-  const [bingKeyDraft, setBingKeyDraft] = useState(bingApiKey || "");
+  const [bingKeyDraft, setBingKeyDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justConnectedGoogle, setJustConnectedGoogle] = useState(false);

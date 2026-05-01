@@ -38,7 +38,7 @@ function normalizeUserProfile(user: UserRow) {
     tier: (user.tier as 'free' | 'pro' | 'enterprise') || 'free',
     unlockedSites: JSON.parse(user.unlockedSites || '[]'),
     knownSites: JSON.parse(user.knownSites || '[]'),
-    bingApiKey: user.bingApiKey || '',
+    bingConnected: Boolean(user.bingApiKey),
     onboardingCompleted: Boolean(user.onboardingCompleted),
     activatedSiteUrl: user.activatedSiteUrl || null,
     activatedGa4PropertyId: user.activatedGa4PropertyId || null,

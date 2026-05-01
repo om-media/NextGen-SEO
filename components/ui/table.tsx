@@ -21,7 +21,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b [&_tr]:border-[#E6ECE8] [&_tr]:bg-[#FBFCFB]", className)}
+      className={cn("[&_tr]:border-b [&_tr]:border-border [&_tr]:bg-card", className)}
       {...props}
     />
   )
@@ -41,10 +41,7 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   return (
     <tfoot
       data-slot="table-footer"
-      className={cn(
-        "border-t border-[#E6ECE8] bg-[#FBFCFB] font-medium [&>tr]:last:border-b-0",
-        className
-      )}
+      className={cn("border-t border-border bg-card font-medium [&>tr]:last:border-b-0", className)}
       {...props}
     />
   )
@@ -55,7 +52,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b border-[#E6ECE8] transition-colors hover:bg-[#F6FAF7] has-aria-expanded:bg-[#F6FAF7] data-[state=selected]:bg-[#EAF4EC]",
+        "border-b border-border transition-colors hover:bg-muted/60 has-aria-expanded:bg-muted/60 data-[state=selected]:bg-secondary/60",
         className
       )}
       {...props}
@@ -68,7 +65,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-11 px-3 text-left align-middle text-xs font-semibold tracking-[-0.01em] whitespace-nowrap text-[#0F172A] [&:has([role=checkbox])]:pr-0",
+        "h-11 px-3 text-left align-middle text-xs font-semibold tracking-[-0.01em] whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
@@ -81,7 +78,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "px-3 py-3 align-middle whitespace-nowrap text-[#0F172A] [&:has([role=checkbox])]:pr-0",
+        "px-3 py-3 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}

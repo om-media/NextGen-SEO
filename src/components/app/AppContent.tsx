@@ -91,8 +91,8 @@ export function AppContent({
   const visibleAnnotations = getVisibleAnnotations(annotations, showSystemAnnotations, showUserAnnotations);
   const isUnlockedSite = (siteUrl: string) =>
     userProfile?.tier === "enterprise" || Boolean(userProfile?.unlockedSites.includes(siteUrl));
-  const dashboardTabListClass = "w-full justify-start gap-10 rounded-none border-b border-[#E6ECE8] bg-transparent p-0";
-  const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-[#647067] shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-[#0F3D2E] data-active:bg-transparent data-active:text-[#0F3D2E] data-active:shadow-none";
+  const dashboardTabListClass = "w-full justify-start gap-10 rounded-none border-b border-border bg-transparent p-0";
+  const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-muted-foreground shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-primary data-active:bg-transparent data-active:text-primary data-active:shadow-none";
 
   return (
     <>
@@ -148,10 +148,10 @@ export function AppContent({
 
       {selectedSite && !apiError && dataSource === "blended" && sites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
         <div className="space-y-4">
-          <div className="rounded-2xl border border-[#DDEAE2] bg-[#F8FAF9] p-5 shadow-[0_12px_32px_rgba(15,61,46,0.04)]">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#0F3D2E]">Blended page decisions</p>
-            <h3 className="mt-2 text-xl font-semibold tracking-[-0.02em] text-[#0F172A]">Pages Performance</h3>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-[#647067]">
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.04)]">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Blended page decisions</p>
+            <h3 className="mt-2 text-xl font-semibold tracking-[-0.02em] text-foreground">Pages Performance</h3>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
               This view joins GSC search visibility with GA4 onsite behavior by canonical page path. It does not blend GA4 sessions into query-level data.
             </p>
           </div>
@@ -165,11 +165,11 @@ export function AppContent({
         </div>
       )}
 
-      {selectedSite && !apiError && dataSource === "bing" && userProfile?.bingApiKey && bingSites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
+      {selectedSite && !apiError && dataSource === "bing" && userProfile?.bingConnected && bingSites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
         <div className="space-y-4">
-          <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-            <h3 className="mb-1 text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">Bing Webmaster Tools data</h3>
-            <p className="max-w-2xl text-sm leading-6 text-[#647067]">Bing integration is currently in beta. Advanced filtering and comparison features will be added soon.</p>
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+            <h3 className="mb-1 text-lg font-semibold tracking-[-0.01em] text-foreground">Bing Webmaster Tools data</h3>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Bing integration is currently in beta. Advanced filtering and comparison features will be added soon.</p>
           </div>
           <BingDataGrid siteUrl={selectedSite} />
         </div>
@@ -203,13 +203,13 @@ export function AppContent({
           </TabsContent>
           <TabsContent value="countries" className="space-y-4">
             <Ga4Demographics siteUrl={selectedSite} dateRange={dateRange} />
-            <div className="mt-8 flex items-center justify-between rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+            <div className="mt-8 flex items-center justify-between rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
               <div>
-                <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">Detailed user data</h3>
-                <p className="mt-1 text-sm text-[#647067]">Switch the dimension used for the detailed GA4 user breakdown.</p>
+                <h3 className="text-lg font-semibold tracking-[-0.01em] text-foreground">Detailed user data</h3>
+                <p className="mt-1 text-sm text-muted-foreground">Switch the dimension used for the detailed GA4 user breakdown.</p>
               </div>
               <Select value={ga4UserDimension} onValueChange={(value) => onGa4UserDimensionChange(value as Ga4Dimension)}>
-                <SelectTrigger className="w-[190px] rounded-xl border-[#E6ECE8] bg-white shadow-sm">
+                <SelectTrigger className="w-[190px] rounded-xl border-border bg-card shadow-sm">
                   <SelectValue placeholder="Select Dimension" />
                 </SelectTrigger>
                 <SelectContent>
@@ -279,10 +279,10 @@ export function AppContent({
               tab: "integrations" as const,
             },
           ].map((item) => (
-            <div key={item.tab} className="flex min-h-[220px] flex-col justify-between rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+            <div key={item.tab} className="flex min-h-[220px] flex-col justify-between rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
               <div>
-                <p className="text-lg font-semibold tracking-[-0.01em] text-[#0F172A]">{item.title}</p>
-                <p className="mt-2 text-sm leading-6 text-[#647067]">{item.description}</p>
+                <p className="text-lg font-semibold tracking-[-0.01em] text-foreground">{item.title}</p>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.description}</p>
               </div>
               <Button className="mt-6 justify-start" variant="outline" onClick={() => onOpenSettings(item.tab)}>
                 {item.action}
@@ -293,16 +293,16 @@ export function AppContent({
       )}
 
       {activeMenu === "AI Content Auditor" && (
-        <div className="rounded-2xl border border-[#E6ECE8] bg-white p-8 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <div className="rounded-2xl border border-border bg-card p-8 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
           <div className="max-w-2xl">
-            <p className="text-xl font-semibold tracking-[-0.01em] text-[#0F172A]">AI Content Auditor is being prepared</p>
-            <p className="mt-2 text-sm leading-6 text-[#647067]">
+            <p className="text-xl font-semibold tracking-[-0.01em] text-foreground">AI Content Auditor is being prepared</p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
               This section now has the same workspace shell, but the audit workflow still needs to be wired to real content data before we expose controls here.
             </p>
           </div>
           <div className="mt-6 grid gap-3 md:grid-cols-3">
             {["Content inventory", "Quality signals", "Actionable recommendations"].map((label) => (
-              <div key={label} className="rounded-2xl border border-dashed border-[#D9E5DE] bg-[#FBFCFB] p-4 text-sm text-[#647067]">
+              <div key={label} className="rounded-2xl border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground">
                 {label}
               </div>
             ))}

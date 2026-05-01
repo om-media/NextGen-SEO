@@ -13,20 +13,30 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
   const authRequired = requireAuth(db);
 
   app.post('/api/logs/upload', authRequired, upload.single('logfile'), async (req: AuthedRequest, res) => {
+    const file = req.file;
     try {
       const ownerId = req.authUser!.uid;
       const siteUrl = asTrimmedString(req.body.siteUrl);
-      const file = req.file;
 
       if (!siteUrl || !file) {
         return res.status(400).json({ error: 'Missing siteUrl or file' });
       }
 
+      const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
+      let processedBytes = 0;
       let readStream: NodeJS.ReadableStream = fs.createReadStream(file.path);
 
       if (file.originalname.toLowerCase().endsWith('.gz') || file.mimetype === 'application/gzip') {
         readStream = readStream.pipe(zlib.createGunzip());
       }
+
+      const limitedStream = readStream as NodeJS.ReadableStream & { destroy: (error?: Error) => void };
+      limitedStream.on('data', (chunk: Buffer) => {
+        processedBytes += chunk.length;
+        if (processedBytes > MAX_UNCOMPRESSED_BYTES) {
+          limitedStream.destroy(new Error('Uploaded log file is too large after decompression'));
+        }
+      });
 
       const rl = readline.createInterface({
         input: readStream,
@@ -72,11 +82,14 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
         await insertMany(currentBatch);
       }
 
-      fs.unlinkSync(file.path);
       res.json({ success: true, count });
     } catch (err: any) {
       console.error(err);
       res.status(500).json({ error: err.message });
+    } finally {
+      if (file?.path) {
+        await fs.promises.unlink(file.path).catch(() => {});
+      }
     }
   });
 

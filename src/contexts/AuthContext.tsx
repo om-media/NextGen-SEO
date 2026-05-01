@@ -17,10 +17,10 @@ export interface UserProfile {
   avatarUrl?: string | null;
   bio?: string | null;
   googleConnected?: boolean;
+  bingConnected?: boolean;
   tier: PlanTier;
   unlockedSites: string[];
   knownSites?: string[];
-  bingApiKey?: string;
   onboardingCompleted?: boolean;
   activatedSiteUrl?: string | null;
   activatedGa4PropertyId?: string | null;
@@ -294,7 +294,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await readJsonError(response, 'Failed to update Bing API key');
     }
 
-    setUserProfile((prev) => prev ? { ...prev, bingApiKey } : prev);
+    setUserProfile((prev) => prev ? { ...prev, bingConnected: Boolean(bingApiKey.trim()) } : prev);
   };
 
   const completeOnboarding = async (

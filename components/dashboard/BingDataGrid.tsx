@@ -23,7 +23,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
   const pageSize = 25
 
   useEffect(() => {
-    if (!user || !siteUrl || !userProfile?.bingApiKey) return;
+    if (!user || !siteUrl || !userProfile?.bingConnected) return;
 
     const fetchData = async () => {
       setLoading(true)
@@ -42,7 +42,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
     }
 
     fetchData()
-  }, [user, siteUrl, userProfile?.bingApiKey])
+  }, [user, siteUrl, userProfile?.bingConnected])
 
   const totals = useMemo(() => {
     if (!data.length) return { clicks: 0, impressions: 0, ctr: 0, position: 0 }

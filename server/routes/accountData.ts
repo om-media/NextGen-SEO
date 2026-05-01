@@ -22,7 +22,9 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         user.subscriptionId = user.subscriptionId || null;
         user.trialEndsAt = user.trialEndsAt || null;
         user.currentPeriodEnd = user.currentPeriodEnd || null;
+        user.bingConnected = Boolean(user.bingApiKey);
         delete user.gscRefreshToken;
+        delete user.bingApiKey;
 
         const limit = getPlanPropertyLimit(user.tier);
         if (limit !== null && user.unlockedSites.length > limit) {
@@ -234,8 +236,9 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       return res.status(400).json({ error: 'Invalid bingApiKey' });
     }
     try {
-      await db.run('UPDATE users SET bingApiKey = ? WHERE id = ?', [bingApiKey, req.params.id]);
-      res.json({ success: true, bingApiKey });
+      const normalized = typeof bingApiKey === 'string' ? bingApiKey.trim() : '';
+      await db.run('UPDATE users SET bingApiKey = ? WHERE id = ?', [normalized || null, req.params.id]);
+      res.json({ success: true, bingConnected: Boolean(normalized) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

@@ -118,6 +118,7 @@ export function SettingsDialog({
   const slotsRemaining = getRemainingPropertySlots(userProfile?.tier, unlockedSites.length);
   const billingStatus = userProfile?.billingStatus === "trialing" ? "active" : (userProfile?.billingStatus || "active");
   const periodEndLabel = formatDateLabel(userProfile?.currentPeriodEnd);
+  const bingConnected = Boolean(userProfile?.bingConnected);
   const billingTone = billingStatus === "active"
     ? "secondary"
     : billingStatus === "past_due" || billingStatus === "incomplete"
@@ -127,24 +128,24 @@ export function SettingsDialog({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <DialogContent className="max-h-[88vh] overflow-hidden p-0 sm:max-w-4xl">
-        <DialogHeader className="border-b border-[#E6ECE8] bg-white px-6 py-5">
+        <DialogHeader className="border-b border-border bg-card px-6 py-5">
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>Manage your profile, workspace defaults, integrations, and billing in one place.</DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)} className="flex max-h-[calc(88vh-84px)] flex-col">
-          <div className="border-b border-[#E6ECE8] bg-[#FBFCFB] px-6 py-4">
-            <TabsList className="grid w-full grid-cols-4 rounded-2xl border border-[#E6ECE8] bg-white/80 p-1 shadow-sm">
-              <TabsTrigger value="profile" className="rounded-xl data-[state=active]:bg-[#EAF4EC] data-[state=active]:text-[#0F3D2E] data-[state=active]:shadow-sm">Profile</TabsTrigger>
-              <TabsTrigger value="plan" className="rounded-xl data-[state=active]:bg-[#EAF4EC] data-[state=active]:text-[#0F3D2E] data-[state=active]:shadow-sm">Plan</TabsTrigger>
-              <TabsTrigger value="workspace" className="rounded-xl data-[state=active]:bg-[#EAF4EC] data-[state=active]:text-[#0F3D2E] data-[state=active]:shadow-sm">Workspace</TabsTrigger>
-              <TabsTrigger value="integrations" className="rounded-xl data-[state=active]:bg-[#EAF4EC] data-[state=active]:text-[#0F3D2E] data-[state=active]:shadow-sm">Integrations</TabsTrigger>
+          <div className="border-b border-border bg-background px-6 py-4">
+            <TabsList className="grid w-full grid-cols-4 rounded-2xl border border-border bg-card/80 p-1 shadow-sm">
+              <TabsTrigger value="profile" className="rounded-xl data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-sm">Profile</TabsTrigger>
+              <TabsTrigger value="plan" className="rounded-xl data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-sm">Plan</TabsTrigger>
+              <TabsTrigger value="workspace" className="rounded-xl data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-sm">Workspace</TabsTrigger>
+              <TabsTrigger value="integrations" className="rounded-xl data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-sm">Integrations</TabsTrigger>
             </TabsList>
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-[#FBFCFB] px-6 py-5">
+          <div className="flex-1 overflow-y-auto bg-background px-6 py-5">
             <TabsContent value="profile" className="mt-0 space-y-5 pt-0">
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                 <div className="flex items-center gap-4">
                   <Avatar className="h-16 w-16 ring-1 ring-border">
                     <AvatarImage src={draft.avatarUrl} alt={displayName} />
@@ -159,23 +160,23 @@ export function SettingsDialog({
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4 shadow-sm space-y-2">
+                <div className="rounded-2xl border border-border bg-card p-4 shadow-sm space-y-2">
                   <Label htmlFor="profile-name">Name</Label>
                   <Input id="profile-name" value={draft.name} onChange={(event) => updateDraft(draft, onDraftChange, { name: event.target.value })} placeholder="Your full name" />
                 </div>
-                <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4 shadow-sm space-y-2">
+                <div className="rounded-2xl border border-border bg-card p-4 shadow-sm space-y-2">
                   <Label htmlFor="profile-company">Company</Label>
                   <Input id="profile-company" value={draft.company} onChange={(event) => updateDraft(draft, onDraftChange, { company: event.target.value })} placeholder="Your company or brand" />
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4 shadow-sm space-y-2">
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm space-y-2">
                 <Label htmlFor="profile-avatar">Avatar image URL</Label>
                 <Input id="profile-avatar" value={draft.avatarUrl} onChange={(event) => updateDraft(draft, onDraftChange, { avatarUrl: event.target.value })} placeholder="https://example.com/avatar.jpg" />
                 <p className="text-xs text-muted-foreground">Use any hosted image URL. This updates your app profile avatar everywhere in the workspace.</p>
               </div>
 
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4 shadow-sm space-y-2">
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm space-y-2">
                 <Label htmlFor="profile-bio">Bio</Label>
                 <Textarea
                   id="profile-bio"
@@ -188,7 +189,7 @@ export function SettingsDialog({
             </TabsContent>
 
             <TabsContent value="plan" className="mt-0 space-y-5 pt-0">
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <p className="text-sm font-medium text-muted-foreground">Current plan</p>
@@ -205,7 +206,7 @@ export function SettingsDialog({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <p className="text-sm font-medium">Billing status</p>
@@ -214,15 +215,15 @@ export function SettingsDialog({
                   <Badge variant={billingTone}>{billingStatus.replace("_", " ")}</Badge>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-3 text-sm">
+                  <div className="rounded-xl border border-border bg-background px-3 py-3 text-sm">
                     <p className="font-medium">Plan access</p>
                     <p className="mt-1 text-muted-foreground">{billingStatus === "active" ? "Active" : billingStatus.replace("_", " ")}</p>
                   </div>
-                  <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-3 text-sm">
+                  <div className="rounded-xl border border-border bg-background px-3 py-3 text-sm">
                     <p className="font-medium">Current period end</p>
                     <p className="mt-1 text-muted-foreground">{periodEndLabel || "Not billing yet"}</p>
                   </div>
-                  <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-3 text-sm">
+                  <div className="rounded-xl border border-border bg-background px-3 py-3 text-sm">
                     <p className="font-medium">Subscription ID</p>
                     <p className="mt-1 truncate text-muted-foreground">{userProfile?.subscriptionId || "Pending billing integration"}</p>
                   </div>
@@ -230,7 +231,7 @@ export function SettingsDialog({
               </div>
 
               <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm">
+                <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                   <p className="text-sm font-medium">Feature highlights</p>
                   <div className="mt-3 space-y-2 text-sm text-muted-foreground">
                     {planDefinition.featureHighlights.map((feature) => (
@@ -242,7 +243,7 @@ export function SettingsDialog({
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm">
+                <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                   <p className="text-sm font-medium">Entitlements</p>
                   <div className="mt-3 space-y-2 text-sm text-muted-foreground">
                     <div className="flex items-center justify-between gap-4">
@@ -265,7 +266,7 @@ export function SettingsDialog({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="space-y-1">
                     <p className="text-sm font-medium">Billing actions</p>
@@ -331,13 +332,13 @@ export function SettingsDialog({
                     {selectedSite === userProfile?.activatedSiteUrl ? "Current default" : "Make current selection default"}
                   </Button>
                 </div>
-                <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-2 text-sm">
+                <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm">
                   <span className="font-medium">Current default:</span>{" "}
                   {userProfile?.activatedSiteUrl || "No default property saved yet"}
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm space-y-3">
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-3">
                 <div>
                   <p className="text-sm font-medium">Unlocked properties</p>
                   <p className="text-sm text-muted-foreground">These properties are currently active for your workspace.</p>
@@ -355,14 +356,14 @@ export function SettingsDialog({
                 )}
               </div>
 
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm space-y-2">
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-2">
                 <p className="text-sm font-medium">Known properties cache</p>
                 <p className="text-sm text-muted-foreground">We currently know about {knownSites.length} properties for faster workspace recovery.</p>
               </div>
             </TabsContent>
 
             <TabsContent value="integrations" className="mt-0 space-y-5 pt-0">
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <p className="text-sm font-medium">Google data connection</p>
@@ -397,17 +398,20 @@ export function SettingsDialog({
               </div>
 
               <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm space-y-2">
-                <Label htmlFor="bing-key">Bing Webmaster Tools API Key</Label>
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="bing-key">Bing Webmaster Tools API Key</Label>
+                  <Badge variant={bingConnected ? "secondary" : "outline"}>{bingConnected ? "Connected" : "Not connected"}</Badge>
+                </div>
                 <Input
                   id="bing-key"
                   value={draft.bingApiKey}
                   onChange={(event) => updateDraft(draft, onDraftChange, { bingApiKey: event.target.value })}
                   placeholder="Enter your Bing API key"
                 />
-                <p className="text-xs text-muted-foreground">You can generate this in the Bing Webmaster Tools portal under Settings and API Access.</p>
+                <p className="text-xs text-muted-foreground">Enter a new key to connect Bing, or leave this blank to keep the existing connection unchanged.</p>
               </div>
 
-              <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-dashed border-border bg-card p-5 shadow-sm">
                 <p className="text-sm font-medium">Need help getting your Bing API key?</p>
                 <p className="mt-2 text-sm text-muted-foreground">
                   Sign in to Bing Webmaster Tools, verify your site, then open Settings and API Access to generate one key for your account.
@@ -425,7 +429,7 @@ export function SettingsDialog({
               </div>
 
               {selectedSite && dataSource === "gsc" && (
-                <div className="space-y-2 border-t border-[#E6ECE8] bg-white pt-4">
+                <div className="space-y-2 border-t border-border bg-card pt-4">
                   <Label>Data Warehouse Sync</Label>
                   <div className="flex items-center justify-between gap-4">
                     <p className="text-sm text-balance text-muted-foreground">
@@ -439,7 +443,7 @@ export function SettingsDialog({
           </div>
         </Tabs>
 
-        <DialogFooter className="border-t border-[#E6ECE8] bg-white px-6 py-4">
+        <DialogFooter className="border-t border-border bg-card px-6 py-4">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>

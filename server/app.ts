@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import type { AppDatabase } from './database.js';
 import { registerAccountDataRoutes } from './routes/accountData.js';
+import { registerAiRoutes } from './routes/ai.js';
 import { registerLocalAuthRoutes } from './routes/auth.js';
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerBlendedRoutes } from './routes/blended.js';
@@ -34,6 +35,7 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey }: BuildAppOption
 
   registerLocalAuthRoutes(app, db);
   registerAccountDataRoutes(app, db);
+  registerAiRoutes(app, db);
   registerBillingRoutes(app, db);
   registerGoogleRoutes(app, db);
   registerWorkspaceCrudRoutes(app, db);

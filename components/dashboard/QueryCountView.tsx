@@ -406,7 +406,7 @@ export function QueryCountView({
     const formattedDiff = `${diff > 0 ? '+' : ''}${diff.toLocaleString()}`;
 
     return (
-      <span className={`text-xs ml-2 ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
+      <span className={`text-xs ml-2 ${isPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>
         {formattedDiff}
       </span>
     );
@@ -420,13 +420,13 @@ export function QueryCountView({
         </div>
       )}
 
-      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <div className="flex flex-col items-start justify-between gap-3 border-b border-[#E6ECE8] bg-white p-5 sm:flex-row sm:items-center">
+      <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <div className="flex flex-col items-start justify-between gap-3 border-b border-border bg-card p-5 sm:flex-row sm:items-center">
           <div>
             <div className="flex items-center gap-2">
               <h3 className="font-semibold text-lg">Daily Visible Queries</h3>
               <span
-                className="rounded-full bg-[#EAF4EC] px-2 py-0.5 text-xs font-medium text-[#0F3D2E]"
+                className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"
                 title={QUERY_VISIBILITY_NOTE}
               >
                 GSC filtered
@@ -437,7 +437,7 @@ export function QueryCountView({
                 ? `Daily visible queries for: ${selectedPage.replace(siteUrl, '/')}`
                 : 'Daily visible queries for the entire property'}
             </p>
-            <p className="mt-2 max-w-3xl text-xs leading-5 text-[#647067]">
+            <p className="mt-2 max-w-3xl text-xs leading-5 text-muted-foreground">
               {QUERY_VISIBILITY_NOTE}
             </p>
           </div>
@@ -462,10 +462,10 @@ export function QueryCountView({
                       <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                   <XAxis
                     dataKey="date"
-                    stroke="#888888"
+                    stroke="var(--muted-foreground)"
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
@@ -480,18 +480,18 @@ export function QueryCountView({
                     tickLine={false}
                     tickCount={5}
                     domain={[0, 'auto']}
-                    tick={<CustomYAxisTick fill="#6366f1" formatter={(v: number) => v.toLocaleString()} />}
+                    tick={<CustomYAxisTick fill="var(--primary)" formatter={(v: number) => v.toLocaleString()} />}
                   />
                   <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    labelStyle={{ fontWeight: 'bold', marginBottom: '4px', color: '#0f172a' }}
+                    contentStyle={{ borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--popover)', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    labelStyle={{ fontWeight: 'bold', marginBottom: '4px', color: 'var(--foreground)' }}
                     formatter={(value: number) => [value.toLocaleString(), 'Visible queries']}
                   />
                   <Area
                     type="monotone"
                     dataKey="queryCount"
                     name="Visible queries"
-                    stroke="#6366f1"
+                    stroke="var(--primary)"
                     strokeWidth={2}
                     fillOpacity={1}
                     fill="url(#color_queryCount)"
@@ -502,7 +502,7 @@ export function QueryCountView({
                       type="monotone"
                       dataKey="compareQueryCount"
                       name="Compare visible queries"
-                      stroke="#6366f1"
+                      stroke="var(--primary)"
                       strokeWidth={2}
                       strokeDasharray="5 5"
                       dot={false}
@@ -516,8 +516,8 @@ export function QueryCountView({
         </CardContent>
       </Card>
 
-      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <div className="border-b border-[#E6ECE8] bg-white p-5">
+      <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <div className="border-b border-border bg-card p-5">
           <h3 className="font-semibold text-lg">Visible Queries by Page</h3>
           <p className="text-sm text-muted-foreground">
             Period totals include only non-anonymized Search Console query rows. Click a page to view its daily visible-query trend above.
@@ -527,25 +527,25 @@ export function QueryCountView({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[50%] cursor-pointer select-none hover:bg-[#F6FAF7]" onClick={() => handleSort('page')}>
+                <TableHead className="w-[50%] cursor-pointer select-none hover:bg-muted/60" onClick={() => handleSort('page')}>
                   <div className="flex items-center">
                     Page URL
                     {renderSortIcon('page')}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort('queryCount')}>
+                <TableHead className="cursor-pointer select-none text-right hover:bg-muted/60" onClick={() => handleSort('queryCount')}>
                   <div className="flex items-center justify-end">
                     Visible Queries
                     {renderSortIcon('queryCount')}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort('clicks')}>
+                <TableHead className="cursor-pointer select-none text-right hover:bg-muted/60" onClick={() => handleSort('clicks')}>
                   <div className="flex items-center justify-end">
                     Total Clicks
                     {renderSortIcon('clicks')}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer select-none text-right hover:bg-[#F6FAF7]" onClick={() => handleSort('impressions')}>
+                <TableHead className="cursor-pointer select-none text-right hover:bg-muted/60" onClick={() => handleSort('impressions')}>
                   <div className="flex items-center justify-end">
                     Total Impressions
                     {renderSortIcon('impressions')}
@@ -563,13 +563,13 @@ export function QueryCountView({
               ) : currentData.map((row, i) => (
                 <TableRow 
                   key={i} 
-                  className={`cursor-pointer hover:bg-[#F6FAF7] ${selectedPage === row.page ? 'bg-[#EAF4EC]' : ''}`}
+                  className={`cursor-pointer hover:bg-muted/60 ${selectedPage === row.page ? 'bg-secondary/60' : ''}`}
                   onClick={() => setSelectedPage(row.page)}
                 >
                   <TableCell className="font-medium max-w-[500px] truncate" title={row.page}>
                     {row.page.replace(siteUrl, '/')}
                   </TableCell>
-                  <TableCell className="text-right font-semibold text-indigo-600">
+                  <TableCell className="text-right font-semibold text-primary">
                     {row.queryCount.toLocaleString()}
                     {renderDifference(row.queryCount, row.compareQueryCount)}
                   </TableCell>
@@ -596,7 +596,7 @@ export function QueryCountView({
 
         {/* Pagination Controls */}
         {pageCount > 1 && (
-          <div className="flex items-center justify-between border-t border-[#E6ECE8] px-5 py-4">
+          <div className="flex items-center justify-between border-t border-border px-5 py-4">
             <div className="flex-1 text-sm text-muted-foreground">
               Showing {pageIndex * pageSize + 1} to {Math.min((pageIndex + 1) * pageSize, sortedTableData.length)} of {sortedTableData.length} entries
             </div>

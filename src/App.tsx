@@ -89,7 +89,7 @@ function MainApp() {
     setSettingsInitialTab(tab)
     setSettingsDraft({
       avatarUrl: userProfile?.avatarUrl || user?.photoURL || "",
-      bingApiKey: userProfile?.bingApiKey || "",
+      bingApiKey: "",
       bio: userProfile?.bio || "",
       company: userProfile?.company || "",
       name: userProfile?.name || user?.displayName || "",
@@ -339,7 +339,7 @@ function MainApp() {
           });
       }
     } else if (dataSource === 'bing' && user) {
-      if (!userProfile?.bingApiKey) {
+      if (!userProfile?.bingConnected) {
         setBingSites([]);
         setSelectedSite("");
         return;
@@ -442,7 +442,10 @@ function MainApp() {
       company: settingsDraft.company,
       name: settingsDraft.name,
     });
-    await setBingApiKey(settingsDraft.bingApiKey);
+    if (settingsDraft.bingApiKey.trim()) {
+      await setBingApiKey(settingsDraft.bingApiKey.trim());
+    }
+    setSettingsDraft((prev) => ({ ...prev, bingApiKey: "" }));
     setShowSettingsModal(false);
   };
 
@@ -530,7 +533,7 @@ function MainApp() {
       await unlockSite(selectedSite);
     }
 
-    if (bingApiKey.trim() && bingApiKey.trim() !== (userProfile?.bingApiKey || "")) {
+    if (bingApiKey.trim()) {
       await setBingApiKey(bingApiKey.trim());
     }
 
@@ -791,7 +794,6 @@ function MainApp() {
   if (userProfile && !userProfile.onboardingCompleted) {
     return (
       <OnboardingFlow
-        bingApiKey={userProfile.bingApiKey}
         fetchingSites={fetchingSites}
         fetchingGa4Sites={fetchingSites}
         ga4Sites={ga4Sites}

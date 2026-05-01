@@ -142,19 +142,23 @@
   html {
     @apply font-sans;
     scroll-behavior: smooth;
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
   }
 }
 
 @layer utilities {
   .app-shell-bg {
-    background: linear-gradient(180deg, #fbfcfb 0%, #f8faf9 42%, #f6f8f7 100%);
+    background: var(--app-shell-bg);
   }
 
   .premium-panel {
-    background: rgba(255, 255, 255, 0.88);
+    background: var(--app-surface);
     box-shadow:
-      0 1px 0 rgba(255, 255, 255, 0.92) inset,
-      0 12px 36px rgba(15, 61, 46, 0.05);
+      0 1px 0 var(--app-surface-highlight) inset,
+      0 12px 36px var(--app-shadow);
     backdrop-filter: blur(16px);
   }
 
@@ -184,5 +188,94 @@
   }
   .hide-scrollbars::-webkit-scrollbar {
     display: none;
+  }
+
+  :root {
+    --app-shell-bg: linear-gradient(180deg, #fbfcfb 0%, #f8faf9 42%, #f6f8f7 100%);
+    --app-surface: rgba(255, 255, 255, 0.88);
+    --app-surface-highlight: rgba(255, 255, 255, 0.92);
+    --app-shadow: rgba(15, 61, 46, 0.05);
+  }
+
+  .dark {
+    --app-shell-bg: linear-gradient(180deg, #0a0a0b 0%, #101114 48%, #15171b 100%);
+    --app-surface: rgba(18, 19, 22, 0.84);
+    --app-surface-highlight: rgba(255, 255, 255, 0.04);
+    --app-shadow: rgba(0, 0, 0, 0.35);
+  }
+
+  .dark [class*="bg-white"] {
+    background-color: var(--card) !important;
+  }
+
+  .dark [class*="bg-[#FBFCFB]"],
+  .dark [class*="bg-[#F8FAF9]"] {
+    background-color: var(--background) !important;
+  }
+
+  .dark [class*="bg-[#EAF4EC]"],
+  .dark [class*="bg-[#EEF3F0]"] {
+    background-color: var(--muted) !important;
+  }
+
+  .dark [class*="bg-[#F4ECFF]"],
+  .dark [class*="bg-[#FFF2E8]"] {
+    background-color: rgba(168, 85, 247, 0.12) !important;
+  }
+
+  .dark [class*="border-[#E6ECE8]"],
+  .dark [class*="border-[#DDEAE2]"],
+  .dark [class*="border-[#E9F0EB]"] {
+    border-color: var(--border) !important;
+  }
+
+  .dark [class*="text-[#0F172A]"] {
+    color: var(--foreground) !important;
+  }
+
+  .dark [class*="text-[#647067]"],
+  .dark [class*="text-[#475569]"] {
+    color: var(--muted-foreground) !important;
+  }
+
+  .dark [class*="text-[#0F3D2E]"] {
+    color: var(--foreground) !important;
+  }
+
+  .dark [class*="text-[#6D28D9]"] {
+    color: #c4b5fd !important;
+  }
+
+  .dark .recharts-cartesian-grid line,
+  .dark .recharts-cartesian-axis-line,
+  .dark .recharts-reference-line line {
+    stroke: var(--border) !important;
+  }
+
+  .dark .recharts-cartesian-axis-tick text,
+  .dark .recharts-text,
+  .dark .recharts-legend-item-text,
+  .dark .recharts-tooltip-label {
+    fill: var(--muted-foreground) !important;
+    color: var(--muted-foreground) !important;
+  }
+
+  .dark .recharts-default-tooltip {
+    background: var(--popover) !important;
+    border-color: var(--border) !important;
+    color: var(--foreground) !important;
+  }
+
+  .dark table {
+    color: var(--foreground);
+    background: var(--card);
+  }
+
+  .dark thead tr {
+    background: var(--card);
+  }
+
+  .dark tbody tr:hover {
+    background: color-mix(in srgb, var(--muted) 70%, transparent) !important;
   }
 }
