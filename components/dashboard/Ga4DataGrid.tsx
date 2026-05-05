@@ -219,7 +219,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
   if (loading && data.length === 0) {
     return (
-      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+      <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </CardContent>
@@ -229,7 +229,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
   if (error) {
     return (
-      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+      <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex flex-col items-center justify-center h-64 text-destructive space-y-4">
           <div className="text-center">{error}</div>
           {error.includes("https://console.developers.google.com") && (
@@ -286,8 +286,8 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   return (
     <div className="space-y-6">
       {selectedRowKey && dimension !== 'date' && (
-        <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-          <div className="flex flex-col items-start justify-between gap-3 border-b border-[#E6ECE8] bg-white p-5 sm:flex-row sm:items-center">
+        <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <div className="flex flex-col items-start justify-between gap-3 border-b border-border bg-card p-5 sm:flex-row sm:items-center">
             <div>
               <h3 className="font-semibold text-lg">Historic Trend</h3>
               <p className="text-sm text-muted-foreground">
@@ -314,7 +314,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
       {pieData && !selectedRowKey && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-5xl mx-auto">
-          <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Top Sessions Breakdown</CardTitle>
             </CardHeader>
@@ -347,7 +347,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             </CardContent>
           </Card>
 
-          <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Top Users Breakdown</CardTitle>
             </CardHeader>
@@ -382,8 +382,8 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
         </div>
       )}
 
-      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardHeader className={dimension !== 'date' ? "flex flex-row items-center justify-between border-b border-[#E6ECE8] bg-white px-5 py-4" : "border-b border-[#E6ECE8] bg-white px-5 py-4"}>
+      <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardHeader className={dimension !== 'date' ? "flex flex-row items-center justify-between border-b border-border bg-card px-5 py-4" : "border-b border-border bg-card px-5 py-4"}>
           <div>
             <CardTitle>{dimension === 'date' ? 'Data Table' : `Detailed ${getDimensionHeader()} Data`}</CardTitle>
             {dimension !== 'date' && (
@@ -398,7 +398,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             <span>Updating data...</span>
           </div>
         )}
-        <div className="relative overflow-hidden rounded-2xl border border-[#E6ECE8] bg-white">
+        <div className="relative overflow-hidden rounded-2xl border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -442,17 +442,17 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
               ) : (
                 currentData.map((row, i) => {
                   const dimStr = getGa4DimensionValue(row);
-                  let formattedDim = dimStr;
+                  let formattedDim = dimStr || '(not set)';
                   if (dimension === 'date' && dimStr.length === 8) {
                     formattedDim = format(new Date(parseInt(dimStr.substring(0, 4)), parseInt(dimStr.substring(4, 6)) - 1, parseInt(dimStr.substring(6, 8))), 'MMM d, yyyy');
-                  } else if (dimStr === '(not set)') {
-                    formattedDim = 'Unknown';
+                  } else if (!dimStr || dimStr === '(not set)') {
+                    formattedDim = '(not set)';
                   }
 
                   return (
                     <TableRow 
                       key={i}
-                      className={dimension !== 'date' ? `cursor-pointer transition-colors hover:bg-[#F6FAF7] ${selectedRowKey === dimStr ? 'bg-[#EAF4EC]' : ''}` : ''}
+                      className={dimension !== 'date' ? `cursor-pointer transition-colors hover:bg-muted/60 ${selectedRowKey === dimStr ? 'bg-secondary/60' : ''}` : ''}
                       onClick={() => {
                         if (dimension !== 'date') {
                           setSelectedRowKey(dimStr)
@@ -495,7 +495,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
         {/* Pagination Controls */}
         {pageCount > 1 && (
-          <div className="flex items-center justify-between border-t border-[#E6ECE8] px-2 py-4">
+          <div className="flex items-center justify-between border-t border-border px-2 py-4">
             <div className="flex-1 text-sm text-muted-foreground">
               Showing {pageIndex * pageSize + 1} to {Math.min((pageIndex + 1) * pageSize, sortedData.length)} of {sortedData.length} entries
             </div>

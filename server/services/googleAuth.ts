@@ -214,7 +214,10 @@ export async function getGoogleAccessTokenForUser(db: AppDatabase, userId: strin
 
   const data = await response.json() as GoogleTokenResponse;
   if (!response.ok || !data.access_token) {
-    await clearGoogleRefreshToken(db, userId);
+    if (data.error === 'invalid_grant') {
+      await clearGoogleRefreshToken(db, userId);
+    }
+
     throw new Error(data.error_description || data.error || 'GOOGLE_NOT_CONNECTED');
   }
 

@@ -22,7 +22,9 @@ type AppToolbarProps = {
   onCompareToDateChange: (date: Date | undefined) => void;
   onFromDateChange: (date: Date | undefined) => void;
   onGscSyncComplete?: () => void;
+  onOpenRawData?: () => void;
   onToDateChange: (date: Date | undefined) => void;
+  rawDataAvailable?: boolean;
   setIsCompareMode: (value: boolean) => void;
 };
 
@@ -38,7 +40,9 @@ export function AppToolbar({
   onCompareToDateChange,
   onFromDateChange,
   onGscSyncComplete,
+  onOpenRawData,
   onToDateChange,
+  rawDataAvailable = false,
   setIsCompareMode,
 }: AppToolbarProps) {
   const sectionCopy = getSectionCopy(activeMenu, dataSource);
@@ -81,6 +85,15 @@ export function AppToolbar({
                 />
               </div>
               <GscSyncStatusBadge refreshKey={syncRefreshKey} siteUrl={currentSiteUrl} />
+              {rawDataAvailable && onOpenRawData && (
+                <button
+                  className="h-9 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
+                  onClick={onOpenRawData}
+                  type="button"
+                >
+                  Raw exports
+                </button>
+              )}
             </>
           )}
           <div className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-[0_8px_20px_rgba(15,61,46,0.06)]">

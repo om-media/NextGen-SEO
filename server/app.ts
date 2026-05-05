@@ -5,14 +5,18 @@ import { registerAccountDataRoutes } from './routes/accountData.js';
 import { registerAiRoutes } from './routes/ai.js';
 import { registerLocalAuthRoutes } from './routes/auth.js';
 import { registerBillingRoutes } from './routes/billing.js';
+import { registerCrawlRoutes } from './routes/crawl.js';
 import { registerBlendedRoutes } from './routes/blended.js';
 import { registerIndexingRoutes } from './routes/indexing.js';
 import { registerLogRoutes } from './routes/logs.js';
 import { registerGoogleRoutes } from './routes/google.js';
 import { registerRankTrackingRoutes } from './routes/rankTracking.js';
+import { registerReconciliationRoutes } from './routes/reconciliation.js';
 import { registerWarehouseRoutes } from './routes/warehouse.js';
 import { registerWorkspaceCrudRoutes } from './routes/workspaceCrud.js';
+import { startCrawlQueueWorker } from './services/crawl.js';
 import { startRankTrackingScheduler } from './services/rankTracking.js';
+import { startWarehouseDailyScheduler, startWarehouseJobWorker } from './services/warehouseJobs.js';
 
 export type SyncJobState = {
   current: number;
@@ -37,14 +41,19 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey }: BuildAppOption
   registerAccountDataRoutes(app, db);
   registerAiRoutes(app, db);
   registerBillingRoutes(app, db);
+  registerCrawlRoutes(app, db);
   registerGoogleRoutes(app, db);
   registerWorkspaceCrudRoutes(app, db);
   registerLogRoutes(app, db, upload);
   registerWarehouseRoutes(app, db);
   registerBlendedRoutes(app, db);
+  registerReconciliationRoutes(app, db);
   registerRankTrackingRoutes(app, db);
   registerIndexingRoutes(app, db, syncJobs, getSyncJobKey);
 
+  startCrawlQueueWorker(db);
+  startWarehouseJobWorker(db);
+  startWarehouseDailyScheduler(db);
   startRankTrackingScheduler(db);
 
   return app;

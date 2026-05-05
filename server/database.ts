@@ -114,6 +114,7 @@ const commonSchemaSql = `
     siteUrl TEXT,
     date TEXT,
     page TEXT,
+    pageKey TEXT,
     query TEXT,
     clicks INTEGER,
     impressions INTEGER,
@@ -177,6 +178,96 @@ const commonSchemaSql = `
     lastInspectionTime TEXT NOT NULL,
     PRIMARY KEY (ownerId, siteUrl, url)
   );
+
+  CREATE TABLE IF NOT EXISTS warehouse_jobs (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT,
+    siteUrl TEXT,
+    propertyId TEXT,
+    jobType TEXT,
+    status TEXT,
+    targetDate TEXT,
+    attemptCount INTEGER DEFAULT 0,
+    maxAttempts INTEGER DEFAULT 3,
+    lockedAt TEXT,
+    nextRunAt TEXT,
+    startedAt TEXT,
+    updatedAt TEXT,
+    completedAt TEXT,
+    lastError TEXT,
+    rowsSynced INTEGER DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS crawl_jobs (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT,
+    siteUrl TEXT,
+    startUrl TEXT,
+    sitemapUrl TEXT,
+    status TEXT,
+    maxPages INTEGER,
+    maxDepth INTEGER,
+    discoveredCount INTEGER DEFAULT 0,
+    crawledCount INTEGER DEFAULT 0,
+    errorCount INTEGER DEFAULT 0,
+    skippedCount INTEGER DEFAULT 0,
+    queuedCount INTEGER DEFAULT 0,
+    startedAt TEXT,
+    updatedAt TEXT,
+    completedAt TEXT,
+    lastError TEXT,
+    attemptCount INTEGER DEFAULT 0,
+    maxAttempts INTEGER DEFAULT 3,
+    lockedAt TEXT,
+    nextRunAt TEXT,
+    renderMode TEXT DEFAULT 'html',
+    respectRobots INTEGER DEFAULT 1,
+    includeQueryStrings INTEGER DEFAULT 0,
+    userAgent TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS crawl_pages (
+    ownerId TEXT,
+    siteUrl TEXT,
+    jobId TEXT,
+    url TEXT,
+    normalizedUrl TEXT,
+    pageKey TEXT,
+    finalUrl TEXT,
+    statusCode INTEGER,
+    contentType TEXT,
+    title TEXT,
+    metaDescription TEXT,
+    canonicalUrl TEXT,
+    h1Text TEXT,
+    h1Count INTEGER,
+    h2Count INTEGER,
+    wordCount INTEGER,
+    depth INTEGER,
+    discoveredFrom TEXT,
+    discoveredFromUrl TEXT,
+    discoveredAt TEXT,
+    crawledAt TEXT,
+    responseTimeMs INTEGER,
+    noindex INTEGER DEFAULT 0,
+    internalLinkCount INTEGER DEFAULT 0,
+    outgoingLinkCount INTEGER DEFAULT 0,
+    errorMessage TEXT,
+    PRIMARY KEY (ownerId, siteUrl, jobId, normalizedUrl)
+  );
+
+  CREATE TABLE IF NOT EXISTS crawl_links (
+    ownerId TEXT,
+    siteUrl TEXT,
+    jobId TEXT,
+    fromUrl TEXT,
+    toUrl TEXT,
+    fromPageKey TEXT,
+    toPageKey TEXT,
+    discoveredAt TEXT,
+    depth INTEGER,
+    PRIMARY KEY (ownerId, siteUrl, jobId, fromUrl, toUrl)
+  );
 `;
 
 const sqliteSchemaSql = `
@@ -220,8 +311,25 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(userId);
   CREATE INDEX IF NOT EXISTS idx_gsc_site_owner_site_date ON gsc_site_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_query_owner_site_date ON gsc_query_metrics(ownerId, siteUrl, date);
+  CREATE INDEX IF NOT EXISTS idx_gsc_query_owner_site_date_query ON gsc_query_metrics(ownerId, siteUrl, date, query);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_date_page ON gsc_page_query_metrics(ownerId, siteUrl, date, page);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_date_query ON gsc_page_query_metrics(ownerId, siteUrl, date, query);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_page_date ON gsc_page_query_metrics(ownerId, siteUrl, page, date);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_pagekey_date ON gsc_page_query_metrics(ownerId, siteUrl, pageKey, date);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_date_pagekey ON gsc_page_query_metrics(ownerId, siteUrl, date, pageKey);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_key ON ga4_page_metrics(ownerId, propertyId, date, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_key_date ON ga4_page_metrics(ownerId, propertyId, pageKey, date);
+  CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_path ON ga4_page_metrics(ownerId, propertyId, date, pagePath);
+  CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_queue ON warehouse_jobs(status, nextRunAt, updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site ON warehouse_jobs(ownerId, siteUrl, updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_target_status ON warehouse_jobs(ownerId, siteUrl, targetDate, status);
+  CREATE INDEX IF NOT EXISTS idx_crawl_jobs_owner_site_status ON crawl_jobs(ownerId, siteUrl, status, updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_crawl_jobs_queue ON crawl_jobs(status, nextRunAt, updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_job ON crawl_pages(ownerId, siteUrl, jobId);
+  CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_job_crawled ON crawl_pages(ownerId, siteUrl, jobId, crawledAt, depth, url);
+  CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_pagekey ON crawl_pages(ownerId, siteUrl, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job ON crawl_links(ownerId, siteUrl, jobId);
+  CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_tourl ON crawl_links(ownerId, siteUrl, jobId, toUrl);
 `;
 
 const camelCaseColumns: Record<string, string> = {
@@ -250,6 +358,9 @@ const camelCaseColumns: Record<string, string> = {
   lastsyncdate: 'lastSyncDate',
   earliestsyncdate: 'earliestSyncDate',
   lastupdated: 'lastUpdated',
+  jobtype: 'jobType',
+  targetdate: 'targetDate',
+  rowssynced: 'rowsSynced',
   keywordid: 'keywordId',
   rankingurl: 'rankingUrl',
   ipaddress: 'ipAddress',
@@ -268,6 +379,45 @@ const camelCaseColumns: Record<string, string> = {
   propertyid: 'propertyId',
   pagepath: 'pagePath',
   pagekey: 'pageKey',
+  jobid: 'jobId',
+  starturl: 'startUrl',
+  sitemapurl: 'sitemapUrl',
+  discoveredcount: 'discoveredCount',
+  crawledcount: 'crawledCount',
+  errorcount: 'errorCount',
+  skippedcount: 'skippedCount',
+  queuedcount: 'queuedCount',
+  startedat: 'startedAt',
+  updatedat: 'updatedAt',
+  completedat: 'completedAt',
+  lasterror: 'lastError',
+  attemptcount: 'attemptCount',
+  maxattempts: 'maxAttempts',
+  lockedat: 'lockedAt',
+  nextrunat: 'nextRunAt',
+  rendermode: 'renderMode',
+  respectrobots: 'respectRobots',
+  includequerystrings: 'includeQueryStrings',
+  normalizedurl: 'normalizedUrl',
+  finalurl: 'finalUrl',
+  contenttype: 'contentType',
+  metadescription: 'metaDescription',
+  canonicalurl: 'canonicalUrl',
+  h1text: 'h1Text',
+  h1count: 'h1Count',
+  h2count: 'h2Count',
+  wordcount: 'wordCount',
+  discoveredfrom: 'discoveredFrom',
+  discoveredfromurl: 'discoveredFromUrl',
+  discoveredat: 'discoveredAt',
+  crawledat: 'crawledAt',
+  responsetimems: 'responseTimeMs',
+  internallinkcount: 'internalLinkCount',
+  outgoinglinkcount: 'outgoingLinkCount',
+  fromurl: 'fromUrl',
+  tourl: 'toUrl',
+  frompagekey: 'fromPageKey',
+  topagekey: 'toPageKey',
   totalusers: 'totalUsers',
   pageviews: 'pageViews',
   bouncerate: 'bounceRate',
@@ -535,7 +685,19 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE gsc_site_metrics ADD COLUMN ownerId TEXT',
     'ALTER TABLE gsc_query_metrics ADD COLUMN ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN ownerId TEXT',
+    'ALTER TABLE gsc_page_query_metrics ADD COLUMN pageKey TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN ownerId TEXT',
+    'ALTER TABLE crawl_jobs ADD COLUMN ownerId TEXT',
+    'ALTER TABLE crawl_jobs ADD COLUMN attemptCount INTEGER DEFAULT 0',
+    'ALTER TABLE crawl_jobs ADD COLUMN maxAttempts INTEGER DEFAULT 3',
+    'ALTER TABLE crawl_jobs ADD COLUMN lockedAt TEXT',
+    'ALTER TABLE crawl_jobs ADD COLUMN nextRunAt TEXT',
+    "ALTER TABLE crawl_jobs ADD COLUMN renderMode TEXT DEFAULT 'html'",
+    'ALTER TABLE crawl_jobs ADD COLUMN respectRobots INTEGER DEFAULT 1',
+    'ALTER TABLE crawl_jobs ADD COLUMN includeQueryStrings INTEGER DEFAULT 0',
+    'ALTER TABLE crawl_jobs ADD COLUMN userAgent TEXT',
+    'ALTER TABLE crawl_pages ADD COLUMN ownerId TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN ownerId TEXT',
   ]) {
     runOptionalSqliteAlter(db, statement);
   }
@@ -569,10 +731,29 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE gsc_site_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_query_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS pageKey TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS attemptCount INTEGER DEFAULT 0',
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS maxAttempts INTEGER DEFAULT 3',
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS lockedAt TEXT',
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS nextRunAt TEXT',
+    "ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS renderMode TEXT DEFAULT 'html'",
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS respectRobots INTEGER DEFAULT 1',
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS includeQueryStrings INTEGER DEFAULT 0',
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS userAgent TEXT',
+    'ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS ownerId TEXT',
   ]) {
     await db.exec(statement);
   }
+
+  await db.exec("UPDATE crawl_pages SET jobId = 'legacy' WHERE jobId IS NULL");
+  await db.exec("UPDATE crawl_links SET jobId = 'legacy' WHERE jobId IS NULL");
+  await db.exec('ALTER TABLE crawl_pages DROP CONSTRAINT IF EXISTS crawl_pages_pkey');
+  await db.exec('ALTER TABLE crawl_pages ADD PRIMARY KEY (ownerId, siteUrl, jobId, normalizedUrl)');
+  await db.exec('ALTER TABLE crawl_links DROP CONSTRAINT IF EXISTS crawl_links_pkey');
+  await db.exec('ALTER TABLE crawl_links ADD PRIMARY KEY (ownerId, siteUrl, jobId, fromUrl, toUrl)');
 
   await db.exec(indexSql);
 }

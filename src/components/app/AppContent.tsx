@@ -11,14 +11,20 @@ import { Ga4Overview } from "@/components/dashboard/Ga4Overview";
 import { Ga4LlmTraffic } from "@/components/dashboard/Ga4LlmTraffic";
 import { Ga4Demographics } from "@/components/dashboard/Ga4Demographics";
 import { BingDataGrid } from "@/components/dashboard/BingDataGrid";
+import { CrawlInventoryView } from "@/components/dashboard/CrawlInventoryView";
 import { LogAnalyzerView } from "@/components/dashboard/LogAnalyzerView";
 import { PageIndexingView } from "@/components/dashboard/PageIndexingView";
+import { RawDataView } from "@/components/dashboard/RawDataView";
+import { ReconciliationView } from "@/components/dashboard/ReconciliationView";
+import { WorkspaceSitesView } from "@/components/dashboard/WorkspaceSitesView";
+import { DataCoveragePanel } from "@/components/dashboard/DataCoveragePanel";
 import { RankTrackerView } from "../dashboard/RankTrackerView";
 import type { DateRange } from "react-day-picker";
 import type { Annotation } from "../../services/annotationsService";
 import type { BingSite } from "../../services/bingService";
 import type { GscSite } from "../../services/gscService";
 import type { UserProfile } from "../../contexts/AuthContext";
+import { canUseRawExports, canUseReconciliation, isMultiSitePlan } from "@/shared/plans";
 
 type DataSource = "gsc" | "bing" | "ga4" | "blended";
 type Ga4Dimension = "country" | "city" | "region" | "deviceCategory" | "browser" | "operatingSystem";
@@ -43,6 +49,8 @@ type AppContentProps = {
   onGa4UserDimensionChange: (value: Ga4Dimension) => void;
   onGscDashboardTabChange: (value: GscDashboardTab) => void;
   onOpenSettings: (tab?: "profile" | "plan" | "workspace" | "integrations") => void;
+  onActivateWorkspaceSite: (siteUrl: string) => Promise<void>;
+  onOpenSiteWorkspace: (siteUrl: string, menu: "Dashboard" | "Crawl Inventory" | "Raw Data" | "Reconciliation") => void;
   selectedSite: string;
   setShowSystemAnnotations: (value: boolean) => void;
   setShowUserAnnotations: (value: boolean) => void;
@@ -78,7 +86,9 @@ export function AppContent({
   onGa4DashboardTabChange,
   onGa4UserDimensionChange,
   onGscDashboardTabChange,
+  onActivateWorkspaceSite,
   onOpenSettings,
+  onOpenSiteWorkspace,
   selectedSite,
   setShowSystemAnnotations,
   setShowUserAnnotations,
@@ -91,6 +101,8 @@ export function AppContent({
   const visibleAnnotations = getVisibleAnnotations(annotations, showSystemAnnotations, showUserAnnotations);
   const isUnlockedSite = (siteUrl: string) =>
     userProfile?.tier === "enterprise" || Boolean(userProfile?.unlockedSites.includes(siteUrl));
+  const rawWorkspaceSite = userProfile?.activatedSiteUrl || (!selectedSite.startsWith("properties/") ? selectedSite : "");
+  const canUseMultiSite = isMultiSitePlan(userProfile?.tier);
   const dashboardTabListClass = "w-full justify-start gap-10 rounded-none border-b border-border bg-transparent p-0";
   const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-muted-foreground shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-primary data-active:bg-transparent data-active:text-primary data-active:shadow-none";
 
@@ -129,6 +141,11 @@ export function AppContent({
                 />
               }
             />
+            <DataCoveragePanel
+              dateRange={dateRange}
+              ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+              siteUrl={selectedSite}
+            />
             <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} hideTrackerButton={true} />
           </TabsContent>
           <TabsContent value="queries" className="space-y-4">
@@ -162,6 +179,11 @@ export function AppContent({
             compareDateRange={compareDateRange}
             ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
           />
+          <DataCoveragePanel
+            dateRange={dateRange}
+            ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+            siteUrl={selectedSite}
+          />
         </div>
       )}
 
@@ -190,6 +212,13 @@ export function AppContent({
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
             <Ga4Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} annotations={visibleAnnotations} />
+            {rawWorkspaceSite && (
+              <DataCoveragePanel
+                dateRange={dateRange}
+                ga4PropertyId={selectedSite}
+                siteUrl={rawWorkspaceSite}
+              />
+            )}
             <Ga4DataGrid siteUrl={selectedSite} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
           </TabsContent>
           <TabsContent value="events" className="space-y-4">
@@ -248,6 +277,41 @@ export function AppContent({
       {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Page Indexing" && (
         <div className="space-y-4">
           <PageIndexingView siteUrl={selectedSite} dateRange={dateRange} isLive={useLiveData} />
+        </div>
+      )}
+
+      {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Crawl Inventory" && (
+        <div className="space-y-4">
+          <CrawlInventoryView
+            siteUrl={selectedSite}
+            defaultStartUrl={userProfile?.activatedSiteUrl || (selectedSite.startsWith("http") ? selectedSite : null)}
+          />
+        </div>
+      )}
+
+      {rawWorkspaceSite && !apiError && isUnlockedSite(rawWorkspaceSite) && activeMenu === "Raw Data" && canUseRawExports(userProfile?.tier) && (
+        <div className="space-y-4">
+          <RawDataView
+            dateRange={dateRange}
+            ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+            siteUrl={rawWorkspaceSite}
+          />
+        </div>
+      )}
+
+      {rawWorkspaceSite && !apiError && isUnlockedSite(rawWorkspaceSite) && activeMenu === "Reconciliation" && canUseReconciliation(userProfile?.tier) && (
+        <div className="space-y-4">
+          <ReconciliationView
+            dateRange={dateRange}
+            ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+            siteUrl={rawWorkspaceSite}
+          />
+        </div>
+      )}
+
+      {!apiError && activeMenu === "Sites" && canUseMultiSite && (
+        <div className="space-y-4">
+          <WorkspaceSitesView onActivateSite={onActivateWorkspaceSite} onOpenSite={onOpenSiteWorkspace} />
         </div>
       )}
 

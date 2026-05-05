@@ -33,7 +33,7 @@ import { Ga4PropertyDialog } from "./components/app/Ga4PropertyDialog"
 import { getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
 import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownSites } from "./lib/siteData"
 import { getBillingConfig, openBillingPortal, startCheckout, type BillingConfig } from "./services/billingService"
-import { getPlanPropertyLimit } from "../shared/plans"
+import { canUseRawExports, canUseReconciliation, getPlanPropertyLimit, isMultiSitePlan } from "../shared/plans"
 
 type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
 
@@ -101,15 +101,27 @@ function MainApp() {
     setActiveMenu(menu)
     if (menu === "LLM Traffic") {
       setDataSource('ga4')
-    } else if (menu === "Rank Tracker" || menu === "Server Logs" || menu === "Page Indexing") {
+    } else if (menu === "Sites" || menu === "Rank Tracker" || menu === "Server Logs" || menu === "Page Indexing" || menu === "Crawl Inventory" || menu === "Raw Data" || menu === "Reconciliation") {
       setDataSource('gsc')
     }
   }
+
+  const handleOpenSiteWorkspace = (siteUrl: string, menu: "Dashboard" | "Crawl Inventory" | "Raw Data" | "Reconciliation") => {
+    setSelectedSite(siteUrl);
+    setDataSource('gsc');
+    setActiveMenu(menu);
+  };
 
   useEffect(() => {
     setGscDashboardTab("overview")
     setGa4DashboardTab("overview")
   }, [dataSource, selectedSite])
+
+  useEffect(() => {
+    if ((activeMenu === "Sites" && !isMultiSitePlan(userProfile?.tier)) || (activeMenu === "Raw Data" && !canUseRawExports(userProfile?.tier)) || (activeMenu === "Reconciliation" && !canUseReconciliation(userProfile?.tier))) {
+      setActiveMenu("Dashboard");
+    }
+  }, [activeMenu, userProfile?.tier])
 
   const fetchAnnotations = async () => {
     if (user?.uid) {
@@ -664,6 +676,7 @@ function MainApp() {
 
   const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? bingSites : sites;
   const currentSelection = dataSource === 'ga4' ? selectedGa4Property : selectedSite;
+  const showStatusPanels = activeMenu === "Dashboard";
   const hasValidSelectedSite = currentSites.some((site) => {
     if (site.siteUrl !== currentSelection) {
       return false;
@@ -854,11 +867,13 @@ function MainApp() {
                 onCompareToDateChange={handleCompareToDateChange}
                 onFromDateChange={handleFromDateChange}
                 onGscSyncComplete={() => setGscSyncVersion((version) => version + 1)}
+                onOpenRawData={() => setActiveMenu("Raw Data")}
                 onToDateChange={handleToDateChange}
+                rawDataAvailable={canUseRawExports(userProfile?.tier)}
                 setIsCompareMode={setIsCompareMode}
               />
 
-              {activeMenu !== "Settings" && activeMenu !== "AI Content Auditor" && (
+              {showStatusPanels && (
                 <AppStatusPanels
                   apiError={apiError}
                   bingSitesCount={bingSites.length}
@@ -898,7 +913,9 @@ function MainApp() {
                   onGa4DashboardTabChange={setGa4DashboardTab}
                   onGa4UserDimensionChange={setGa4UserDimension}
                   onGscDashboardTabChange={setGscDashboardTab}
+                  onActivateWorkspaceSite={unlockSite}
                   onOpenSettings={openSettings}
+                  onOpenSiteWorkspace={handleOpenSiteWorkspace}
                   selectedSite={dataSource === 'ga4' ? selectedGa4Property : selectedSite}
                   setShowSystemAnnotations={setShowSystemAnnotations}
                   setShowUserAnnotations={setShowUserAnnotations}

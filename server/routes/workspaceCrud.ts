@@ -3,9 +3,121 @@ import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { isNonEmptyString } from '../validation.js';
+import { isMultiSitePlan } from '../../shared/plans.js';
+
+function parseStringArray(value: unknown) {
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter((value) => value.trim()).map((value) => value.trim())));
+}
+
+const toNumber = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
 
 export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
+
+  app.get('/api/workspace/sites/status', authRequired, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    try {
+      const user = await db.get<any>('SELECT tier, unlockedSites, knownSites, activatedSiteUrl, activatedGa4PropertyId FROM users WHERE id = ?', [ownerId]);
+      if (!user) {
+        return res.status(404).json({ error: 'Account not found' });
+      }
+      if (!isMultiSitePlan(user.tier)) {
+        return res.status(403).json({ error: 'Multi-site workspace status is available on paid plans.' });
+      }
+
+      const sites = uniqueStrings([
+        ...parseStringArray(user.unlockedSites),
+        ...parseStringArray(user.knownSites),
+        user.activatedSiteUrl || '',
+      ]);
+
+      const rows = [];
+      for (const siteUrl of sites) {
+        const warehouse = await db.get<any>(`
+          SELECT
+            MIN(date) AS earliestMetricDate,
+            MAX(date) AS lastMetricDate,
+            COUNT(DISTINCT date) AS metricDayCount,
+            COUNT(*) AS rowCount
+          FROM gsc_site_metrics
+          WHERE ownerId = ? AND siteUrl = ?
+        `, [ownerId, siteUrl]);
+        const syncStatus = await db.get<any>('SELECT * FROM warehouse_sync_status WHERE ownerId = ? AND siteUrl = ?', [ownerId, siteUrl]);
+        const latestCrawl = await db.get<any>(`
+          SELECT *
+          FROM crawl_jobs
+          WHERE ownerId = ? AND siteUrl = ?
+          ORDER BY COALESCE(completedAt, updatedAt, startedAt) DESC
+          LIMIT 1
+        `, [ownerId, siteUrl]);
+        const crawlSummary = latestCrawl
+          ? await db.get<any>(`
+            SELECT
+              COUNT(*) AS totalPages,
+              SUM(CASE WHEN statusCode BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS successPages,
+              SUM(CASE WHEN statusCode >= 400 OR statusCode IS NULL THEN 1 ELSE 0 END) AS errorPages,
+              SUM(CASE WHEN noindex = 1 THEN 1 ELSE 0 END) AS noindexPages
+            FROM crawl_pages
+            WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
+          `, [ownerId, siteUrl, latestCrawl.id])
+          : null;
+
+        rows.push({
+          crawl: latestCrawl ? {
+            completedAt: latestCrawl.completedAt || null,
+            crawledCount: toNumber(latestCrawl.crawledCount),
+            discoveredCount: toNumber(latestCrawl.discoveredCount),
+            errorCount: toNumber(latestCrawl.errorCount),
+            id: latestCrawl.id,
+            lastError: latestCrawl.lastError || null,
+            renderMode: latestCrawl.renderMode || 'html',
+            startedAt: latestCrawl.startedAt || null,
+            status: latestCrawl.status || 'unknown',
+            summary: {
+              errorPages: toNumber(crawlSummary?.errorPages),
+              noindexPages: toNumber(crawlSummary?.noindexPages),
+              successPages: toNumber(crawlSummary?.successPages),
+              totalPages: toNumber(crawlSummary?.totalPages),
+            },
+            updatedAt: latestCrawl.updatedAt || null,
+          } : null,
+          isDefault: siteUrl === user.activatedSiteUrl,
+          isUnlocked: parseStringArray(user.unlockedSites).includes(siteUrl),
+          siteUrl,
+          warehouse: {
+            earliestMetricDate: warehouse?.earliestMetricDate || null,
+            lastMetricDate: warehouse?.lastMetricDate || syncStatus?.lastSyncDate || null,
+            metricDayCount: toNumber(warehouse?.metricDayCount),
+            rowCount: toNumber(warehouse?.rowCount),
+            status: syncStatus?.status || (warehouse?.lastMetricDate ? 'synced' : 'empty'),
+            updatedAt: syncStatus?.lastUpdated || null,
+          },
+        });
+      }
+
+      rows.sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.siteUrl.localeCompare(b.siteUrl));
+
+      res.json({
+        ga4PropertyId: user.activatedGa4PropertyId || null,
+        sites: rows,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to load workspace site status' });
+    }
+  });
 
   app.get('/api/projects', authRequired, async (req: AuthedRequest, res) => {
     try {

@@ -11,16 +11,17 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { BarChart3, Crown, Filter, LayoutDashboard, Settings, Sparkles, Loader2, Bot, Target, Server, FileSearch, Plus } from "lucide-react"
+import { BarChart3, Crown, Filter, LayoutDashboard, Settings, Sparkles, Loader2, Bot, Target, Server, FileSearch, Plus, Globe2, PanelsTopLeft } from "lucide-react"
 import { getFilters, SavedFilter } from "@/src/services/dbService"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { getPlanDisplayName, getPlanPropertyLimit, getPlanPropertyLimitLabel } from "@/shared/plans"
+import { getPlanDisplayName, getPlanPropertyLimit, getPlanPropertyLimitLabel, isMultiSitePlan } from "@/shared/plans"
 
-const items = [
+const baseItems = [
   { title: "Dashboard", icon: LayoutDashboard },
   { title: "Rank Tracker", icon: Target },
   { title: "Server Logs", icon: Server },
   { title: "Page Indexing", icon: FileSearch },
+  { title: "Crawl Inventory", icon: Globe2 },
   { title: "LLM Traffic", icon: Bot },
   { title: "AI Content Auditor", icon: Sparkles },
   { title: "Settings", icon: Settings },
@@ -30,6 +31,11 @@ export function AppSidebar({ selectedSite, activeMenu = "Dashboard", onMenuSelec
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([])
   const [loadingFilters, setLoadingFilters] = useState(false)
   const { user, userProfile } = useAuth()
+  const canUseMultiSite = isMultiSitePlan(userProfile?.tier)
+  const items = canUseMultiSite
+    ? [baseItems[0], { title: "Sites", icon: PanelsTopLeft }, ...baseItems.slice(1)]
+    : baseItems
+  const propertyLimit = getPlanPropertyLimit(userProfile?.tier)
 
   useEffect(() => {
     if (user && selectedSite) {
@@ -45,7 +51,6 @@ export function AppSidebar({ selectedSite, activeMenu = "Dashboard", onMenuSelec
     }
   }, [user, selectedSite])
 
-  const propertyLimit = getPlanPropertyLimit(userProfile?.tier)
   const propertyLimitLabel = getPlanPropertyLimitLabel(userProfile?.tier)
   const planDisplayName = getPlanDisplayName(userProfile?.tier)
   const savedFilterCount = savedFilters.length

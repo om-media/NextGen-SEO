@@ -1,154 +1,216 @@
-import { useState, useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Ga4ApiService, Ga4DataRow } from "@/src/services/ga4Service"
+import { Button } from "@/components/ui/button"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { Loader2, Check } from "lucide-react"
-import { format, parseISO, startOfWeek, startOfMonth } from "date-fns"
+import { Ga4ApiService, Ga4DataRow } from "@/src/services/ga4Service"
+import { format, parseISO, startOfMonth, startOfWeek } from "date-fns"
 import { DateRange } from "react-day-picker"
 import {
-  ComposedChart,
   Area,
+  CartesianGrid,
+  ComposedChart,
   Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine
-} from 'recharts'
+} from "recharts"
+import { Check, Download, Info, Loader2, MoreVertical } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Annotation } from "@/src/services/annotationsService"
 
-const formatCompactNumber = (number: number) => {
-  return new Intl.NumberFormat('en-US', { 
-    notation: "compact", 
-    maximumFractionDigits: 2 
-  }).format(number);
+type MetricKey = "sessions" | "users" | "pageViews" | "bounceRate" | "eventCount"
+
+type ChartPoint = {
+  date: string
+  sessions: number
+  users: number
+  pageViews: number
+  bounceRate: number
+  eventCount: number
+  compareSessions?: number
+  compareUsers?: number
+  comparePageViews?: number
+  compareBounceRate?: number
+  compareEventCount?: number
 }
 
+const formatCompactNumber = (number: number) =>
+  new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 2,
+  }).format(number)
+
 const CustomYAxisTick = (props: any) => {
-  const { x, y, payload, fill, formatter, textAnchor } = props;
-  const text = formatter ? formatter(payload.value) : payload.value;
-  
+  const { x, y, payload, fill, formatter, textAnchor } = props
+  const text = formatter ? formatter(payload.value) : payload.value
+
   return (
     <g transform={`translate(${x},${y})`}>
       <text
         x={0}
         y={-10}
-        dy={0}
         textAnchor={textAnchor}
         fontSize={12}
         fontWeight="500"
         stroke="white"
         strokeWidth={4}
         strokeLinejoin="round"
-        style={{ paintOrder: 'stroke' }}
+        style={{ paintOrder: "stroke" }}
       >
         {text}
       </text>
-      <text
-        x={0}
-        y={-10}
-        dy={0}
-        textAnchor={textAnchor}
-        fill={fill}
-        fontSize={12}
-        fontWeight="500"
-      >
+      <text x={0} y={-10} textAnchor={textAnchor} fill={fill} fontSize={12} fontWeight="500">
         {text}
       </text>
     </g>
-  );
-};
-
-const getGa4DimensionValue = (row: any, index = 0) => {
-  const value = row?.dimensionValues?.[index]?.value;
-  return typeof value === "string" ? value : "";
-};
-
-interface Ga4OverviewProps {
-  siteUrl: string;
-  dateRange?: DateRange;
-  isCompareMode?: boolean;
-  compareDateRange?: DateRange;
-  filterDimension?: string;
-  filterValue?: string;
-  annotations?: Annotation[];
+  )
 }
 
-export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, annotations = [] }: Ga4OverviewProps) {
+const getGa4DimensionValue = (row: any, index = 0) => {
+  const value = row?.dimensionValues?.[index]?.value
+  return typeof value === "string" ? value : ""
+}
+
+const parseGa4DateStr = (value: string) => {
+  if (!value) return null
+  if (value.includes("-")) {
+    const parsed = parseISO(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+  }
+  if (value.length < 8) return null
+  const year = Number(value.slice(0, 4))
+  const month = Number(value.slice(4, 6))
+  const day = Number(value.slice(6, 8))
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null
+  return new Date(year, month - 1, day)
+}
+
+const getBucketKey = (date: Date, timeframe: "Day" | "Week" | "Month") => {
+  if (timeframe === "Week") return format(startOfWeek(date), "MMM d, yyyy")
+  if (timeframe === "Month") return format(startOfMonth(date), "MMM yyyy")
+  return format(date, "MMM d, yyyy")
+}
+
+const getChartXParam = (dateString: string, timeframe: "Day" | "Week" | "Month") => {
+  try {
+    const date = parseISO(dateString)
+    return getBucketKey(date, timeframe)
+  } catch {
+    return ""
+  }
+}
+
+const getAnnotationLabel = (annotation: Annotation) =>
+  annotation.type === "system" ? "Google update" : annotation.title
+
+const getAnnotationTooltip = (annotation: Annotation) => {
+  const date = (() => {
+    try {
+      return format(parseISO(annotation.date), "MMM d, yyyy")
+    } catch {
+      return annotation.date
+    }
+  })()
+
+  return [getAnnotationLabel(annotation), annotation.title, date, annotation.description]
+    .filter(Boolean)
+    .join("\n")
+}
+
+function AnnotationReferenceLabel(props: any) {
+  const { annotation, fill, offsetIndex = 0, viewBox, x, y } = props
+  const labelX = Number(x ?? viewBox?.x ?? 0) + 6
+  const labelY = Math.max(12, Number(y ?? viewBox?.y ?? 0) + 12 + offsetIndex * 16)
+
+  return (
+    <g className="cursor-help">
+      <title>{getAnnotationTooltip(annotation)}</title>
+      <rect
+        x={labelX - 4}
+        y={labelY - 11}
+        width={Math.min(154, Math.max(82, getAnnotationLabel(annotation).length * 6.5 + 12))}
+        height={15}
+        rx={5}
+        fill="white"
+        fillOpacity={0.88}
+      />
+      <text x={labelX} y={labelY} fill={fill} fontSize={11} fontWeight={700}>
+        {getAnnotationLabel(annotation)}
+      </text>
+    </g>
+  )
+}
+
+export function Ga4Overview({
+  siteUrl,
+  dateRange,
+  isCompareMode,
+  compareDateRange,
+  filterDimension,
+  filterValue,
+  annotations = [],
+}: {
+  siteUrl: string
+  dateRange?: DateRange
+  isCompareMode?: boolean
+  compareDateRange?: DateRange
+  filterDimension?: string
+  filterValue?: string
+  annotations?: Annotation[]
+}) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<Ga4DataRow[]>([])
   const [compareData, setCompareData] = useState<Ga4DataRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [activeMetrics, setActiveMetrics] = useState({
+  const [activeMetrics, setActiveMetrics] = useState<Record<MetricKey, boolean>>({
     sessions: true,
     users: true,
     pageViews: false,
     bounceRate: false,
-    eventCount: false
+    eventCount: false,
   })
+  const [timeframe, setTimeframe] = useState<"Day" | "Week" | "Month">("Day")
 
-  const [timeframe, setTimeframe] = useState<'Day' | 'Week' | 'Month'>('Day')
-
-  // GSC/GA4 exact colors matching aesthetic
   const colors = {
-    sessions: "#4285f4",
-    users: "#5e35b1",
-    pageViews: "#00897b",
-    bounceRate: "#e65100",
-    eventCount: "#c2185b"
+    sessions: "#2F7DF6",
+    users: "#7C3AED",
+    pageViews: "#0891B2",
+    bounceRate: "#F97316",
+    eventCount: "#DB2777",
   }
 
   useEffect(() => {
-    if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return
 
     const fetchData = async () => {
       setLoading(true)
       setError(null)
       try {
         const ga4Service = new Ga4ApiService()
-        const startDate = format(dateRange.from!, 'yyyy-MM-dd')
-        const endDate = format(dateRange.to!, 'yyyy-MM-dd')
-        
-        const dimensionFilter = filterDimension && filterValue ? { filterDimension, filterValue } : undefined;
+        const startDate = format(dateRange.from!, "yyyy-MM-dd")
+        const endDate = format(dateRange.to!, "yyyy-MM-dd")
+        const dimensionFilter = filterDimension && filterValue ? { filterDimension, filterValue } : undefined
+        const metrics = ["sessions", "totalUsers", "screenPageViews", "bounceRate", "eventCount"]
 
         const promises = [
-          ga4Service.runReport(
-            siteUrl, 
-            startDate, 
-            endDate, 
-            ['date'], 
-            ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
-            dimensionFilter
-          )
-        ];
+          ga4Service.runReport(siteUrl, startDate, endDate, ["date"], metrics, dimensionFilter),
+        ]
 
         if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
-          const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
-          const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
+          const compareStartDate = format(compareDateRange.from, "yyyy-MM-dd")
+          const compareEndDate = format(compareDateRange.to, "yyyy-MM-dd")
           promises.push(
-            ga4Service.runReport(
-              siteUrl, 
-              compareStartDate, 
-              compareEndDate, 
-              ['date'], 
-              ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
-              dimensionFilter
-            )
+            ga4Service.runReport(siteUrl, compareStartDate, compareEndDate, ["date"], metrics, dimensionFilter),
           )
         }
 
-        const results = await Promise.all(promises);
-        
+        const results = await Promise.all(promises)
         setData(results[0].rows || [])
-        if (results[1]) {
-           setCompareData(results[1].rows || [])
-        } else {
-           setCompareData([])
-        }
+        setCompareData(results[1]?.rows || [])
       } catch (err: any) {
         console.error("Error fetching GA4 stats:", err)
         setError(err.message)
@@ -160,236 +222,275 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
     fetchData()
   }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected])
 
-
   const { chartData, summary, compareSummary } = useMemo(() => {
     if (!data.length || !dateRange?.from || !dateRange?.to) {
-      return { chartData: [], summary: { sessions: 0, users: 0, pageViews: 0, bounceRateTotal: 0, eventCount: 0, count: 0 }, compareSummary: null };
+      return {
+        chartData: [] as ChartPoint[],
+        summary: { sessions: 0, users: 0, pageViews: 0, bounceRate: 0, eventCount: 0, count: 0 },
+        compareSummary: null as null | { sessions: number; users: number; pageViews: number; bounceRate: number; eventCount: number; count: number },
+      }
     }
 
-    const aggregatedData = new Map<string, any>();
-
-    let totalSessions = 0;
-    let totalUsers = 0;
-    let totalPageViews = 0;
-    let totalBounceRate = 0;
-    let totalEventCount = 0;
-    let count = 0;
-
-    let compareTotalSessions = 0;
-    let compareTotalUsers = 0;
-    let compareTotalPageViews = 0;
-    let compareTotalBounceRate = 0;
-    let compareTotalEventCount = 0;
-    let compareCount = 0;
-
-    const startPrimaryExact = parseISO(format(dateRange.from, 'yyyy-MM-dd'));
-    const endPrimaryExact = parseISO(format(dateRange.to, 'yyyy-MM-dd'));
-    
-    // Generate all exact days
-    const allPrimaryDates = [];
-    let curr = startPrimaryExact;
-    while (curr <= endPrimaryExact) {
-      allPrimaryDates.push(curr);
-      curr = new Date(curr.getTime() + 24 * 60 * 60 * 1000);
-    }
-    
-    const keysArray: string[] = [];
-
-    // Initialize map
-    allPrimaryDates.forEach(date => {
-      let key = '';
-      if (timeframe === 'Day') {
-        key = format(date, 'MMM d, yyyy');
-      } else if (timeframe === 'Week') {
-        key = format(startOfWeek(date), 'MMM d, yyyy');
-      } else if (timeframe === 'Month') {
-        key = format(startOfMonth(date), 'MMM yyyy');
-      }
-      keysArray.push(key);
-
-      if (!aggregatedData.has(key)) {
-        aggregatedData.set(key, { sessions: 0, users: 0, pageViews: 0, bounceRateCount: 0, bounceRateTotal: 0, eventCount: 0 });
-      }
-    });
-
-    const parseGa4DateStr = (dimStr: string) => {
-      if (dimStr.length === 8) {
-        return new Date(parseInt(dimStr.substring(0, 4)), parseInt(dimStr.substring(4, 6)) - 1, parseInt(dimStr.substring(6, 8)));
-      }
-      return new Date();
+    const aggregate = new Map<string, ChartPoint>()
+    const startPrimaryExact = parseISO(format(dateRange.from, "yyyy-MM-dd"))
+    const endPrimaryExact = parseISO(format(dateRange.to, "yyyy-MM-dd"))
+    const allPrimaryDates: Date[] = []
+    let cursor = startPrimaryExact
+    while (cursor <= endPrimaryExact) {
+      allPrimaryDates.push(cursor)
+      cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000)
     }
 
-    // Process primary
-    data.filter((row) => getGa4DimensionValue(row)).sort((a,b) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b))).forEach((row) => {
-      const date = parseGa4DateStr(getGa4DimensionValue(row));
-      let key = '';
-      
-      if (timeframe === 'Day') {
-        key = format(date, 'MMM d, yyyy');
-      } else if (timeframe === 'Week') {
-        key = format(startOfWeek(date), 'MMM d, yyyy');
-      } else if (timeframe === 'Month') {
-        key = format(startOfMonth(date), 'MMM yyyy');
+    const keysArray: string[] = []
+    allPrimaryDates.forEach((date) => {
+      const key = getBucketKey(date, timeframe)
+      keysArray.push(key)
+      if (!aggregate.has(key)) {
+        aggregate.set(key, {
+          date: key,
+          sessions: 0,
+          users: 0,
+          pageViews: 0,
+          bounceRate: 0,
+          eventCount: 0,
+        })
       }
+    })
 
-      const sessions = parseInt(row.metricValues[0].value);
-      const users = parseInt(row.metricValues[1].value);
-      const pageViews = parseInt(row.metricValues[2].value);
-      const bounceRate = parseFloat(row.metricValues[3].value);
-      const eventCount = parseInt(row.metricValues[4] ? row.metricValues[4].value : "0");
+    const sortRows = (rows: Ga4DataRow[]) =>
+      rows
+        .filter((row) => getGa4DimensionValue(row))
+        .sort((a, b) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)))
 
-      const current = aggregatedData.get(key);
-      if (current) {
-        current.sessions += sessions;
-        current.users += users;
-        current.pageViews += pageViews;
-        current.bounceRateTotal += bounceRate;
-        current.bounceRateCount += 1;
-        current.eventCount += eventCount;
-      }
+    let totalSessions = 0
+    let totalUsers = 0
+    let totalPageViews = 0
+    let totalBounceRate = 0
+    let totalEventCount = 0
+    let count = 0
 
-      totalSessions += sessions;
-      totalUsers += users;
-      totalPageViews += pageViews;
-      totalBounceRate += bounceRate;
-      totalEventCount += eventCount;
-      count += 1;
-    });
+    let compareTotalSessions = 0
+    let compareTotalUsers = 0
+    let compareTotalPageViews = 0
+    let compareTotalBounceRate = 0
+    let compareTotalEventCount = 0
+    let compareCount = 0
 
-    // Process Compare
+    const primaryRows = sortRows(data)
+
+    primaryRows.forEach((row) => {
+      const dateValue = getGa4DimensionValue(row)
+      const parsedDate = parseGa4DateStr(dateValue)
+      if (!parsedDate) return
+
+      const key = getBucketKey(parsedDate, timeframe)
+      const current = aggregate.get(key)
+      if (!current) return
+
+      const sessions = Number(row.metricValues[0]?.value || 0)
+      const users = Number(row.metricValues[1]?.value || 0)
+      const pageViews = Number(row.metricValues[2]?.value || 0)
+      const bounceRate = Number(row.metricValues[3]?.value || 0) * 100
+      const eventCount = Number(row.metricValues[4]?.value || 0)
+
+      current.sessions += sessions
+      current.users += users
+      current.pageViews += pageViews
+      current.bounceRate += bounceRate
+      current.eventCount += eventCount
+
+      totalSessions += sessions
+      totalUsers += users
+      totalPageViews += pageViews
+      totalBounceRate += bounceRate
+      totalEventCount += eventCount
+      count += 1
+    })
+
     if (isCompareMode && compareData.length > 0 && compareDateRange?.from) {
-      const startCompareExact = parseISO(format(compareDateRange.from, 'yyyy-MM-dd'));
-      
-      compareData.filter((row) => getGa4DimensionValue(row)).sort((a,b) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b))).forEach((row) => {
-        const date = parseGa4DateStr(getGa4DimensionValue(row));
-        const offset = Math.round((date.getTime() - startCompareExact.getTime()) / (24 * 60 * 60 * 1000));
-        
-        const sessions = parseInt(row.metricValues[0].value);
-        const users = parseInt(row.metricValues[1].value);
-        const pageViews = parseInt(row.metricValues[2].value);
-        const bounceRate = parseFloat(row.metricValues[3].value);
-        const eventCount = parseInt(row.metricValues[4] ? row.metricValues[4].value : "0");
+      const compareStartExact = parseISO(format(compareDateRange.from, "yyyy-MM-dd"))
+      const compareRows = sortRows(compareData)
 
-        if (offset >= 0 && offset < keysArray.length) {
-          const key = keysArray[offset];
-          const current = aggregatedData.get(key);
-          if (current) {
-            current.compareSessions = (current.compareSessions || 0) + sessions;
-            current.compareUsers = (current.compareUsers || 0) + users;
-            current.comparePageViews = (current.comparePageViews || 0) + pageViews;
-            current.compareBounceRateTotal = (current.compareBounceRateTotal || 0) + bounceRate;
-            current.compareBounceRateCount = (current.compareBounceRateCount || 0) + 1;
-            current.compareEventCount = (current.compareEventCount || 0) + eventCount;
-          }
-        }
+      compareRows.forEach((row) => {
+        const dateValue = getGa4DimensionValue(row)
+        const parsedDate = parseGa4DateStr(dateValue)
+        if (!parsedDate) return
 
-        compareTotalSessions += sessions;
-        compareTotalUsers += users;
-        compareTotalPageViews += pageViews;
-        compareTotalBounceRate += bounceRate;
-        compareTotalEventCount += eventCount;
-        compareCount += 1;
-      });
+        const offset = Math.round((parsedDate.getTime() - compareStartExact.getTime()) / (24 * 60 * 60 * 1000))
+        if (offset < 0 || offset >= keysArray.length) return
+
+        const targetKey = keysArray[offset]
+        const current = aggregate.get(targetKey)
+        if (!current) return
+
+        const sessions = Number(row.metricValues[0]?.value || 0)
+        const users = Number(row.metricValues[1]?.value || 0)
+        const pageViews = Number(row.metricValues[2]?.value || 0)
+        const bounceRate = Number(row.metricValues[3]?.value || 0) * 100
+        const eventCount = Number(row.metricValues[4]?.value || 0)
+
+        current.compareSessions = (current.compareSessions || 0) + sessions
+        current.compareUsers = (current.compareUsers || 0) + users
+        current.comparePageViews = (current.comparePageViews || 0) + pageViews
+        current.compareBounceRate = (current.compareBounceRate || 0) + bounceRate
+        current.compareEventCount = (current.compareEventCount || 0) + eventCount
+
+        compareTotalSessions += sessions
+        compareTotalUsers += users
+        compareTotalPageViews += pageViews
+        compareTotalBounceRate += bounceRate
+        compareTotalEventCount += eventCount
+        compareCount += 1
+      })
     }
 
-    const finalChartData = Array.from(aggregatedData.entries()).map(([dateStr, d]) => ({
-      date: dateStr,
-      sessions: d.sessions,
-      users: d.users,
-      pageViews: d.pageViews,
-      bounceRate: d.bounceRateCount > 0 ? (d.bounceRateTotal / d.bounceRateCount) * 100 : 0,
-      eventCount: d.eventCount,
-      
-      compareSessions: isCompareMode ? (d.compareSessions || 0) : undefined,
-      compareUsers: isCompareMode ? (d.compareUsers || 0) : undefined,
-      comparePageViews: isCompareMode ? (d.comparePageViews || 0) : undefined,
-      compareBounceRate: isCompareMode ? ((d.compareBounceRateCount || 0) > 0 ? (d.compareBounceRateTotal / d.compareBounceRateCount) * 100 : 0) : undefined,
-      compareEventCount: isCompareMode ? (d.compareEventCount || 0) : undefined,
-    }));
-
-    return { 
-      chartData: finalChartData, 
-      summary: { sessions: totalSessions, users: totalUsers, pageViews: totalPageViews, bounceRateTotal: totalBounceRate, eventCount: totalEventCount, count },
-      compareSummary: isCompareMode ? { sessions: compareTotalSessions, users: compareTotalUsers, pageViews: compareTotalPageViews, bounceRateTotal: compareTotalBounceRate, eventCount: compareTotalEventCount, count: compareCount } : null 
-    };
+    return {
+      chartData: Array.from(aggregate.values()),
+      summary: {
+        sessions: totalSessions,
+        users: totalUsers,
+        pageViews: totalPageViews,
+        bounceRate: count > 0 ? totalBounceRate / count : 0,
+        eventCount: totalEventCount,
+        count,
+      },
+      compareSummary: isCompareMode
+        ? {
+            sessions: compareTotalSessions,
+            users: compareTotalUsers,
+            pageViews: compareTotalPageViews,
+            bounceRate: compareCount > 0 ? compareTotalBounceRate / compareCount : 0,
+            eventCount: compareTotalEventCount,
+            count: compareCount,
+          }
+        : null,
+    }
   }, [data, compareData, dateRange, compareDateRange, isCompareMode, timeframe])
 
+  const selectedDayCount = dateRange?.from && dateRange?.to
+    ? Math.max(1, Math.round((dateRange.to.getTime() - dateRange.from.getTime()) / (24 * 60 * 60 * 1000)) + 1)
+    : Math.max(1, chartData.length)
 
-  const toggleMetric = (metric: keyof typeof activeMetrics) => {
-    setActiveMetrics(prev => ({
+  const compareLabel = isCompareMode && compareDateRange?.from && compareDateRange?.to
+    ? `vs ${format(compareDateRange.from, "MMM d")} - ${format(compareDateRange.to, "MMM d")}`
+    : null
+
+  const toggleMetric = (metric: MetricKey) => {
+    setActiveMetrics((prev) => ({
       ...prev,
-      [metric]: !prev[metric]
+      [metric]: !prev[metric],
     }))
   }
 
-  const activeMetricsList = Object.entries(activeMetrics).filter(([_, isActive]) => isActive).map(([key]) => key);
+  const activeCountMetrics = (["sessions", "users", "pageViews", "eventCount"] as MetricKey[]).filter(
+    (metric) => activeMetrics[metric] && metric !== "bounceRate",
+  )
+  const showBounceRate = activeMetrics.bounceRate
 
-  // Dynamic axis positioning function matching overview
-  const getAxisProps = (metricId: string) => {
-    const activeCount = activeMetricsList.length;
-    const index = activeMetricsList.indexOf(metricId);
-    
-    if (activeCount === 1) {
-      return { orientation: 'left' as const, mirror: false, hide: false };
+  const getChange = (current: number, previous: number | undefined, inverse = false) => {
+    if (!compareSummary || previous === undefined || previous === 0) return null
+    const diff = current - previous
+    if (diff === 0) return null
+    let isPositive = diff > 0
+    if (inverse) isPositive = !isPositive
+    const percentChange = (diff / previous) * 100
+    return {
+      isPositive,
+      label: `${diff > 0 ? "+" : ""}${percentChange.toFixed(1)}%`,
     }
-    if (activeCount === 2) {
-      if (index === 0) return { orientation: 'left' as const, mirror: false, hide: false };
-      if (index === 1) return { orientation: 'right' as const, mirror: false, hide: false };
-    }
-    if (activeCount === 3) {
-      if (index === 0) return { orientation: 'left' as const, mirror: false, hide: false };
-      if (index === 1) return { orientation: 'left' as const, mirror: true, hide: false };
-      if (index === 2) return { orientation: 'right' as const, mirror: false, hide: false };
-    }
-    if (activeCount >= 4) {
-      if (index === 0) return { orientation: 'left' as const, mirror: false, hide: false };
-      if (index === 1) return { orientation: 'left' as const, mirror: true, hide: false };
-      if (index === 2) return { orientation: 'right' as const, mirror: true, hide: false };
-      if (index === 3) return { orientation: 'right' as const, mirror: false, hide: false };
-    }
-    return { orientation: 'left' as const, mirror: false, hide: true };
   }
 
-  const renderChange = (current: number, previous: number, isLowerBetter = false) => {
-    if (previous === 0) return null;
-    const diff = current - previous;
-    const percentChange = (diff / previous) * 100;
-    
-    let isPositive = diff > 0;
-    if (isLowerBetter) {
-      isPositive = diff < 0; // if it lowered, it's good (positive styling)
-    }
-
-    if (Math.abs(percentChange) < 0.1) {
-      return <span className="text-muted-foreground text-xs font-semibold px-2 py-0.5 bg-gray-100 rounded-sm">~0%</span>;
+  const renderMetricCompare = (metric: {
+    key: MetricKey
+    change?: ReturnType<typeof getChange> | null
+  }) => {
+    if (!metric.change || !compareLabel) {
+      return <span className="text-muted-foreground">Current period</span>
     }
 
     return (
-      <span className={cn(
-        "text-xs font-semibold px-2 py-0.5 rounded-sm",
-        isPositive ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
-      )}>
-        {diff > 0 ? '+' : ''}{percentChange.toFixed(1)}%
-      </span>
+      <>
+        <span className={metric.change.isPositive ? "text-emerald-500" : "text-red-500"}>{metric.change.label}</span>
+        <span className="text-muted-foreground">{compareLabel}</span>
+      </>
     )
   }
 
-  const getChartXParam = (dateString: string) => {
-    try {
-      const date = parseISO(dateString)
-      if (timeframe === 'Day') return format(date, 'MMM d, yyyy')
-      if (timeframe === 'Week') return format(startOfWeek(date), 'MMM d, yyyy')
-      if (timeframe === 'Month') return format(startOfMonth(date), 'MMM yyyy')
-    } catch {
-      return ""
-    }
-    return ""
-  }
+  const metricCards = [
+    {
+      key: "sessions" as const,
+      title: "Total Sessions",
+      value: formatCompactNumber(summary.sessions),
+      color: colors.sessions,
+      suffix: `${formatCompactNumber(summary.sessions / selectedDayCount)}/day`,
+      change: compareSummary ? getChange(summary.sessions, compareSummary.sessions) : null,
+    },
+    {
+      key: "users" as const,
+      title: "Total Users",
+      value: formatCompactNumber(summary.users),
+      color: colors.users,
+      suffix: `${formatCompactNumber(summary.users / selectedDayCount)}/day`,
+      change: compareSummary ? getChange(summary.users, compareSummary.users) : null,
+    },
+    {
+      key: "pageViews" as const,
+      title: "Page Views",
+      value: formatCompactNumber(summary.pageViews),
+      color: colors.pageViews,
+      suffix: `${formatCompactNumber(summary.pageViews / selectedDayCount)}/day`,
+      change: compareSummary ? getChange(summary.pageViews, compareSummary.pageViews) : null,
+    },
+    {
+      key: "bounceRate" as const,
+      title: "Bounce Rate",
+      value: `${summary.bounceRate.toFixed(2)}%`,
+      color: colors.bounceRate,
+      suffix: "Rate",
+      change: compareSummary ? getChange(summary.bounceRate, compareSummary.bounceRate, true) : null,
+    },
+    {
+      key: "eventCount" as const,
+      title: "Event Count",
+      value: formatCompactNumber(summary.eventCount),
+      color: colors.eventCount,
+      suffix: `${formatCompactNumber(summary.eventCount / selectedDayCount)}/day`,
+      change: compareSummary ? getChange(summary.eventCount, compareSummary.eventCount) : null,
+    },
+  ]
+
+  const visibleAnnotations = useMemo(() => {
+    const visibleDates = new Set(chartData.map((point) => point.date))
+    return annotations.filter((annotation) => visibleDates.has(getChartXParam(annotation.date, timeframe)))
+  }, [annotations, chartData, timeframe])
+
+  const annotationOffsets = useMemo(() => {
+    const offsets = new Map<string, number>()
+    const sorted = [...visibleAnnotations].sort((a, b) => a.date.localeCompare(b.date))
+    const recentDates: string[] = []
+
+    sorted.forEach((annotation) => {
+      const date = annotation.date
+      const nearbyCount = recentDates.filter((existingDate) => {
+        try {
+          return Math.abs((parseISO(date).getTime() - parseISO(existingDate).getTime()) / (24 * 60 * 60 * 1000)) <= 4
+        } catch {
+          return false
+        }
+      }).length
+
+      offsets.set(annotation.id, nearbyCount)
+      recentDates.push(date)
+      if (recentDates.length > 8) recentDates.shift()
+    })
+
+    return offsets
+  }, [visibleAnnotations])
 
   if (loading && data.length === 0) {
     return (
-      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardContent className="flex items-center justify-center h-[400px]">
+      <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardContent className="flex h-[400px] items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </CardContent>
       </Card>
@@ -397,233 +498,156 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
   }
 
   if (error && data.length === 0) {
-    return null; // Handled primarily by the table for now
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-sm text-red-600 shadow-[0_10px_24px_rgba(127,29,29,0.05)] dark:border-red-900/50 dark:bg-red-950/35 dark:text-red-200">
+        {error}
+      </div>
+    )
   }
 
-  if (data.length === 0) {
-    return null;
+  if (chartData.length === 0) {
+    return null
+  }
+
+  const exportChartCsv = () => {
+    const headers = ["date", "sessions", "users", "pageViews", "bounceRate", "eventCount"]
+    const csvRows = chartData.map((row) =>
+      headers.map((header) => {
+        const value = row[header as keyof ChartPoint] ?? ""
+        return `"${String(value).replace(/"/g, '""')}"`
+      }).join(","),
+    )
+    const blob = new Blob([[headers.join(","), ...csvRows].join("\n")], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `ga4-overview-${format(new Date(), "yyyyMMdd-HHmm")}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
-    <div className="space-y-4">
-      {/* Scorecards */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        
-        {/* Sessions Card */}
-        <div 
-          onClick={() => toggleMetric('sessions')}
-          className={cn(
-            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2]",
-            activeMetrics.sessions ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
-          )}
-          style={{ backgroundColor: activeMetrics.sessions ? colors.sessions : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
-              activeMetrics.sessions ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.sessions && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </div>
-            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.sessions ? "text-white" : "text-gray-600")}>Total sessions</span>
-          </div>
-          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.sessions ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.sessions)}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
-              <span className={cn("text-[10px] sm:text-xs", activeMetrics.sessions ? "text-white/80" : "text-muted-foreground")}>
-                vs {formatCompactNumber(compareSummary.sessions)}
-              </span>
-              {renderChange(summary.sessions, compareSummary.sessions)}
-            </div>
-          )}
-        </div>
-
-        {/* Users Card */}
-        <div 
-          onClick={() => toggleMetric('users')}
-          className={cn(
-            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2]",
-            activeMetrics.users ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
-          )}
-          style={{ backgroundColor: activeMetrics.users ? colors.users : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
-              activeMetrics.users ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.users && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </div>
-            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.users ? "text-white" : "text-gray-600")}>Total users</span>
-          </div>
-          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.users ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.users)}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
-              <span className={cn("text-[10px] sm:text-xs", activeMetrics.users ? "text-white/80" : "text-muted-foreground")}>
-                vs {formatCompactNumber(compareSummary.users)}
-              </span>
-              {renderChange(summary.users, compareSummary.users)}
-            </div>
-          )}
-        </div>
-
-        {/* Page Views Card */}
-        <div 
-          onClick={() => toggleMetric('pageViews')}
-          className={cn(
-            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2]",
-            activeMetrics.pageViews ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
-          )}
-          style={{ backgroundColor: activeMetrics.pageViews ? colors.pageViews : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
-              activeMetrics.pageViews ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.pageViews && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </div>
-            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.pageViews ? "text-white" : "text-gray-600")}>Page Views</span>
-          </div>
-          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.pageViews ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.pageViews)}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
-              <span className={cn("text-[10px] sm:text-xs", activeMetrics.pageViews ? "text-white/80" : "text-muted-foreground")}>
-                vs {formatCompactNumber(compareSummary.pageViews)}
-              </span>
-              {renderChange(summary.pageViews, compareSummary.pageViews)}
-            </div>
-          )}
-        </div>
-
-        {/* Bounce Rate Card */}
-        <div 
-          onClick={() => toggleMetric('bounceRate')}
-          className={cn(
-            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2]",
-             activeMetrics.bounceRate ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
-          )}
-          style={{ backgroundColor: activeMetrics.bounceRate ? colors.bounceRate : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center shrink-0",
-              activeMetrics.bounceRate ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.bounceRate && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </div>
-            <span className={cn("text-xs sm:text-sm font-medium line-clamp-1", activeMetrics.bounceRate ? "text-white" : "text-gray-600")}>Bounce Rate</span>
-          </div>
-          <div className={cn("text-2xl sm:text-3xl font-normal", activeMetrics.bounceRate ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : `${summary.count > 0 ? ((summary.bounceRateTotal / summary.count) * 100).toFixed(2) : 0}%`}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mt-1">
-              <span className={cn("text-[10px] sm:text-xs", activeMetrics.bounceRate ? "text-white/80" : "text-muted-foreground")}>
-                vs {compareSummary.count > 0 ? ((compareSummary.bounceRateTotal / compareSummary.count) * 100).toFixed(2) : 0}%
-              </span>
-              {renderChange(summary.count > 0 ? (summary.bounceRateTotal / summary.count) * 100 : 0, compareSummary.count > 0 ? (compareSummary.bounceRateTotal / compareSummary.count) * 100 : 0, true)}
-            </div>
-          )}
-        </div>
-
-        {/* Event Count Card */}
-        <div 
-          onClick={() => toggleMetric('eventCount')}
-          className={cn(
-            "min-h-[116px] cursor-pointer rounded-2xl border border-[#E9F0EB] bg-white p-4 shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-[#DDEAE2] md:col-span-2 xl:col-span-1",
-            activeMetrics.eventCount ? "text-white shadow-[0_14px_30px_rgba(15,61,46,0.08)]" : "text-muted-foreground hover:bg-[#F6FAF7]"
-          )}
-          style={{ backgroundColor: activeMetrics.eventCount ? colors.eventCount : undefined }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <div className={cn(
-              "w-4 h-4 rounded-sm border flex items-center justify-center",
-              activeMetrics.eventCount ? "border-white bg-transparent" : "border-gray-400"
-            )}>
-              {activeMetrics.eventCount && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-            </div>
-            <span className={cn("text-sm font-medium", activeMetrics.eventCount ? "text-white" : "text-gray-600")}>Event Count</span>
-          </div>
-          <div className={cn("text-3xl font-normal", activeMetrics.eventCount ? "text-white" : "text-gray-900")}>
-            {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : formatCompactNumber(summary.eventCount)}
-          </div>
-          {isCompareMode && compareSummary && !loading && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-xs", activeMetrics.eventCount ? "text-white/80" : "text-muted-foreground")}>
-                vs {formatCompactNumber(compareSummary.eventCount)}
-              </span>
-              {renderChange(summary.eventCount, compareSummary.eventCount)}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardContent className="p-6">
-          {/* Timeframe Toggles */}
-          <div className="flex justify-end mb-6">
-            <div className="flex rounded-lg border border-[#E6ECE8] bg-[#FBFCFB] p-1">
-              {(['Day', 'Week', 'Month'] as const).map((t) => (
-                <button 
-                  key={t}
-                  onClick={() => setTimeframe(t)}
-                  className={cn(
-                    "rounded-md px-4 py-1.5 text-xs font-medium transition-colors",
-                    timeframe === t ? "bg-white shadow-sm text-[#0F172A]" : "text-[#647067] hover:text-[#0F172A]"
-                  )}
+    <div className="space-y-6">
+      {!error && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          {metricCards.map((metric) => (
+            <button
+              key={metric.key}
+              onClick={() => toggleMetric(metric.key)}
+              className={cn(
+                "rounded-2xl border border-border bg-card p-4 text-left shadow-[0_10px_24px_rgba(15,61,46,0.045)] transition hover:-translate-y-0.5 hover:border-border/80 hover:shadow-[0_14px_30px_rgba(15,61,46,0.065)]",
+                activeMetrics[metric.key] && "border-border ring-1 ring-inset ring-secondary",
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ backgroundColor: metric.color }}>
+                      {activeMetrics[metric.key] && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+                    </span>
+                    <span className="truncate">{metric.title}</span>
+                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
+                  <div className="mt-4 text-3xl font-semibold text-foreground">
+                    {loading ? <span className="block h-8 w-20 animate-pulse rounded-xl bg-muted" /> : metric.value}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2 flex items-center gap-2 text-xs">
+                {renderMetricCompare(metric)}
+                <span
+                  className="ml-auto rounded-md px-2 py-1 text-xs"
+                  style={{ color: metric.color, backgroundColor: `${metric.color}12` }}
                 >
-                  {t}
-                </button>
-              ))}
+                  {metric.suffix}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardContent className="p-5">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Performance Over Time</h3>
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                {metricCards
+                  .filter((metric) => activeMetrics[metric.key])
+                  .map((metric) => (
+                    <span key={metric.key} className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: metric.color }} />
+                      {metric.title}
+                    </span>
+                  ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-lg border border-border bg-background p-1">
+                {(["Day", "Week", "Month"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTimeframe(t)}
+                    className={cn(
+                      "h-8 rounded-md px-5 text-xs font-medium transition-colors",
+                      timeframe === t ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 rounded-lg border-border bg-card"
+                disabled={chartData.length === 0}
+                onClick={exportChartCsv}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </Button>
+              <Button variant="outline" size="icon" className="h-9 w-9 rounded-lg border-border bg-card" disabled>
+                <MoreVertical className="h-4 w-4" />
+              </Button>
             </div>
           </div>
 
-          {/* Chart */}
           {loading ? (
-            <div className="h-[400px] flex items-center justify-center">
+            <div className="flex h-[360px] items-center justify-center">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <div className="h-[400px] w-full">
+            <div className="h-[360px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 18, right: 12, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="color_sessions" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.sessions} stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor={colors.sessions} stopOpacity={0}/>
+                      <stop offset="5%" stopColor={colors.sessions} stopOpacity={0.22} />
+                      <stop offset="95%" stopColor={colors.sessions} stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="color_users" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.users} stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor={colors.users} stopOpacity={0}/>
+                      <stop offset="5%" stopColor={colors.users} stopOpacity={0.2} />
+                      <stop offset="95%" stopColor={colors.users} stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="color_pageViews" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.pageViews} stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor={colors.pageViews} stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="color_bounceRate" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.bounceRate} stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor={colors.bounceRate} stopOpacity={0}/>
+                      <stop offset="5%" stopColor={colors.pageViews} stopOpacity={0.18} />
+                      <stop offset="95%" stopColor={colors.pageViews} stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="color_eventCount" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.eventCount} stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor={colors.eventCount} stopOpacity={0}/>
+                      <stop offset="5%" stopColor={colors.eventCount} stopOpacity={0.18} />
+                      <stop offset="95%" stopColor={colors.eventCount} stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="color_bounceRate" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.bounceRate} stopOpacity={0.18} />
+                      <stop offset="95%" stopColor={colors.bounceRate} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid 
-                    vertical={false} 
-                    stroke="#e2e8f0"
-                    yAxisId={activeMetricsList[0]}
-                  />
+                  <CartesianGrid vertical={false} stroke="var(--border)" />
                   <XAxis
                     dataKey="date"
-                    stroke="#888888"
+                    stroke="var(--muted-foreground)"
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
@@ -632,39 +656,132 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                     padding={{ left: 10, right: 10 }}
                   />
 
-                  {annotations.map(ann => (
-                    <ReferenceLine 
+                  {visibleAnnotations.map((ann) => (
+                    <ReferenceLine
                       key={ann.id}
-                      x={getChartXParam(ann.date)} 
-                      stroke={ann.type === 'system' ? '#3b82f6' : '#a855f7'}
-                      strokeDasharray="3 3"
-                      strokeWidth={1.5}
-                      label={{ 
-                        position: 'insideTopLeft', 
-                        value: ann.title, 
-                        fill: ann.type === 'system' ? '#3b82f6' : '#a855f7',
-                        fontSize: 10,
-                        fontWeight: 'bold',
-                      }}
+                      x={getChartXParam(ann.date, timeframe)}
+                      stroke={ann.type === "system" ? "var(--primary)" : "#8b5cf6"}
+                      strokeDasharray="4 4"
+                      strokeWidth={2}
+                      ifOverflow="extendDomain"
+                      label={
+                        <AnnotationReferenceLabel
+                          annotation={ann}
+                          fill={ann.type === "system" ? "var(--primary)" : "#8b5cf6"}
+                          offsetIndex={annotationOffsets.get(ann.id) || 0}
+                        />
+                      }
                     />
                   ))}
-                  
-                  {activeMetrics.sessions && (
-                    <>
+
+                  {activeCountMetrics.map((metric) => {
+                    const commonProps = {
+                      yAxisId: "count",
+                      type: "monotone" as const,
+                      strokeWidth: 2,
+                      activeDot: { r: 6 },
+                    }
+
+                    if (metric === "sessions") {
+                      return (
+                        <Area
+                          key={metric}
+                          dataKey="sessions"
+                          name="Sessions"
+                          stroke={colors.sessions}
+                          fill="url(#color_sessions)"
+                          fillOpacity={1}
+                          {...commonProps}
+                        />
+                      )
+                    }
+
+                    if (metric === "users") {
+                      return (
+                        <Area
+                          key={metric}
+                          dataKey="users"
+                          name="Users"
+                          stroke={colors.users}
+                          fill="url(#color_users)"
+                          fillOpacity={1}
+                          {...commonProps}
+                        />
+                      )
+                    }
+
+                    if (metric === "pageViews") {
+                      return (
+                        <Area
+                          key={metric}
+                          dataKey="pageViews"
+                          name="Page Views"
+                          stroke={colors.pageViews}
+                          fill="url(#color_pageViews)"
+                          fillOpacity={1}
+                          {...commonProps}
+                        />
+                      )
+                    }
+
+                    return (
                       <Area
-                        yAxisId="sessions"
-                        type="monotone"
-                        dataKey="sessions"
-                        name="Sessions"
-                        stroke={colors.sessions}
-                        strokeWidth={2}
+                        key={metric}
+                        dataKey="eventCount"
+                        name="Event Count"
+                        stroke={colors.eventCount}
+                        fill="url(#color_eventCount)"
                         fillOpacity={1}
-                        fill="url(#color_sessions)"
-                        activeDot={{ r: 6 }}
+                        {...commonProps}
                       />
-                      {isCompareMode && (
+                    )
+                  })}
+
+                  {showBounceRate && (
+                    <>
+                      <Line
+                        yAxisId="bounceRate"
+                        type="monotone"
+                        dataKey="bounceRate"
+                        name="Bounce Rate"
+                        stroke={colors.bounceRate}
+                        strokeWidth={2}
+                        dot={false}
+                        activeDot={{ r: 4 }}
+                      />
+                      <YAxis
+                        yAxisId="bounceRate"
+                        orientation="right"
+                        mirror={false}
+                        hide={false}
+                        tickFormatter={(v) => `${v.toFixed(1)}%`}
+                        axisLine={false}
+                        tickLine={false}
+                        tickCount={5}
+                        domain={[0, "auto"]}
+                        tick={<CustomYAxisTick fill={colors.bounceRate} formatter={(v: number) => `${v.toFixed(1)}%`} />}
+                      />
+                    </>
+                  )}
+
+                  <YAxis
+                    yAxisId="count"
+                    orientation="left"
+                    mirror={false}
+                    hide={false}
+                    tickFormatter={formatCompactNumber}
+                    axisLine={false}
+                    tickLine={false}
+                    tickCount={5}
+                    domain={[0, "auto"]}
+                    tick={<CustomYAxisTick fill={colors.sessions} formatter={formatCompactNumber} />}
+                  />
+
+                  {isCompareMode && (
+                    <>
+                      {activeMetrics.sessions && (
                         <Line
-                          yAxisId="sessions"
+                          yAxisId="count"
                           type="monotone"
                           dataKey="compareSessions"
                           name="Compare Sessions"
@@ -675,24 +792,9 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                           activeDot={{ r: 4 }}
                         />
                       )}
-                    </>
-                  )}
-                  {activeMetrics.users && (
-                    <>
-                      <Area
-                        yAxisId="users"
-                        type="monotone"
-                        dataKey="users"
-                        name="Users"
-                        stroke={colors.users}
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#color_users)"
-                        activeDot={{ r: 6 }}
-                      />
-                      {isCompareMode && (
+                      {activeMetrics.users && (
                         <Line
-                          yAxisId="users"
+                          yAxisId="count"
                           type="monotone"
                           dataKey="compareUsers"
                           name="Compare Users"
@@ -703,24 +805,9 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                           activeDot={{ r: 4 }}
                         />
                       )}
-                    </>
-                  )}
-                  {activeMetrics.pageViews && (
-                    <>
-                      <Area
-                        yAxisId="pageViews"
-                        type="monotone"
-                        dataKey="pageViews"
-                        name="Page Views"
-                        stroke={colors.pageViews}
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#color_pageViews)"
-                        activeDot={{ r: 6 }}
-                      />
-                      {isCompareMode && (
+                      {activeMetrics.pageViews && (
                         <Line
-                          yAxisId="pageViews"
+                          yAxisId="count"
                           type="monotone"
                           dataKey="comparePageViews"
                           name="Compare Page Views"
@@ -731,22 +818,20 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                           activeDot={{ r: 4 }}
                         />
                       )}
-                    </>
-                  )}
-                  {activeMetrics.bounceRate && (
-                    <>
-                      <Area
-                        yAxisId="bounceRate"
-                        type="monotone"
-                        dataKey="bounceRate"
-                        name="Bounce Rate"
-                        stroke={colors.bounceRate}
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#color_bounceRate)"
-                        activeDot={{ r: 6 }}
-                      />
-                      {isCompareMode && (
+                      {activeMetrics.eventCount && (
+                        <Line
+                          yAxisId="count"
+                          type="monotone"
+                          dataKey="compareEventCount"
+                          name="Compare Event Count"
+                          stroke={colors.eventCount}
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                          activeDot={{ r: 4 }}
+                        />
+                      )}
+                      {showBounceRate && (
                         <Line
                           yAxisId="bounceRate"
                           type="monotone"
@@ -761,118 +846,37 @@ export function Ga4Overview({ siteUrl, dateRange, isCompareMode, compareDateRang
                       )}
                     </>
                   )}
-                  {activeMetrics.eventCount && (
-                    <>
-                      <Area
-                        yAxisId="eventCount"
-                        type="monotone"
-                        dataKey="eventCount"
-                        name="Event Count"
-                        stroke={colors.eventCount}
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#color_eventCount)"
-                        activeDot={{ r: 6 }}
-                      />
-                      {isCompareMode && (
-                        <Line
-                          yAxisId="eventCount"
-                          type="monotone"
-                          dataKey="compareEventCount"
-                          name="Compare Event Count"
-                          stroke={colors.eventCount}
-                          strokeWidth={2}
-                          strokeDasharray="5 5"
-                          dot={false}
-                          activeDot={{ r: 4 }}
-                        />
-                      )}
-                    </>
-                  )}
 
-                  {activeMetrics.sessions && (
-                    <YAxis
-                      yAxisId="sessions"
-                      orientation={getAxisProps('sessions').orientation}
-                      mirror={getAxisProps('sessions').mirror}
-                      hide={getAxisProps('sessions').hide}
-                      tickFormatter={formatCompactNumber}
-                      axisLine={false}
-                      tickLine={false}
-                      tickCount={5}
-                      domain={[0, 'auto']}
-                      tick={<CustomYAxisTick fill={colors.sessions} formatter={formatCompactNumber} />}
-                    />
-                  )}
-                  {activeMetrics.users && (
-                    <YAxis
-                      yAxisId="users"
-                      orientation={getAxisProps('users').orientation}
-                      mirror={getAxisProps('users').mirror}
-                      hide={getAxisProps('users').hide}
-                      tickFormatter={formatCompactNumber}
-                      axisLine={false}
-                      tickLine={false}
-                      tickCount={5}
-                      domain={[0, 'auto']}
-                      tick={<CustomYAxisTick fill={colors.users} formatter={formatCompactNumber} />}
-                    />
-                  )}
-                  {activeMetrics.pageViews && (
-                    <YAxis
-                      yAxisId="pageViews"
-                      orientation={getAxisProps('pageViews').orientation}
-                      mirror={getAxisProps('pageViews').mirror}
-                      hide={getAxisProps('pageViews').hide}
-                      tickFormatter={formatCompactNumber}
-                      axisLine={false}
-                      tickLine={false}
-                      tickCount={5}
-                      domain={[0, 'auto']}
-                      tick={<CustomYAxisTick fill={colors.pageViews} formatter={formatCompactNumber} />}
-                    />
-                  )}
-                  {activeMetrics.bounceRate && (
-                    <YAxis
-                      yAxisId="bounceRate"
-                      orientation={getAxisProps('bounceRate').orientation}
-                      mirror={getAxisProps('bounceRate').mirror}
-                      hide={getAxisProps('bounceRate').hide}
-                      tickFormatter={(v) => `${v.toFixed(1)}%`}
-                      axisLine={false}
-                      tickLine={false}
-                      tickCount={5}
-                      domain={[0, 'auto']}
-                      tick={<CustomYAxisTick fill={colors.bounceRate} formatter={(v: number) => `${v.toFixed(1)}%`} />}
-                    />
-                  )}
-                  {activeMetrics.eventCount && (
-                    <YAxis
-                      yAxisId="eventCount"
-                      orientation={getAxisProps('eventCount').orientation}
-                      mirror={getAxisProps('eventCount').mirror}
-                      hide={getAxisProps('eventCount').hide}
-                      tickFormatter={formatCompactNumber}
-                      axisLine={false}
-                      tickLine={false}
-                      tickCount={5}
-                      domain={[0, 'auto']}
-                      tick={<CustomYAxisTick fill={colors.eventCount} formatter={formatCompactNumber} />}
-                    />
-                  )}
-
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    labelStyle={{ fontWeight: 'bold', marginBottom: '4px', color: '#0f172a' }}
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: "8px",
+                      border: "1px solid var(--border)",
+                      background: "var(--popover)",
+                      boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                    }}
+                    labelStyle={{ fontWeight: "bold", marginBottom: "4px", color: "var(--foreground)" }}
                     formatter={(value: number, name: string) => {
-                      if (name.includes('Bounce Rate')) return [`${value.toFixed(2)}%`, name];
-                      return [value.toLocaleString(), name];
+                      if (name.includes("Bounce Rate")) return [`${value.toFixed(2)}%`, name]
+                      return [value.toLocaleString(), name]
                     }}
                   />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
           )}
+
+          <div className="mt-5 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-fit text-primary hover:text-primary/80"
+              onClick={exportChartCsv}
+              disabled={chartData.length === 0}
+            >
+              View export
+              <span className="ml-2">-&gt;</span>
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

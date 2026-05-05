@@ -7,6 +7,13 @@ export type PlanDefinition = {
   aiInsights: 'limited' | 'expanded' | 'priority';
   warehouseSync: 'basic' | 'extended' | 'unlimited';
   rankTracking: 'starter' | 'growth' | 'scale';
+  crawl: {
+    allowJavaScriptRendering: boolean;
+    allowRawExports: boolean;
+    allowReconciliation: boolean;
+    maxDepth: number;
+    maxPages: number;
+  };
   featureHighlights: string[];
 };
 
@@ -18,6 +25,13 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     aiInsights: 'limited',
     warehouseSync: 'basic',
     rankTracking: 'starter',
+    crawl: {
+      allowJavaScriptRendering: false,
+      allowRawExports: false,
+      allowReconciliation: false,
+      maxDepth: 2,
+      maxPages: 1000,
+    },
     featureHighlights: [
       '1 active property',
       'Core Search Console dashboard',
@@ -32,6 +46,13 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     aiInsights: 'expanded',
     warehouseSync: 'extended',
     rankTracking: 'growth',
+    crawl: {
+      allowJavaScriptRendering: true,
+      allowRawExports: true,
+      allowReconciliation: true,
+      maxDepth: 6,
+      maxPages: 25000,
+    },
     featureHighlights: [
       '3 active properties',
       'Expanded AI workflows',
@@ -46,6 +67,13 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     aiInsights: 'priority',
     warehouseSync: 'unlimited',
     rankTracking: 'scale',
+    crawl: {
+      allowJavaScriptRendering: true,
+      allowRawExports: true,
+      allowReconciliation: true,
+      maxDepth: 10,
+      maxPages: 100000,
+    },
     featureHighlights: [
       'Unlimited active properties',
       'Priority AI workflows',
@@ -79,4 +107,21 @@ export function getRemainingPropertySlots(tier: PlanTier | null | undefined, unl
   }
 
   return Math.max(limit - unlockedCount, 0);
+}
+
+export function isMultiSitePlan(tier: PlanTier | null | undefined) {
+  const limit = getPlanPropertyLimit(tier);
+  return limit === null || limit > 1;
+}
+
+export function getPlanCrawlLimits(tier: PlanTier | null | undefined) {
+  return getPlanDefinition(tier).crawl;
+}
+
+export function canUseRawExports(tier: PlanTier | null | undefined) {
+  return getPlanDefinition(tier).crawl.allowRawExports;
+}
+
+export function canUseReconciliation(tier: PlanTier | null | undefined) {
+  return getPlanDefinition(tier).crawl.allowReconciliation;
 }

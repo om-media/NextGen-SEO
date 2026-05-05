@@ -3,10 +3,94 @@ import type { AppDatabase } from '../database.js';
 import { requireAuth, requireMatchingParam } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
-import { getPlanPropertyLimit } from '../../shared/plans.js';
+import { getPlanCrawlLimits, getPlanPropertyLimit } from '../../shared/plans.js';
+import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
+import { queueWarehouseSyncJob } from '../services/warehouseJobs.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
+  const parseStoredSites = (value: unknown) => {
+    if (typeof value !== 'string') return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const uniqueSites = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+  const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
+  const addDays = (value: Date, days: number) => {
+    const next = new Date(value);
+    next.setUTCDate(next.getUTCDate() + days);
+    return next;
+  };
+  const recentStableReportingDates = (days = 30) => {
+    const end = addDays(new Date(), -2);
+    const start = addDays(end, -(days - 1));
+    const dates: string[] = [];
+    for (let cursor = start; cursor <= end; cursor = addDays(cursor, 1)) {
+      dates.push(toIsoDate(cursor));
+    }
+    return dates;
+  };
+
+  const resolveCrawlStartUrl = (siteUrl: string) => {
+    const trimmed = String(siteUrl || '').trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    const hostname = trimmed.replace(/^sc-domain:/i, '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    return hostname ? `https://${hostname}/` : '';
+  };
+
+  const queueInitialCrawlIfNeeded = async (ownerId: string, siteUrl: string, tier: string | null | undefined) => {
+    try {
+      const startUrl = resolveCrawlStartUrl(siteUrl);
+      if (!/^https?:\/\//i.test(startUrl)) return;
+
+      const existing = await getCrawlStatus(db, ownerId, siteUrl);
+      if (existing.job) return;
+
+      const crawlLimits = getPlanCrawlLimits(tier as any);
+      await queueCrawlJob(db, {
+        includeQueryStrings: false,
+        maxDepth: crawlLimits.maxDepth,
+        maxPages: crawlLimits.maxPages,
+        ownerId,
+        renderMode: 'html',
+        respectRobots: true,
+        sitemapUrl: null,
+        siteUrl,
+        startUrl,
+        userAgent: null,
+      });
+    } catch (err) {
+      console.warn('Failed to queue initial crawl', { ownerId, siteUrl, err });
+    }
+  };
+
+  const queueInitialWarehouseSyncIfPossible = async (ownerId: string, siteUrl: string, propertyId?: string | null) => {
+    try {
+      const user = await db.get<{ activatedGa4PropertyId?: string | null; gscRefreshToken?: string | null }>(
+        'SELECT activatedGa4PropertyId, gscRefreshToken FROM users WHERE id = ?',
+        [ownerId],
+      );
+      if (!user?.gscRefreshToken) return;
+
+      const activePropertyId = propertyId || user.activatedGa4PropertyId || null;
+      for (const targetDate of recentStableReportingDates()) {
+        await queueWarehouseSyncJob(db, {
+          ownerId,
+          propertyId: activePropertyId,
+          siteUrl,
+          targetDate,
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to queue initial warehouse sync', { ownerId, siteUrl, err });
+    }
+  };
+
   app.get('/api/users/:id', authRequired, requireMatchingParam('id'), async (req, res) => {
     try {
       const user = await db.get<any>('SELECT * FROM users WHERE id = ?', [req.params.id]);
@@ -105,7 +189,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      let unlockedSites = JSON.parse(user.unlockedSites || '[]');
+      let unlockedSites = uniqueSites(parseStoredSites(user.unlockedSites));
 
       if (onboardingCompleted && activatedSiteUrl) {
         const limit = getPlanPropertyLimit(user.tier);
@@ -128,6 +212,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
           JSON.stringify(unlockedSites),
           req.params.id,
         ]);
+      if (onboardingCompleted && activatedSiteUrl) {
+        await queueInitialCrawlIfNeeded(req.params.id, activatedSiteUrl, user.tier);
+        await queueInitialWarehouseSyncIfPossible(req.params.id, activatedSiteUrl, activatedGa4PropertyId || null);
+      }
       res.json({
         success: true,
         onboardingCompleted,
@@ -147,7 +235,11 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [req.params.id]);
+      if (!user) return res.status(404).json({ error: 'User not found' });
       await db.run('UPDATE users SET activatedSiteUrl = ? WHERE id = ?', [activatedSiteUrl, req.params.id]);
+      await queueInitialCrawlIfNeeded(req.params.id, activatedSiteUrl, user.tier);
+      await queueInitialWarehouseSyncIfPossible(req.params.id, activatedSiteUrl);
       res.json({ success: true, activatedSiteUrl });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -182,11 +274,17 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       const user = await db.get<any>('SELECT * FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
 
-      const unlockedSites = JSON.parse(user.unlockedSites || '[]');
+      const unlockedSites = uniqueSites(parseStoredSites(user.unlockedSites));
       if (!unlockedSites.includes(siteUrl)) {
+        const limit = getPlanPropertyLimit(user.tier);
+        if (limit !== null && unlockedSites.length >= limit) {
+          return res.status(403).json({ error: `Your current plan allows ${limit} active site${limit === 1 ? '' : 's'}. Upgrade to activate more sites.` });
+        }
         unlockedSites.push(siteUrl);
         await db.run('UPDATE users SET unlockedSites = ? WHERE id = ?', [JSON.stringify(unlockedSites), req.params.id]);
       }
+      await queueInitialCrawlIfNeeded(req.params.id, siteUrl, user.tier);
+      await queueInitialWarehouseSyncIfPossible(req.params.id, siteUrl);
       res.json({ success: true, unlockedSites });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

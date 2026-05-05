@@ -61,6 +61,10 @@ export function AppHeader({
   const avatarUrl = userProfile?.avatarUrl || user.photoURL || "";
   const avatarFallback = displayName.charAt(0).toUpperCase() || "U";
   const selectedSiteOption = currentSites.find((site) => site.siteUrl === selectedSite) || null;
+  const showGoogleConnectAction =
+    activeMenu === "Dashboard" &&
+    (dataSource === "gsc" || dataSource === "blended") &&
+    !googleConnected;
 
   return (
     <header className="sticky top-0 z-10 flex min-h-16 flex-wrap items-center gap-4 border-b border-border bg-background/92 px-4 py-2 backdrop-blur-xl sm:px-6">
@@ -116,7 +120,7 @@ export function AppHeader({
           </Select>
         )}
 
-        {(dataSource === "gsc" || dataSource === "blended") && !googleConnected && (
+        {showGoogleConnectAction && (
           <Button
             onClick={onConnectGoogle}
             variant="outline"

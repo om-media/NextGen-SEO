@@ -7,6 +7,7 @@ import {
   buildGoogleOauthUrl,
   clearGoogleRefreshToken,
   exchangeGoogleCodeForTokens,
+  getStoredGoogleRefreshToken,
   googleApiFetchJson,
   storeGoogleRefreshToken,
   verifyGoogleOauthState,
@@ -39,6 +40,11 @@ function sendOauthPopupResponse(res: Response, success: boolean, message: string
 </html>`);
 }
 
+function positiveIntegerOrUndefined(value: unknown) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : undefined;
+}
+
 export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
 
@@ -68,6 +74,11 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       const userId = verifyGoogleOauthState(state);
       const tokens = await exchangeGoogleCodeForTokens(req, code);
       if (!tokens.refresh_token) {
+        const existingRefreshToken = await getStoredGoogleRefreshToken(db, userId);
+        if (existingRefreshToken) {
+          return sendOauthPopupResponse(res, true, 'Google account connection is already saved. You can close this window.');
+        }
+
         return sendOauthPopupResponse(res, false, 'Google did not return a refresh token. Please try again.');
       }
 
@@ -138,7 +149,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   });
 
   app.post('/api/google/ga4/run-report', authRequired, async (req: AuthedRequest, res) => {
-    const { propertyId, startDate, endDate, dimensions, metrics, dimensionFilter } = req.body;
+    const { propertyId, startDate, endDate, dimensions, metrics, dimensionFilter, limit, offset } = req.body;
     if (!isNonEmptyString(propertyId)) return res.status(400).json({ error: 'Invalid propertyId' });
     if (!isIsoDateString(startDate) || !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid date range' });
     if (!Array.isArray(dimensions) || dimensions.some((dimension) => typeof dimension !== 'string')) {
@@ -158,7 +169,9 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
           body: JSON.stringify({
             dateRanges: [{ startDate, endDate }],
             dimensions: dimensions.map((name: string) => ({ name })),
+            ...(positiveIntegerOrUndefined(limit) !== undefined ? { limit: positiveIntegerOrUndefined(limit) } : {}),
             metrics: metrics.map((name: string) => ({ name })),
+            ...(positiveIntegerOrUndefined(offset) !== undefined ? { offset: positiveIntegerOrUndefined(offset) } : {}),
             ...(dimensionFilter ? { dimensionFilter } : {}),
           }),
         },
