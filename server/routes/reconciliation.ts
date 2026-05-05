@@ -239,7 +239,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
         if (!target.gsc && !target.ga4) target.representativeUrl = url || target.representativeUrl;
       }
 
-      const allRows = Array.from(rowsByKey.values())
+      const reconciledRows = Array.from(rowsByKey.values())
         .map((row) => {
           const flags = getFlags(row, Boolean(propertyId));
           return {
@@ -252,6 +252,23 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
             },
           } satisfies ReconciliationRow;
         })
+        .sort((a, b) => getSortScore(b) - getSortScore(a) || a.pageKey.localeCompare(b.pageKey));
+
+      const totals = reconciledRows.reduce(
+        (acc, row) => {
+          acc.total += 1;
+          if (row.flags.length > 0) acc.issues += 1;
+          if (row.flags.length === 0) acc.matched += 1;
+          if (row.flags.includes('missing_in_crawl')) acc.missingCrawl += 1;
+          if (row.flags.includes('missing_in_gsc')) acc.missingGsc += 1;
+          if (row.flags.includes('missing_in_ga4')) acc.missingGa4 += 1;
+          if (row.flags.includes('crawl_error')) acc.crawlErrors += 1;
+          return acc;
+        },
+        { crawlErrors: 0, issues: 0, matched: 0, missingCrawl: 0, missingGa4: 0, missingGsc: 0, total: 0 },
+      );
+
+      const filteredRows = reconciledRows
         .filter((row) => matchesStatus(row, status))
         .filter((row) => {
           if (!search) return true;
@@ -265,21 +282,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
             row.crawl?.canonicalUrl,
           ].join(' ').toLowerCase();
           return haystack.includes(search);
-        })
-        .sort((a, b) => getSortScore(b) - getSortScore(a) || a.pageKey.localeCompare(b.pageKey));
-
-      const totals = allRows.reduce(
-        (acc, row) => {
-          acc.total += 1;
-          if (row.flags.length > 0) acc.issues += 1;
-          if (row.flags.includes('missing_in_crawl')) acc.missingCrawl += 1;
-          if (row.flags.includes('missing_in_gsc')) acc.missingGsc += 1;
-          if (row.flags.includes('missing_in_ga4')) acc.missingGa4 += 1;
-          if (row.flags.includes('crawl_error')) acc.crawlErrors += 1;
-          return acc;
-        },
-        { crawlErrors: 0, issues: 0, missingCrawl: 0, missingGa4: 0, missingGsc: 0, total: 0 },
-      );
+        });
 
       return res.json({
         meta: {
@@ -289,9 +292,9 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
         page: {
           limit,
           offset,
-          total: allRows.length,
+          total: filteredRows.length,
         },
-        rows: allRows.slice(offset, offset + limit),
+        rows: filteredRows.slice(offset, offset + limit),
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Failed to reconcile page data' });

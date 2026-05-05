@@ -237,6 +237,7 @@ export function BlendedPagesView({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState<BlendedPagePerformanceResponse["page"] | null>(null);
   const [rows, setRows] = useState<BlendedPagePerformanceRow[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [sourceMeta, setSourceMeta] = useState<BlendedPagePerformanceResponse["meta"] | null>(null);
@@ -257,9 +258,14 @@ export function BlendedPagesView({
     const primaryPromise = fetchBlendedPagePerformance({
       endDate: dateStrings.endDate,
       ga4PropertyId,
-      limit: 1000,
+      limit: PAGE_SIZE,
+      offset: (page - 1) * PAGE_SIZE,
+      search: searchTerm,
       siteUrl,
+      sortColumn,
+      sortDirection,
       startDate: dateStrings.startDate,
+      trafficFilter,
     });
 
     const comparePromise =
@@ -267,9 +273,14 @@ export function BlendedPagesView({
         ? fetchBlendedPagePerformance({
             endDate: compareDateStrings.endDate,
             ga4PropertyId,
-            limit: 1000,
+            limit: PAGE_SIZE,
+            offset: (page - 1) * PAGE_SIZE,
+            search: searchTerm,
             siteUrl,
+            sortColumn,
+            sortDirection,
             startDate: compareDateStrings.startDate,
+            trafficFilter,
           }).catch(() => ({ rows: [] }))
         : Promise.resolve({ rows: [] });
 
@@ -278,8 +289,8 @@ export function BlendedPagesView({
         if (!isMounted) return;
         setRows(primary.rows || []);
         setCompareRows(compare.rows || []);
+        setPageInfo(primary.page || null);
         setSourceMeta(primary.meta);
-        setPage(1);
       })
       .catch((err: Error) => {
         if (!isMounted) return;
@@ -292,36 +303,47 @@ export function BlendedPagesView({
     return () => {
       isMounted = false;
     };
-  }, [compareDateStrings?.endDate, compareDateStrings?.startDate, dateStrings?.endDate, dateStrings?.startDate, ga4PropertyId, isCompareMode, siteUrl]);
+  }, [
+    compareDateStrings?.endDate,
+    compareDateStrings?.startDate,
+    dateStrings?.endDate,
+    dateStrings?.startDate,
+    ga4PropertyId,
+    isCompareMode,
+    page,
+    searchTerm,
+    siteUrl,
+    sortColumn,
+    sortDirection,
+    trafficFilter,
+  ]);
 
   const compareByPageKey = useMemo(() => new Map(compareRows.map((row) => [row.pageKey, row])), [compareRows]);
 
-  const filteredRows = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-
-    return rows
-      .filter((row) => {
-        if (normalizedSearch && !row.page.toLowerCase().includes(normalizedSearch) && !row.pageKey.toLowerCase().includes(normalizedSearch)) {
-          return false;
-        }
-        if (trafficFilter === "with-ga4" && !row.ga4) return false;
-        if (trafficFilter === "without-ga4" && row.ga4) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        const aValue = getSortValue(a, sortColumn);
-        const bValue = getSortValue(b, sortColumn);
-        if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
-        if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
-        return 0;
-      });
-  }, [rows, searchTerm, sortColumn, sortDirection, trafficFilter]);
-
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
-  const paginatedRows = filteredRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const hasGa4Rows = rows.some((row) => row.ga4);
+  const filteredTotal = pageInfo?.filteredTotal ?? rows.length;
+  const totalRows = pageInfo?.total ?? rows.length;
+  const pageCount = Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE));
+  const paginatedRows = rows;
+  const hasGa4Rows = (sourceMeta?.totals.ga4Pages ?? rows.filter((row) => row.ga4).length) > 0;
 
   const totals = useMemo(() => {
+    if (sourceMeta?.totals) {
+      return {
+        bounceRate: sourceMeta.totals.bounceRate,
+        clicks: sourceMeta.totals.clicks,
+        ctr: sourceMeta.totals.ctr,
+        events: sourceMeta.totals.eventCount,
+        impressions: sourceMeta.totals.impressions,
+        pageViews: sourceMeta.totals.pageViews,
+        position: sourceMeta.totals.position,
+        queryCount: sourceMeta.totals.queryCount,
+        sessions: sourceMeta.totals.sessions,
+        users: sourceMeta.totals.totalUsers,
+        weightedBounce: 0,
+        weightedPosition: 0,
+      };
+    }
+
     const aggregate = rows.reduce(
       (acc, row) => {
         acc.clicks += row.gsc?.clicks ?? 0;
@@ -354,7 +376,7 @@ export function BlendedPagesView({
       ctr: aggregate.impressions ? aggregate.clicks / aggregate.impressions : 0,
       position: aggregate.impressions ? aggregate.weightedPosition / aggregate.impressions : 0,
     };
-  }, [rows]);
+  }, [rows, sourceMeta?.totals]);
 
   const compareTotals = useMemo(() => {
     return compareRows.reduce(
@@ -368,6 +390,8 @@ export function BlendedPagesView({
   }, [compareRows]);
 
   const folderRows = useMemo(() => {
+    if (sourceMeta?.topFolders) return sourceMeta.topFolders;
+
     const folders = new Map<string, { clicks: number; pages: number; sessions: number }>();
     rows.forEach((row) => {
       const key = getFolderKey(row.pageKey);
@@ -381,27 +405,61 @@ export function BlendedPagesView({
       .map(([folder, value]) => ({ folder, ...value }))
       .sort((a, b) => b.clicks - a.clicks)
       .slice(0, 6);
-  }, [rows]);
+  }, [rows, sourceMeta?.topFolders]);
 
   const opportunities = useMemo(() => {
+    if (sourceMeta?.topOpportunities) return sourceMeta.topOpportunities;
+
     return rows
       .filter((row) => (row.gsc?.impressions ?? 0) >= 100 && (row.gsc?.ctr ?? 0) < 0.02)
       .sort((a, b) => (b.gsc?.impressions ?? 0) - (a.gsc?.impressions ?? 0))
       .slice(0, 4);
-  }, [rows]);
+  }, [rows, sourceMeta?.topOpportunities]);
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
       setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      setPage(1);
       return;
     }
     setSortColumn(column);
     setSortDirection(column === "bounceRate" ? "asc" : "desc");
+    setPage(1);
   };
 
   const sortIndicator = (column: SortColumn) => {
     if (sortColumn !== column) return <span className="text-[#A8B3AC]">↕</span>;
     return sortDirection === "asc" ? "↑" : "↓";
+  };
+
+  const handleExportCsv = async () => {
+    if (!dateStrings) return;
+
+    const batchSize = 5000;
+    const allRows: BlendedPagePerformanceRow[] = [];
+    let offset = 0;
+    let total = filteredTotal;
+
+    while (offset < total || offset === 0) {
+      const response = await fetchBlendedPagePerformance({
+        endDate: dateStrings.endDate,
+        ga4PropertyId,
+        limit: batchSize,
+        offset,
+        search: searchTerm,
+        siteUrl,
+        sortColumn,
+        sortDirection,
+        startDate: dateStrings.startDate,
+        trafficFilter,
+      });
+      allRows.push(...(response.rows || []));
+      total = response.page?.filteredTotal ?? allRows.length;
+      offset += batchSize;
+      if (!response.rows?.length) break;
+    }
+
+    downloadCsv(allRows);
   };
 
   if (error) {
@@ -419,8 +477,8 @@ export function BlendedPagesView({
           accentClass="bg-[#EAF4EC] text-[#0F3D2E]"
           icon={<FileText className="h-5 w-5" />}
           label="Top pages"
-          sublabel={`${formatNumber(rows.filter((row) => (row.gsc?.clicks ?? 0) > 0).length)} pages with clicks`}
-          value={formatNumber(rows.length)}
+          sublabel={`${formatNumber(sourceMeta?.totals.gscPages ?? rows.filter((row) => (row.gsc?.clicks ?? 0) > 0).length)} pages with GSC data`}
+          value={formatNumber(totalRows)}
         />
         <MetricCard
           accentClass="bg-[#EAF2FF] text-[#2F7DF6]"
@@ -479,7 +537,7 @@ export function BlendedPagesView({
         <section className="rounded-2xl border border-[#E6ECE8] bg-white shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
           <div className="flex flex-col gap-4 border-b border-[#E6ECE8] p-5 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <h3 className="text-xl font-semibold tracking-[-0.02em] text-[#0F172A]">Top Pages ({filteredRows.length})</h3>
+              <h3 className="text-xl font-semibold tracking-[-0.02em] text-[#0F172A]">Top Pages ({filteredTotal})</h3>
               <p className="mt-1 text-sm text-[#647067]">
                 Blends Search Console visibility with GA4 engagement for matching page paths.
               </p>
@@ -494,7 +552,7 @@ export function BlendedPagesView({
                 <Sparkles className="mr-2 h-4 w-4" />
                 Analyze with AI
               </Button>
-              <Button variant="outline" size="sm" className="h-9 rounded-xl border-[#E6ECE8] bg-white" onClick={() => downloadCsv(filteredRows)}>
+              <Button variant="outline" size="sm" className="h-9 rounded-xl border-[#E6ECE8] bg-white" onClick={handleExportCsv}>
                 <Download className="mr-2 h-4 w-4" />
                 Export CSV
               </Button>
@@ -636,7 +694,7 @@ export function BlendedPagesView({
 
             <div className="flex flex-col gap-3 text-sm text-[#647067] sm:flex-row sm:items-center sm:justify-between">
               <span>
-                Showing {filteredRows.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, filteredRows.length)} of {filteredRows.length} pages
+                Showing {filteredTotal === 0 ? 0 : (page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, filteredTotal)} of {filteredTotal} pages
               </span>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" className="rounded-xl" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>

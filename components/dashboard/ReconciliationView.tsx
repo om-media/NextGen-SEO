@@ -117,7 +117,7 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
   const endDate = useMemo(() => toIsoDate(dateRange?.to, new Date()), [dateRange?.to]);
   const rows = data?.rows || [];
   const page = data?.page || { limit: pageSize, offset: 0, total: 0 };
-  const totals = data?.meta.totals || { crawlErrors: 0, issues: 0, missingCrawl: 0, missingGa4: 0, missingGsc: 0, total: 0 };
+  const totals = data?.meta.totals || { crawlErrors: 0, issues: 0, matched: 0, missingCrawl: 0, missingGa4: 0, missingGsc: 0, total: 0 };
   const currentPage = Math.floor(page.offset / page.limit) + 1;
   const totalPages = Math.max(1, Math.ceil(page.total / page.limit));
 
@@ -226,9 +226,10 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
           </div>
         </CardHeader>
         <CardContent className="space-y-5 pt-5">
-          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <StatCard label="Filtered URLs" value={totals.total} />
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
+            <StatCard label="Total URLs" value={totals.total} />
             <StatCard label="Issues" value={totals.issues} />
+            <StatCard label="Matched" value={totals.matched} />
             <StatCard label="Missing crawl" value={totals.missingCrawl} />
             <StatCard label="Missing GSC" value={totals.missingGsc} />
             <StatCard label="Missing GA4" value={totals.missingGa4} />

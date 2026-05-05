@@ -28,18 +28,30 @@ async function fetchWarehouseData(
   endDate: string,
   dimensionFilterGroups?: any[],
 ): Promise<GridRow[]> {
-  const response = await authFetch("/api/warehouse/query", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ siteUrl, startDate, endDate, dimensions: [dimension], dimensionFilterGroups }),
-  });
+  const allRows: any[] = [];
+  const rowLimit = 50000;
+  let startRow = 0;
+  let hasMore = true;
 
-  if (!response.ok) {
-    throw new Error("Failed to fetch warehouse data");
+  while (hasMore) {
+    const response = await authFetch("/api/warehouse/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ siteUrl, startDate, endDate, dimensions: [dimension], dimensionFilterGroups, rowLimit, startRow }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch warehouse data");
+    }
+
+    const rows = await response.json();
+    const pageRows = Array.isArray(rows) ? rows : [];
+    allRows.push(...pageRows);
+    hasMore = pageRows.length === rowLimit;
+    startRow += rowLimit;
   }
 
-  const rows = await response.json();
-  return rows.map((row: any) => ({
+  return allRows.map((row: any) => ({
     keys: [row[dimension]],
     clicks: toFiniteNumber(row.clicks),
     impressions: toFiniteNumber(row.impressions),
@@ -50,18 +62,30 @@ async function fetchWarehouseData(
 }
 
 async function fetchWarehousePageQueryRows(siteUrl: string, startDate: string, endDate: string): Promise<GridRow[]> {
-  const response = await authFetch("/api/warehouse/query", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ siteUrl, startDate, endDate, dimensions: ["page", "query"] }),
-  });
+  const allRows: any[] = [];
+  const rowLimit = 50000;
+  let startRow = 0;
+  let hasMore = true;
 
-  if (!response.ok) {
-    throw new Error("Failed to fetch warehouse page query data");
+  while (hasMore) {
+    const response = await authFetch("/api/warehouse/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ siteUrl, startDate, endDate, dimensions: ["page", "query"], rowLimit, startRow }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch warehouse page query data");
+    }
+
+    const rows = await response.json();
+    const pageRows = Array.isArray(rows) ? rows : [];
+    allRows.push(...pageRows);
+    hasMore = pageRows.length === rowLimit;
+    startRow += rowLimit;
   }
 
-  const rows = await response.json();
-  return rows.map((row: any) => ({
+  return allRows.map((row: any) => ({
     keys: [row.page, row.query],
     clicks: toFiniteNumber(row.clicks),
     impressions: toFiniteNumber(row.impressions),

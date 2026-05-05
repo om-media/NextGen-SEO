@@ -99,14 +99,26 @@ export function QueryCountView({
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     
     const fetchWarehouseData = async (start: string, end: string) => {
-      const res = await authFetch('/api/warehouse/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['page'] })
-      })
-      if (!res.ok) throw new Error("Failed to fetch warehouse data")
-      const json = await res.json()
-      return json.map((r: any) => ({
+      const allRows: any[] = [];
+      const rowLimit = 50000;
+      let startRow = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const res = await authFetch('/api/warehouse/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: ['page'], rowLimit, startRow })
+        })
+        if (!res.ok) throw new Error("Failed to fetch warehouse data")
+        const json = await res.json()
+        const pageRows = Array.isArray(json) ? json : [];
+        allRows.push(...pageRows);
+        hasMore = pageRows.length === rowLimit;
+        startRow += rowLimit;
+      }
+
+      return allRows.map((r: any) => ({
         keys: [r.page],
         queryCount: Number(r.queryCount) || 0,
         clicks: r.clicks,

@@ -51,6 +51,35 @@ export type BlendedPagePerformanceResponse = {
       gsc: boolean;
     };
     startDate: string;
+    topFolders: Array<{
+      clicks: number;
+      folder: string;
+      pages: number;
+      sessions: number;
+    }>;
+    topOpportunities: BlendedPagePerformanceRow[];
+    totals: {
+      bounceRate: number;
+      clicks: number;
+      ctr: number;
+      eventCount: number;
+      ga4Pages: number;
+      gscPages: number;
+      impressions: number;
+      matchedPages: number;
+      pageViews: number;
+      position: number;
+      queryCount: number;
+      sessions: number;
+      totalPages: number;
+      totalUsers: number;
+    };
+  };
+  page: {
+    filteredTotal: number;
+    limit: number;
+    offset: number;
+    total: number;
   };
   rows: BlendedPagePerformanceRow[];
 };
@@ -59,16 +88,26 @@ type FetchBlendedPagePerformanceParams = {
   endDate: string;
   ga4PropertyId?: string | null;
   limit?: number;
+  offset?: number;
+  search?: string;
   siteUrl: string;
+  sortColumn?: string;
+  sortDirection?: "asc" | "desc";
   startDate: string;
+  trafficFilter?: string;
 };
 
 export async function fetchBlendedPagePerformance({
   endDate,
   ga4PropertyId,
   limit = 500,
+  offset = 0,
+  search,
   siteUrl,
+  sortColumn,
+  sortDirection,
   startDate,
+  trafficFilter,
 }: FetchBlendedPagePerformanceParams): Promise<BlendedPagePerformanceResponse> {
   const response = await authFetch("/api/blended/page-performance", {
     method: "POST",
@@ -77,8 +116,13 @@ export async function fetchBlendedPagePerformance({
       endDate,
       ga4PropertyId: ga4PropertyId || undefined,
       limit,
+      offset,
+      search,
       siteUrl,
+      sortColumn,
+      sortDirection,
       startDate,
+      trafficFilter,
     }),
   });
 

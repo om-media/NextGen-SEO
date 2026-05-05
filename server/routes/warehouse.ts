@@ -868,7 +868,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
   app.post('/api/warehouse/query', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
-    const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups, metric } = req.body;
+    const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups, metric, rowLimit, startRow } = req.body;
     if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
       return res.status(400).json({ error: 'Missing or invalid parameters' });
     }
@@ -901,8 +901,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         orderClause = 'ORDER BY date ASC';
       }
       if (hasPage) {
-        selectClauseElements.push('page');
-        groupByClauseElements.push('page');
+        selectClauseElements.push('MIN(page) AS page');
+        groupByClauseElements.push('COALESCE(NULLIF(pageKey, \'\'), page)');
         if (!hasDate) orderClause = 'ORDER BY clicks DESC, impressions DESC';
       }
       if (hasQuery) {
@@ -918,7 +918,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const groupByClause = groupByClauseElements.length > 0 ? `GROUP BY ${groupByClauseElements.join(', ')}` : '';
 
       let whereClause = 'WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @startDate AND date <= @endDate';
-      const params: Record<string, unknown> = { ownerId, siteUrl, startDate, endDate };
+      const limit = Number.isFinite(Number(rowLimit)) ? Math.min(Math.max(Number(rowLimit), 1), 50000) : 50000;
+      const offset = Number.isFinite(Number(startRow)) ? Math.max(Number(startRow), 0) : 0;
+      const params: Record<string, unknown> = { ownerId, siteUrl, startDate, endDate, limit, offset };
 
       if (dimensionFilterGroups && dimensionFilterGroups.length > 0) {
         for (const group of dimensionFilterGroups) {
@@ -940,8 +942,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               if (filter.dimension === 'page' && filter.expression) {
                 const paramIdx = Object.keys(params).length;
                 if (filter.operator === 'equals') {
-                  whereClause += ` AND page = @pageFilter${paramIdx}`;
-                  params[`pageFilter${paramIdx}`] = filter.expression;
+                  whereClause += ` AND COALESCE(NULLIF(pageKey, ''), page) = @pageFilter${paramIdx}`;
+                  params[`pageFilter${paramIdx}`] = canonicalPageKey(filter.expression, siteUrl);
                 } else if (filter.operator === 'contains') {
                   whereClause += ` AND page LIKE @pageFilter${paramIdx}`;
                   params[`pageFilter${paramIdx}`] = `%${filter.expression}%`;
@@ -968,7 +970,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ${whereClause}
           ${groupByClause}
           ${orderClause}
-          LIMIT 50000
+          LIMIT @limit OFFSET @offset
         `, params);
       } else if (wantsQueryCount && hasDate && !hasQuery) {
         rows = await db.all<any>(`
@@ -982,7 +984,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ${whereClause}
           ${groupByClause}
           ${orderClause}
-          LIMIT 50000
+          LIMIT @limit OFFSET @offset
         `, params);
       } else if (hasQuery) {
         rows = await db.all<any>(`
@@ -995,7 +997,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ${whereClause}
           ${groupByClause}
           ${orderClause}
-          LIMIT 50000
+          LIMIT @limit OFFSET @offset
         `, params);
       } else {
         rows = await db.all<any>(`
@@ -1008,7 +1010,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ${whereClause}
           ${groupByClause}
           ${orderClause}
-          LIMIT 50000
+          LIMIT @limit OFFSET @offset
         `, params);
       }
 

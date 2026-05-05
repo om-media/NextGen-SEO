@@ -66,24 +66,41 @@ export class GscApiService {
     const canUseWarehouse = !forceLive && !hasUnsupportedFilter && dimensions.every(d => d === 'query' || d === 'date' || d === 'page');
     if (canUseWarehouse) {
       try {
-        const response = await authFetch('/api/warehouse/query', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            siteUrl,
-            startDate,
-            endDate,
-            dimensions,
-            dimensionFilterGroups
-          })
-        });
+        const maxRowsPerRequest = 25000;
+        const warehouseRows: GscSearchAnalyticsRow[] = [];
+        let startRow = 0;
+        let hasMore = true;
 
-        if (response.ok) {
-          const rows = await response.json();
-          // If the warehouse returns data, use it! It's much faster and has no 16-month limit.
-          if (rows && rows.length > 0) {
-            return rows;
+        while (hasMore) {
+          const fetchLimit = maxRowsPerRequest;
+          const response = await authFetch('/api/warehouse/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              siteUrl,
+              startDate,
+              endDate,
+              dimensions,
+              dimensionFilterGroups,
+              rowLimit: fetchLimit,
+              startRow,
+            })
+          });
+
+          if (!response.ok) {
+            break;
           }
+
+          const rows = await response.json();
+          const pageRows = Array.isArray(rows) ? rows : [];
+          warehouseRows.push(...pageRows);
+          hasMore = pageRows.length === fetchLimit;
+          startRow += fetchLimit;
+        }
+
+        // If the warehouse returns data, use it. It is faster and avoids live API export ceilings.
+        if (warehouseRows.length > 0) {
+          return warehouseRows;
         }
       } catch (err) {
         console.error("Warehouse query failed, falling back to Google API", err);
@@ -91,20 +108,12 @@ export class GscApiService {
     }
 
     const maxRowsPerRequest = 25000;
-    let targetRowLimit = 2500; // Free tier
-    
-    if (this.tier === 'pro') {
-      targetRowLimit = 25000;
-    } else if (this.tier === 'enterprise') {
-      targetRowLimit = Infinity;
-    }
-
     let allRows: GscSearchAnalyticsRow[] = [];
     let startRow = 0;
     let hasMore = true;
 
-    while (hasMore && allRows.length < targetRowLimit) {
-      const fetchLimit = Math.min(maxRowsPerRequest, targetRowLimit - allRows.length);
+    while (hasMore) {
+      const fetchLimit = maxRowsPerRequest;
       
       const body: any = {
         startDate,

@@ -55,6 +55,7 @@ export type PageReconciliationResponse = {
     totals: {
       crawlErrors: number;
       issues: number;
+      matched: number;
       missingCrawl: number;
       missingGa4: number;
       missingGsc: number;

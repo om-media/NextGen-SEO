@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { canonicalPageKey } from './reporting/url.js';
 
 const { Pool } = pg;
 type PgQueryable = pg.Pool | pg.PoolClient;
@@ -758,6 +759,60 @@ async function applyPostgresMigrations(db: AppDatabase) {
   await db.exec(indexSql);
 }
 
+type LegacyGscPageKeyRow = {
+  ownerId: string | null;
+  siteUrl: string;
+  page: string;
+};
+
+async function backfillGscPageKeys(db: AppDatabase) {
+  let totalUpdated = 0;
+
+  for (let iteration = 0; iteration < 100; iteration += 1) {
+    const rows = await db.all<LegacyGscPageKeyRow>(
+      `
+        SELECT DISTINCT ownerId, siteUrl, page
+        FROM gsc_page_query_metrics
+        WHERE page IS NOT NULL
+          AND page != ''
+          AND (pageKey IS NULL OR pageKey = '')
+        LIMIT 1000
+      `,
+    );
+
+    if (!rows.length) break;
+
+    let batchUpdated = 0;
+    for (const row of rows) {
+      const pageKey = canonicalPageKey(row.page, row.siteUrl);
+      const result = await db.run(
+        `
+          UPDATE gsc_page_query_metrics
+          SET pageKey = @pageKey
+          WHERE siteUrl = @siteUrl
+            AND page = @page
+            AND (ownerId = @ownerId OR (ownerId IS NULL AND @ownerId IS NULL))
+            AND (pageKey IS NULL OR pageKey = '')
+        `,
+        {
+          ownerId: row.ownerId,
+          siteUrl: row.siteUrl,
+          page: row.page,
+          pageKey,
+        },
+      );
+      batchUpdated += result.changes;
+    }
+
+    totalUpdated += batchUpdated;
+    if (!batchUpdated) break;
+  }
+
+  if (totalUpdated) {
+    console.log(`[db] Backfilled pageKey for ${totalUpdated} legacy GSC page-query rows`);
+  }
+}
+
 export async function initializeDatabase(): Promise<AppDatabase> {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 
@@ -768,12 +823,15 @@ export async function initializeDatabase(): Promise<AppDatabase> {
     });
     const db = new PostgresAppDatabase(pool);
     await applyPostgresMigrations(db);
+    await backfillGscPageKeys(db);
     console.log('[db] Connected to PostgreSQL');
     return db;
   }
 
   const sqlite = createSqliteConnection();
   applySqliteMigrations(sqlite);
+  const db = new SqliteAppDatabase(sqlite);
+  await backfillGscPageKeys(db);
   console.log('[db] Connected to local SQLite');
-  return new SqliteAppDatabase(sqlite);
+  return db;
 }
