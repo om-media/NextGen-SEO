@@ -26,6 +26,18 @@ const exportBatchSize = 5000;
 const formatNumber = (value: number | null | undefined) => new Intl.NumberFormat("en-US").format(Number(value || 0));
 const formatPercent = (value: number | null | undefined) => `${(Number(value || 0) * 100).toFixed(2)}%`;
 const ga4PageKinds = new Set<RawGa4Kind>(["page", "page_date"]);
+const ga4KindLabels: Record<RawGa4Kind, string> = {
+  browser: "Browser",
+  city: "City",
+  country: "Country",
+  device: "Device",
+  event: "Event name",
+  operatingSystem: "Operating system",
+  page: "Page path",
+  page_date: "Page path",
+  region: "Region",
+  traffic: "Source / medium",
+};
 
 function toIsoDate(value: Date | undefined, fallback: Date) {
   return format(value || fallback, "yyyy-MM-dd");
@@ -422,7 +434,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead>Page path</TableHead>
+                    <TableHead>{ga4KindLabels[ga4Kind]}</TableHead>
                     <TableHead className="text-right">Sessions</TableHead>
                     <TableHead className="text-right">Users</TableHead>
                     <TableHead className="text-right">Page views</TableHead>
