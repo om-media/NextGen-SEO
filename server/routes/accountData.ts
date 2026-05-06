@@ -236,8 +236,11 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [req.params.id]);
+      const user = await db.get<any>('SELECT tier, unlockedSites FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
+      if (user.tier !== 'enterprise' && !uniqueSites(parseStoredSites(user.unlockedSites)).includes(activatedSiteUrl)) {
+        return res.status(403).json({ error: 'Activate this site before making it the workspace default.' });
+      }
       await db.run('UPDATE users SET activatedSiteUrl = ? WHERE id = ?', [activatedSiteUrl, req.params.id]);
       await queueInitialCrawlIfNeeded(req.params.id, activatedSiteUrl, user.tier);
       await queueInitialWarehouseSyncIfPossible(req.params.id, activatedSiteUrl);
@@ -360,6 +363,9 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       if (siteUrl !== undefined && siteUrl !== 'null' && !isNonEmptyString(siteUrl)) {
         return res.status(400).json({ error: 'Invalid siteUrl' });
       }
+      if (isNonEmptyString(siteUrl) && siteUrl !== 'null' && !(await canAccessSite(db, req.params.userId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
 
       const annotations = siteUrl && siteUrl !== 'null'
         ? await db.all('SELECT * FROM annotations WHERE userId = ? AND (siteUrl = ? OR siteUrl IS NULL) ORDER BY date DESC', [req.params.userId, siteUrl as string])
@@ -379,6 +385,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     if (description !== undefined && description !== null && typeof description !== 'string') return res.status(400).json({ error: 'Invalid description' });
     if (type !== undefined && type !== null && !isAllowedAnnotationType(type)) return res.status(400).json({ error: 'Invalid type' });
     try {
+      if (isNonEmptyString(siteUrl) && !(await canAccessSite(db, req.params.userId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       await db.run(`
         INSERT INTO annotations (id, userId, siteUrl, date, title, description, type, createdAt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
