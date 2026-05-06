@@ -16,7 +16,24 @@ export type BlendedPageGa4Metrics = {
   totalUsers: number;
 };
 
+export type BlendedPageCrawlSummary = {
+  canonicalUrl: string | null;
+  crawledAt: string | null;
+  errorMessage: string | null;
+  finalUrl: string | null;
+  h1Count: number;
+  h1Text: string | null;
+  inboundLinkCount: number;
+  metaDescription: string | null;
+  noindex: boolean;
+  outgoingLinkCount: number;
+  statusCode: number | null;
+  title: string | null;
+  url: string;
+};
+
 export type BlendedPagePerformanceRow = {
+  crawl: BlendedPageCrawlSummary | null;
   ga4: BlendedPageGa4Metrics | null;
   gsc: BlendedPageGscMetrics | null;
   page: string;

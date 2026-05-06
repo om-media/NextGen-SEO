@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
-import { ArrowDown, ArrowUp, BarChart3, Download, Filter, FileText, Search, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, BarChart3, Download, Eye, Filter, FileText, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -103,6 +104,9 @@ function getChange(current: number, previous: number) {
 function downloadCsv(rows: BlendedPagePerformanceRow[]) {
   const headers = [
     "Page",
+    "Crawl Status",
+    "Crawl Title",
+    "Crawl Meta Description",
     "GSC Clicks",
     "GSC Impressions",
     "GSC CTR",
@@ -120,6 +124,9 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
 
   const body = rows.map((row) => [
     row.page,
+    getCrawlStatus(row).label,
+    row.crawl?.title || "",
+    row.crawl?.metaDescription || "",
     row.gsc?.clicks ?? 0,
     row.gsc?.impressions ?? 0,
     row.gsc ? `${(row.gsc.ctr * 100).toFixed(2)}%` : "",
@@ -183,6 +190,41 @@ function getOpportunityStatus(row: BlendedPagePerformanceRow) {
   };
 }
 
+function getCrawlStatus(row: BlendedPagePerformanceRow) {
+  if (!row.crawl) {
+    return {
+      className: "bg-[#F8FAF9] text-[#647067]",
+      label: "Not crawled",
+    };
+  }
+
+  if (row.crawl.errorMessage || (row.crawl.statusCode && row.crawl.statusCode >= 400)) {
+    return {
+      className: "bg-[#FEF2F2] text-[#B91C1C]",
+      label: "Crawl issue",
+    };
+  }
+
+  if (row.crawl.noindex) {
+    return {
+      className: "bg-[#F4ECFF] text-[#6D28D9]",
+      label: "Noindex",
+    };
+  }
+
+  if (!row.crawl.title || !row.crawl.metaDescription) {
+    return {
+      className: "bg-[#FFF2E8] text-[#C2410C]",
+      label: "Metadata gap",
+    };
+  }
+
+  return {
+    className: "bg-[#EAF4EC] text-[#0F3D2E]",
+    label: row.crawl.statusCode && row.crawl.statusCode >= 300 ? "Redirect" : row.crawl.statusCode ? `${row.crawl.statusCode} OK` : "Crawled",
+  };
+}
+
 function MetricCard({
   accentClass,
   icon,
@@ -240,6 +282,7 @@ export function BlendedPagesView({
   const [pageInfo, setPageInfo] = useState<BlendedPagePerformanceResponse["page"] | null>(null);
   const [rows, setRows] = useState<BlendedPagePerformanceRow[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCrawlRow, setSelectedCrawlRow] = useState<BlendedPagePerformanceRow | null>(null);
   const [sourceMeta, setSourceMeta] = useState<BlendedPagePerformanceResponse["meta"] | null>(null);
   const [sortColumn, setSortColumn] = useState<SortColumn>("clicks");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -591,14 +634,15 @@ export function BlendedPagesView({
 
             <div className="overflow-hidden rounded-2xl border border-[#E6ECE8]">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1080px] text-sm">
+                <table className="w-full min-w-[1320px] text-sm">
                   <thead className="bg-[#FBFCFB] text-xs font-semibold text-[#34483E]">
                     <tr>
-                      <th className="w-[32%] px-4 py-3 text-left">
+                      <th className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-[#E6ECE8] bg-[#FBFCFB] px-4 py-3 text-left">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("page")}>
                           Page {sortIndicator("page")}
                         </button>
                       </th>
+                      <th className="px-4 py-3 text-left">Crawl</th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("clicks")}>
                           GSC Clicks {sortIndicator("clicks")}
@@ -640,13 +684,13 @@ export function BlendedPagesView({
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={9} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={10} className="px-4 py-16 text-center text-[#647067]">
                           Loading blended page data...
                         </td>
                       </tr>
                     ) : paginatedRows.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={10} className="px-4 py-16 text-center text-[#647067]">
                           No page rows match this view.
                         </td>
                       </tr>
@@ -655,15 +699,26 @@ export function BlendedPagesView({
                         const compareRow = compareByPageKey.get(row.pageKey);
                         const clickChange = getChange(row.gsc?.clicks ?? 0, compareRow?.gsc?.clicks ?? 0);
                         const sessionChange = getChange(row.ga4?.sessions ?? 0, compareRow?.ga4?.sessions ?? 0);
+                        const crawlStatus = getCrawlStatus(row);
                         const opportunityStatus = getOpportunityStatus(row);
 
                         return (
-                          <tr key={row.pageKey || row.page} className="border-t border-[#E6ECE8] hover:bg-[#F8FAF9]">
-                            <td className="px-4 py-4">
-                              <div className="max-w-[420px]">
+                          <tr key={row.pageKey || row.page} className="group border-t border-[#E6ECE8] hover:bg-[#F8FAF9]">
+                            <td className="sticky left-0 z-10 border-r border-[#E6ECE8] bg-white px-4 py-4 group-hover:bg-[#F8FAF9]">
+                              <div className="w-[328px]">
                                 <div className="truncate font-semibold text-[#24443A]">{getPageTitle(row.page)}</div>
                                 <div className="mt-1 truncate text-xs text-[#647067]">{getDisplayPath(row.page)}</div>
                               </div>
+                            </td>
+                            <td className="px-4 py-4">
+                              <button
+                                className="inline-flex items-center gap-2 rounded-full border border-[#E6ECE8] bg-white px-2.5 py-1 text-xs font-semibold text-[#24443A] hover:bg-[#F8FAF9] disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={!row.crawl}
+                                onClick={() => row.crawl && setSelectedCrawlRow(row)}
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                                <span className={`rounded-full px-2 py-0.5 ${crawlStatus.className}`}>{crawlStatus.label}</span>
+                              </button>
                             </td>
                             <td className="px-4 py-4 text-right">
                               <div className="font-medium text-[#0F172A]">{formatNumber(row.gsc?.clicks ?? 0)}</div>
@@ -755,6 +810,52 @@ export function BlendedPagesView({
           </section>
         </aside>
       </div>
+
+      <Dialog open={Boolean(selectedCrawlRow)} onOpenChange={(open) => !open && setSelectedCrawlRow(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Crawl source review</DialogTitle>
+            <DialogDescription className="break-all">
+              {selectedCrawlRow?.crawl?.url || selectedCrawlRow?.page || "Review crawl signals for this blended page."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedCrawlRow?.crawl && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Technical status</div>
+                <dl className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Status</dt><dd className="text-right font-medium">{selectedCrawlRow.crawl.statusCode || "No response"}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Noindex</dt><dd className="text-right font-medium">{selectedCrawlRow.crawl.noindex ? "Yes" : "No"}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Canonical</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.canonicalUrl || "Not set"}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Final URL</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.finalUrl || "Same as requested"}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Error</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.errorMessage || "None"}</dd></div>
+                </dl>
+              </div>
+
+              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">On-page signals</div>
+                <dl className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Title</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.title || "Missing"}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Meta description</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.metaDescription || "Missing"}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">H1</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.h1Text || "Missing"}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">H1 count</dt><dd className="text-right font-medium">{formatNumber(selectedCrawlRow.crawl.h1Count)}</dd></div>
+                </dl>
+              </div>
+
+              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4 md:col-span-2">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Blended evidence</div>
+                <dl className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">GSC clicks</dt><dd className="font-medium">{formatNumber(selectedCrawlRow.gsc?.clicks ?? 0)}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">GSC impressions</dt><dd className="font-medium">{formatNumber(selectedCrawlRow.gsc?.impressions ?? 0)}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">GA4 sessions</dt><dd className="font-medium">{selectedCrawlRow.ga4 ? formatNumber(selectedCrawlRow.ga4.sessions) : "Not matched"}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Links</dt><dd className="font-medium">{formatNumber(selectedCrawlRow.crawl.inboundLinkCount)} in / {formatNumber(selectedCrawlRow.crawl.outgoingLinkCount)} out</dd></div>
+                </dl>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

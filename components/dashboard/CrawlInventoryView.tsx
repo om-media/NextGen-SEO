@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { AlertCircle, CheckCircle2, Download, Globe2, History, Loader2, RefreshCw, Search, ShieldAlert } from "lucide-react";
+import { AlertCircle, CheckCircle2, Download, Eye, Globe2, History, Loader2, RefreshCw, Search, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -60,6 +61,24 @@ function SummaryCard({
         </div>
         <div className={`flex h-10 w-10 items-center justify-center rounded-full ${tone}`}>{icon}</div>
       </div>
+    </div>
+  );
+}
+
+function DetailBlock({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</div>
+      <div className="mt-3 space-y-2 text-sm">{children}</div>
+    </div>
+  );
+}
+
+function DetailLine({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 text-right font-medium text-foreground break-words">{value || "Missing"}</span>
     </div>
   );
 }
@@ -234,6 +253,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRow, setSelectedRow] = useState<CrawlPageRow | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [issueFilter, setIssueFilter] = useState<CrawlIssueFilter>("all");
   const [pageIndex, setPageIndex] = useState(0);
@@ -697,12 +717,15 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
             </div>
           )}
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-9">
             <SummaryCard icon={<CheckCircle2 className="h-4 w-4" />} label="Pages" tone="bg-primary/10 text-primary" value={formatNumber(summary?.totalPages || 0)} />
             <SummaryCard icon={<CheckCircle2 className="h-4 w-4" />} label="200 OK" tone="bg-emerald-100 text-emerald-700" value={formatNumber(summary?.successPages || 0)} />
             <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Redirects" tone="bg-amber-100 text-amber-700" value={formatNumber(summary?.redirectPages || 0)} />
             <SummaryCard icon={<ShieldAlert className="h-4 w-4" />} label="Noindex" tone="bg-violet-100 text-violet-700" value={formatNumber(summary?.noindexPages || 0)} />
             <SummaryCard icon={<Search className="h-4 w-4" />} label="Orphans" tone="bg-sky-100 text-sky-700" value={formatNumber(summary?.orphanPages || 0)} />
+            <SummaryCard icon={<AlertCircle className="h-4 w-4" />} label="No title" tone="bg-orange-100 text-orange-700" value={formatNumber(summary?.missingTitlePages || 0)} />
+            <SummaryCard icon={<AlertCircle className="h-4 w-4" />} label="No meta" tone="bg-orange-100 text-orange-700" value={formatNumber(summary?.missingMetaPages || 0)} />
+            <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Canonicalized" tone="bg-indigo-100 text-indigo-700" value={formatNumber(summary?.canonicalizedPages || 0)} />
             <SummaryCard icon={<AlertCircle className="h-4 w-4" />} label="Errors" tone="bg-red-100 text-red-700" value={formatNumber(summary?.errorPages || 0)} />
           </div>
 
@@ -770,31 +793,34 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
 
           <div className="overflow-hidden rounded-2xl border border-border">
             <div className="overflow-x-auto">
-              <Table className="min-w-[1280px]">
+              <Table className="min-w-[1660px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[24%]">URL</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Title</TableHead>
+                    <TableHead>Meta description</TableHead>
+                    <TableHead>H1</TableHead>
                     <TableHead>Canonical</TableHead>
                     <TableHead>Depth</TableHead>
                     <TableHead>Discovery</TableHead>
                     <TableHead>Links</TableHead>
                     <TableHead>Words</TableHead>
                     <TableHead>Crawled</TableHead>
+                    <TableHead className="text-right">Inspect</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={12} className="py-10 text-center text-muted-foreground">
                         <Loader2 className="mr-2 inline-block h-4 w-4 animate-spin" />
                         Loading crawl inventory...
                       </TableCell>
                     </TableRow>
                   ) : displayedRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={12} className="py-10 text-center text-muted-foreground">
                         {job ? "No rows match the current crawl filters." : "Start a crawl to populate the inventory."}
                       </TableCell>
                     </TableRow>
@@ -812,6 +838,12 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
                         <TableCell className="max-w-0 truncate text-muted-foreground" title={row.title || ""}>
                           {row.title || "Untitled"}
                         </TableCell>
+                        <TableCell className="max-w-0 truncate text-muted-foreground" title={row.metaDescription || ""}>
+                          {row.metaDescription || "Missing"}
+                        </TableCell>
+                        <TableCell className="max-w-0 truncate text-muted-foreground" title={row.h1Text || ""}>
+                          {row.h1Text || `${formatNumber(row.h1Count || 0)} H1`}
+                        </TableCell>
                         <TableCell className="max-w-0 truncate text-muted-foreground" title={row.canonicalUrl || ""}>
                           {row.canonicalUrl || "Not set"}
                         </TableCell>
@@ -822,6 +854,12 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
                         </TableCell>
                         <TableCell className="text-muted-foreground">{formatNumber(row.wordCount)}</TableCell>
                         <TableCell className="text-muted-foreground">{formatRelativeTime(row.crawledAt)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setSelectedRow(row)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            Inspect
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -853,6 +891,56 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
               </Button>
             </div>
           </div>
+
+          <Dialog open={Boolean(selectedRow)} onOpenChange={(open) => !open && setSelectedRow(null)}>
+            <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-5xl">
+              <DialogHeader>
+                <DialogTitle>Page source review</DialogTitle>
+                <DialogDescription className="break-all">
+                  {selectedRow?.url || "Review the crawler's technical source signals for this page."}
+                </DialogDescription>
+              </DialogHeader>
+
+              {selectedRow && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <DetailBlock title="Fetch result">
+                    <DetailLine label="Status" value={formatStatusLabel(selectedRow.statusCode)} />
+                    <DetailLine label="Status code" value={selectedRow.statusCode ? String(selectedRow.statusCode) : "No response"} />
+                    <DetailLine label="Content type" value={selectedRow.contentType || "Missing"} />
+                    <DetailLine label="Response time" value={selectedRow.responseTimeMs != null ? `${formatNumber(selectedRow.responseTimeMs)} ms` : "Missing"} />
+                    <DetailLine label="Crawled" value={formatRelativeTime(selectedRow.crawledAt)} />
+                    <DetailLine label="Error" value={selectedRow.errorMessage || "None"} />
+                  </DetailBlock>
+
+                  <DetailBlock title="Indexability">
+                    <DetailLine label="Noindex" value={selectedRow.noindex ? "Yes" : "No"} />
+                    <DetailLine label="Canonical" value={selectedRow.canonicalUrl || "Not set"} />
+                    <DetailLine label="Final URL" value={selectedRow.finalUrl || "Same as requested"} />
+                    <DetailLine label="Page key" value={selectedRow.pageKey || "Missing"} />
+                    <DetailLine label="Normalized URL" value={selectedRow.normalizedUrl || "Missing"} />
+                  </DetailBlock>
+
+                  <DetailBlock title="Content signals">
+                    <DetailLine label="Title" value={selectedRow.title || "Missing"} />
+                    <DetailLine label="Meta description" value={selectedRow.metaDescription || "Missing"} />
+                    <DetailLine label="H1" value={selectedRow.h1Text || "Missing"} />
+                    <DetailLine label="H1 count" value={formatNumber(selectedRow.h1Count || 0)} />
+                    <DetailLine label="H2 count" value={formatNumber(selectedRow.h2Count || 0)} />
+                    <DetailLine label="Words" value={formatNumber(selectedRow.wordCount || 0)} />
+                  </DetailBlock>
+
+                  <DetailBlock title="Discovery and links">
+                    <DetailLine label="Depth" value={formatNumber(selectedRow.depth || 0)} />
+                    <DetailLine label="Discovered from" value={selectedRow.discoveredFrom || "seed"} />
+                    <DetailLine label="Discovered from URL" value={selectedRow.discoveredFromUrl || "Missing"} />
+                    <DetailLine label="Inlinks" value={formatNumber(selectedRow.inboundLinkCount ?? selectedRow.internalLinkCount ?? 0)} />
+                    <DetailLine label="Outlinks" value={formatNumber(selectedRow.outgoingLinkCount || 0)} />
+                    <DetailLine label="Discovered" value={formatRelativeTime(selectedRow.discoveredAt)} />
+                  </DetailBlock>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
     </div>

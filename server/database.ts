@@ -251,6 +251,7 @@ const commonSchemaSql = `
     crawledAt TEXT,
     responseTimeMs INTEGER,
     noindex INTEGER DEFAULT 0,
+    inboundLinkCount INTEGER DEFAULT 0,
     internalLinkCount INTEGER DEFAULT 0,
     outgoingLinkCount INTEGER DEFAULT 0,
     errorMessage TEXT,
@@ -414,6 +415,7 @@ const camelCaseColumns: Record<string, string> = {
   crawledat: 'crawledAt',
   responsetimems: 'responseTimeMs',
   internallinkcount: 'internalLinkCount',
+  inboundlinkcount: 'inboundLinkCount',
   outgoinglinkcount: 'outgoingLinkCount',
   fromurl: 'fromUrl',
   tourl: 'toUrl',
@@ -698,6 +700,7 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE crawl_jobs ADD COLUMN includeQueryStrings INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN userAgent TEXT',
     'ALTER TABLE crawl_pages ADD COLUMN ownerId TEXT',
+    'ALTER TABLE crawl_pages ADD COLUMN inboundLinkCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_links ADD COLUMN ownerId TEXT',
   ]) {
     runOptionalSqliteAlter(db, statement);
@@ -744,6 +747,7 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS includeQueryStrings INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS userAgent TEXT',
     'ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS inboundLinkCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS ownerId TEXT',
   ]) {
     await db.exec(statement);

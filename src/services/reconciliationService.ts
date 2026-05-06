@@ -24,6 +24,17 @@ export type PageReconciliationRow = {
     wordCount: number;
   };
   flags: string[];
+  match: {
+    canonicalPageKey: string | null;
+    crawlPageKey: string | null;
+    ga4PageKey: string | null;
+    gscPageKey: string | null;
+  };
+  reasons: Array<{
+    detail: string;
+    label: string;
+    tone: "danger" | "neutral" | "warning";
+  }>;
   ga4: null | {
     bounceRate: number;
     eventCount: number;

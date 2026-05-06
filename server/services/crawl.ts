@@ -86,7 +86,10 @@ export type CrawlLinkRecord = {
 };
 
 export type CrawlSummary = {
+  canonicalizedPages: number;
   errorPages: number;
+  missingMetaPages: number;
+  missingTitlePages: number;
   noindexPages: number;
   orphanPages: number;
   redirectPages: number;
@@ -495,9 +498,9 @@ async function upsertCrawlPage(db: AppDatabase, page: CrawlPageRecord) {
         ownerId, siteUrl, jobId, url, normalizedUrl, pageKey, finalUrl, statusCode, contentType,
         title, metaDescription, canonicalUrl, h1Text, h1Count, h2Count, wordCount, depth,
         discoveredFrom, discoveredFromUrl, discoveredAt, crawledAt, responseTimeMs, noindex,
-        internalLinkCount, outgoingLinkCount, errorMessage
+        inboundLinkCount, internalLinkCount, outgoingLinkCount, errorMessage
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(ownerId, siteUrl, jobId, normalizedUrl) DO UPDATE SET
         url=excluded.url,
         pageKey=excluded.pageKey,
@@ -518,6 +521,7 @@ async function upsertCrawlPage(db: AppDatabase, page: CrawlPageRecord) {
         crawledAt=excluded.crawledAt,
         responseTimeMs=excluded.responseTimeMs,
         noindex=excluded.noindex,
+        inboundLinkCount=excluded.inboundLinkCount,
         internalLinkCount=excluded.internalLinkCount,
         outgoingLinkCount=excluded.outgoingLinkCount,
         errorMessage=excluded.errorMessage
@@ -546,6 +550,7 @@ async function upsertCrawlPage(db: AppDatabase, page: CrawlPageRecord) {
       page.crawledAt,
       page.responseTimeMs,
       page.noindex,
+      page.inboundLinkCount ?? 0,
       page.internalLinkCount,
       page.outgoingLinkCount,
       page.errorMessage,
@@ -602,7 +607,7 @@ async function computeInboundCounts(db: AppDatabase, ownerId: string, siteUrl: s
   await db.run(
     `
       UPDATE crawl_pages
-      SET internalLinkCount = (
+      SET inboundLinkCount = (
         SELECT COUNT(*)
         FROM crawl_links
         WHERE crawl_links.ownerId = crawl_pages.ownerId
@@ -868,7 +873,10 @@ async function getSummaryForJob(db: AppDatabase, ownerId: string, siteUrl: strin
         SUM(CASE WHEN statusCode BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS "successPages",
         SUM(CASE WHEN statusCode BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS "redirectPages",
         SUM(CASE WHEN statusCode >= 400 THEN 1 ELSE 0 END) AS "errorPages",
-        SUM(CASE WHEN noindex = 1 THEN 1 ELSE 0 END) AS "noindexPages"
+        SUM(CASE WHEN noindex = 1 THEN 1 ELSE 0 END) AS "noindexPages",
+        SUM(CASE WHEN title IS NULL OR TRIM(title) = '' THEN 1 ELSE 0 END) AS "missingTitlePages",
+        SUM(CASE WHEN metaDescription IS NULL OR TRIM(metaDescription) = '' THEN 1 ELSE 0 END) AS "missingMetaPages",
+        SUM(CASE WHEN canonicalUrl IS NOT NULL AND canonicalUrl <> '' AND canonicalUrl <> normalizedUrl THEN 1 ELSE 0 END) AS "canonicalizedPages"
       FROM crawl_pages
       WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
     `,
@@ -892,7 +900,10 @@ async function getSummaryForJob(db: AppDatabase, ownerId: string, siteUrl: strin
   );
 
   return {
+    canonicalizedPages: toFiniteNumber(summary?.canonicalizedPages),
     errorPages: toFiniteNumber(summary?.errorPages),
+    missingMetaPages: toFiniteNumber(summary?.missingMetaPages),
+    missingTitlePages: toFiniteNumber(summary?.missingTitlePages),
     noindexPages: toFiniteNumber(summary?.noindexPages),
     orphanPages: toFiniteNumber(orphanCount?.orphanPages),
     redirectPages: toFiniteNumber(summary?.redirectPages),

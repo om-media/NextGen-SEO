@@ -28,7 +28,10 @@ export type CrawlJob = {
 };
 
 export type CrawlSummary = {
+  canonicalizedPages: number;
   errorPages: number;
+  missingMetaPages: number;
+  missingTitlePages: number;
   noindexPages: number;
   orphanPages: number;
   redirectPages: number;

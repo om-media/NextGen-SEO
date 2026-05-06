@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
-import { Download, Loader2, Search } from "lucide-react";
+import { Download, Eye, Loader2, Search } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -43,6 +44,12 @@ const flagLabels: Record<string, string> = {
   noindex: "Noindex",
 };
 
+function getReasonBadgeVariant(tone: PageReconciliationRow["reasons"][number]["tone"]) {
+  if (tone === "danger") return "destructive";
+  if (tone === "warning") return "outline";
+  return "secondary";
+}
+
 function toIsoDate(value: Date | undefined, fallback: Date) {
   return format(value || fallback, "yyyy-MM-dd");
 }
@@ -61,6 +68,11 @@ function exportCsv(filename: string, rows: PageReconciliationRow[]) {
     pageKey: row.pageKey,
     url: row.representativeUrl,
     flags: row.flags.map((flag) => flagLabels[flag] || flag).join("; "),
+    reasons: row.reasons.map((reason) => `${reason.label}: ${reason.detail}`).join("; "),
+    gscPageKey: row.match.gscPageKey ?? "",
+    ga4PageKey: row.match.ga4PageKey ?? "",
+    crawlPageKey: row.match.crawlPageKey ?? "",
+    canonicalPageKey: row.match.canonicalPageKey ?? "",
     gscClicks: row.gsc?.clicks ?? "",
     gscImpressions: row.gsc?.impressions ?? "",
     gscCtr: row.gsc?.ctr ?? "",
@@ -102,6 +114,24 @@ function StatCard({ label, value }: { label: string; value: number }) {
   );
 }
 
+function DetailBlock({ children, title }: { children: React.ReactNode; title: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</div>
+      <div className="mt-3 space-y-2 text-sm">{children}</div>
+    </div>
+  );
+}
+
+function DetailLine({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 text-right font-medium text-foreground break-words">{value || "Missing"}</span>
+    </div>
+  );
+}
+
 export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: ReconciliationViewProps) {
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
@@ -112,6 +142,7 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [selectedRow, setSelectedRow] = useState<PageReconciliationRow | null>(null);
 
   const startDate = useMemo(() => toIsoDate(dateRange?.from, new Date()), [dateRange?.from]);
   const endDate = useMemo(() => toIsoDate(dateRange?.to, new Date()), [dateRange?.to]);
@@ -130,9 +161,6 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
     fetchCrawlJobs(siteUrl)
       .then((result) => {
         setCrawlJobs(result.jobs);
-        if (!selectedCrawlJobId && result.jobs[0]) {
-          setSelectedCrawlJobId(result.jobs[0].id);
-        }
       })
       .catch(() => setCrawlJobs([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,32 +284,35 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
           {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
 
           <div className="overflow-hidden rounded-2xl border border-border">
-            <Table>
+            <div className="overflow-x-auto">
+            <Table className="min-w-[1420px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Page</TableHead>
+                  <TableHead className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-border bg-card">Page</TableHead>
                   <TableHead>Flags</TableHead>
+                  <TableHead>Reason</TableHead>
                   <TableHead className="text-right">GSC</TableHead>
                   <TableHead className="text-right">GA4</TableHead>
                   <TableHead>Crawl</TableHead>
                   <TableHead>Canonical</TableHead>
+                  <TableHead className="text-right">Inspect</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center">
+                    <TableCell colSpan={8} className="h-24 text-center">
                       <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
                       Reconciling page data...
                     </TableCell>
                   </TableRow>
                 ) : rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No reconciliation rows found.</TableCell>
+                    <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">No reconciliation rows found.</TableCell>
                   </TableRow>
                 ) : rows.map((row) => (
-                  <TableRow key={row.pageKey}>
-                    <TableCell className="max-w-[440px]">
+                  <TableRow key={row.pageKey} className="group">
+                    <TableCell className="sticky left-0 z-10 w-[360px] min-w-[360px] border-r border-border bg-card group-hover:bg-muted/50">
                       <div className="truncate font-medium text-foreground" title={row.representativeUrl}>{row.representativeUrl}</div>
                       <div className="mt-1 truncate text-xs text-muted-foreground" title={row.pageKey}>{row.pageKey}</div>
                     </TableCell>
@@ -295,6 +326,20 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
                           </Badge>
                         ))}
                       </div>
+                    </TableCell>
+                    <TableCell className="max-w-[360px]">
+                      {row.reasons.length === 0 ? (
+                        <span className="text-sm text-muted-foreground">Sources matched on normalized path.</span>
+                      ) : (
+                        <div className="space-y-2">
+                          {row.reasons.slice(0, 2).map((reason) => (
+                            <div key={`${reason.label}-${reason.detail}`}>
+                              <Badge variant={getReasonBadgeVariant(reason.tone)}>{reason.label}</Badge>
+                              <div className="mt-1 text-xs leading-5 text-muted-foreground">{reason.detail}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       {row.gsc ? (
@@ -323,10 +368,17 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
                     <TableCell className="max-w-[280px] truncate" title={row.crawl?.canonicalUrl || ""}>
                       {row.crawl?.canonicalUrl || "Not set"}
                     </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setSelectedRow(row)}>
+                        <Eye className="mr-2 h-4 w-4" />
+                        Inspect
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            </div>
           </div>
 
           <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -341,6 +393,88 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
           </div>
         </CardContent>
       </Card>
+      <Dialog open={Boolean(selectedRow)} onOpenChange={(open) => !open && setSelectedRow(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-5xl">
+          {selectedRow && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Page source review</DialogTitle>
+                <DialogDescription className="break-all">
+                  {selectedRow.representativeUrl}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                <DetailBlock title="Why this row matters">
+                  {selectedRow.reasons.length === 0 ? (
+                    <div className="rounded-xl border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+                      GSC, GA4, and crawl data matched on the normalized page path.
+                    </div>
+                  ) : selectedRow.reasons.map((reason) => (
+                    <div key={`${reason.label}-${reason.detail}`} className="rounded-xl border border-border bg-background p-3">
+                      <Badge variant={getReasonBadgeVariant(reason.tone)}>{reason.label}</Badge>
+                      <div className="mt-2 text-sm leading-6 text-muted-foreground">{reason.detail}</div>
+                    </div>
+                  ))}
+                </DetailBlock>
+
+                <DetailBlock title="Match evidence">
+                  <DetailLine label="Joined path" value={selectedRow.pageKey} />
+                  <DetailLine label="GSC key" value={selectedRow.match.gscPageKey} />
+                  <DetailLine label="GA4 key" value={selectedRow.match.ga4PageKey} />
+                  <DetailLine label="Crawl key" value={selectedRow.match.crawlPageKey} />
+                  <DetailLine label="Canonical key" value={selectedRow.match.canonicalPageKey} />
+                </DetailBlock>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <DetailBlock title="GSC">
+                  {selectedRow.gsc ? (
+                    <>
+                      <DetailLine label="Clicks" value={formatNumber(selectedRow.gsc.clicks)} />
+                      <DetailLine label="Impressions" value={formatNumber(selectedRow.gsc.impressions)} />
+                      <DetailLine label="CTR" value={formatPercent(selectedRow.gsc.ctr)} />
+                      <DetailLine label="Position" value={selectedRow.gsc.position.toFixed(1)} />
+                      <DetailLine label="Queries" value={formatNumber(selectedRow.gsc.queryCount)} />
+                    </>
+                  ) : (
+                    <div className="text-muted-foreground">No GSC page-query rows matched this path.</div>
+                  )}
+                </DetailBlock>
+
+                <DetailBlock title="GA4">
+                  {selectedRow.ga4 ? (
+                    <>
+                      <DetailLine label="Sessions" value={formatNumber(selectedRow.ga4.sessions)} />
+                      <DetailLine label="Page views" value={formatNumber(selectedRow.ga4.pageViews)} />
+                      <DetailLine label="Bounce rate" value={formatPercent(selectedRow.ga4.bounceRate)} />
+                      <DetailLine label="Users" value={formatNumber(selectedRow.ga4.totalUsers)} />
+                      <DetailLine label="Events" value={formatNumber(selectedRow.ga4.eventCount)} />
+                    </>
+                  ) : (
+                    <div className="text-muted-foreground">No GA4 landing-page row matched this path.</div>
+                  )}
+                </DetailBlock>
+
+                <DetailBlock title="Crawl">
+                  {selectedRow.crawl ? (
+                    <>
+                      <DetailLine label="Status" value={selectedRow.crawl.statusCode || "No response"} />
+                      <DetailLine label="Title" value={selectedRow.crawl.title} />
+                      <DetailLine label="Canonical" value={selectedRow.crawl.canonicalUrl || "Not set"} />
+                      <DetailLine label="Noindex" value={selectedRow.crawl.noindex ? "Yes" : "No"} />
+                      <DetailLine label="Words" value={formatNumber(selectedRow.crawl.wordCount)} />
+                      <DetailLine label="Crawled" value={selectedRow.crawl.crawledAt || "Unknown"} />
+                    </>
+                  ) : (
+                    <div className="text-muted-foreground">The latest completed crawl did not include this path.</div>
+                  )}
+                </DetailBlock>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

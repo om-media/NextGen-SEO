@@ -22,6 +22,17 @@ type ReconciliationRow = {
     wordCount: number;
   };
   flags: string[];
+  match: {
+    canonicalPageKey: string | null;
+    crawlPageKey: string | null;
+    ga4PageKey: string | null;
+    gscPageKey: string | null;
+  };
+  reasons: Array<{
+    detail: string;
+    label: string;
+    tone: 'danger' | 'neutral' | 'warning';
+  }>;
   ga4: null | {
     bounceRate: number;
     eventCount: number;
@@ -47,6 +58,8 @@ type ReconciliationRow = {
   };
 };
 
+type ReconciliationBaseRow = Omit<ReconciliationRow, 'flags' | 'match' | 'reasons' | 'sources'>;
+
 const toNumber = (value: unknown) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
@@ -55,7 +68,7 @@ const toNumber = (value: unknown) => {
 const getLimit = (value: unknown) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 1), 5000) : 100);
 const getOffset = (value: unknown) => (Number.isFinite(Number(value)) ? Math.max(Number(value), 0) : 0);
 
-function getFlags(row: Omit<ReconciliationRow, 'flags' | 'sources'>, hasGa4Property: boolean) {
+function getFlags(row: ReconciliationBaseRow, hasGa4Property: boolean) {
   const flags: string[] = [];
 
   if ((row.gsc || row.ga4) && !row.crawl) flags.push('missing_in_crawl');
@@ -67,6 +80,76 @@ function getFlags(row: Omit<ReconciliationRow, 'flags' | 'sources'>, hasGa4Prope
   if ((row.gsc?.impressions || 0) >= 100 && (row.gsc?.clicks || 0) === 0) flags.push('high_impressions_no_clicks');
 
   return flags;
+}
+
+function getReasons(
+  row: ReconciliationBaseRow,
+  flags: string[],
+  rowsByKey: Map<string, ReconciliationBaseRow>,
+) {
+  const reasons: ReconciliationRow['reasons'] = [];
+  const canonicalKey = row.crawl?.canonicalUrl ? canonicalPageKey(row.crawl.canonicalUrl) : null;
+
+  if (flags.includes('missing_in_crawl')) {
+    reasons.push({
+      detail: row.gsc
+        ? `${Math.round(row.gsc.impressions).toLocaleString('en-US')} GSC impressions matched this normalized path, but the latest completed crawl did not contain it.`
+        : 'GA4 has sessions for this path, but the latest completed crawl did not contain it.',
+      label: 'Not found by crawler',
+      tone: 'warning',
+    });
+  }
+  if (flags.includes('missing_in_gsc')) {
+    reasons.push({
+      detail: row.crawl
+        ? 'The crawler found this URL, but GSC has no page-query rows for this date range.'
+        : 'GA4 has behavior data, but GSC has no page-query rows for this date range.',
+      label: 'No search visibility row',
+      tone: 'neutral',
+    });
+  }
+  if (flags.includes('missing_in_ga4')) {
+    reasons.push({
+      detail: 'The page exists in crawl or GSC, but no GA4 landing-page row matched the same normalized path.',
+      label: 'No GA4 landing-page match',
+      tone: 'neutral',
+    });
+  }
+  if (flags.includes('crawl_error')) {
+    reasons.push({
+      detail: row.crawl?.errorMessage || `Crawler received ${row.crawl?.statusCode || 'no response'} for this URL.`,
+      label: 'Crawler could not fetch page',
+      tone: 'danger',
+    });
+  }
+  if (flags.includes('noindex')) {
+    reasons.push({
+      detail: row.gsc
+        ? `The page is noindex but still has ${Math.round(row.gsc.impressions).toLocaleString('en-US')} GSC impressions in range.`
+        : 'The crawler found a noindex directive on this URL.',
+      label: 'Indexability conflict',
+      tone: row.gsc ? 'danger' : 'warning',
+    });
+  }
+  if (flags.includes('canonical_mismatch') && canonicalKey) {
+    const target = rowsByKey.get(canonicalKey);
+    reasons.push({
+      detail: target
+        ? `Crawler canonical points to ${canonicalKey}, which is also present in the joined dataset.`
+        : `Crawler canonical points to ${canonicalKey}, which did not match a GSC/GA4/crawl row in this result set.`,
+      label: 'Canonical target differs',
+      tone: 'warning',
+    });
+  }
+  if (flags.includes('high_impressions_no_clicks')) {
+    reasons.push({
+      detail: `${Math.round(row.gsc?.impressions || 0).toLocaleString('en-US')} impressions but no clicks for this date range.`,
+      label: 'SERP demand without clicks',
+      tone: 'warning',
+    });
+  }
+
+  return reasons;
 }
 
 function matchesStatus(row: ReconciliationRow, status: string) {
@@ -128,6 +211,15 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
           SELECT id
           FROM crawl_jobs
           WHERE ownerId = ? AND siteUrl = ?
+            AND status = 'completed'
+            AND EXISTS (
+              SELECT 1
+              FROM crawl_pages
+              WHERE crawl_pages.ownerId = crawl_jobs.ownerId
+                AND crawl_pages.siteUrl = crawl_jobs.siteUrl
+                AND crawl_pages.jobId = crawl_jobs.id
+              LIMIT 1
+            )
           ORDER BY COALESCE(completedAt, updatedAt, startedAt) DESC
           LIMIT 1
         `, [ownerId, siteUrl]);
@@ -176,13 +268,14 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
             depth,
             wordCount,
             crawledAt,
+            finalUrl,
             errorMessage
           FROM crawl_pages
           WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
         `, [ownerId, siteUrl, crawlJobId])
         : [];
 
-      const rowsByKey = new Map<string, Omit<ReconciliationRow, 'flags' | 'sources'>>();
+      const rowsByKey = new Map<string, ReconciliationBaseRow>();
       const ensureRow = (pageKey: string) => {
         const existing = rowsByKey.get(pageKey);
         if (existing) return existing;
@@ -240,7 +333,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
           noindex: Boolean(row.noindex),
           statusCode: row.statusCode === null || row.statusCode === undefined ? null : toNumber(row.statusCode),
           title: row.title || null,
-          url,
+          url: row.finalUrl || url,
           wordCount: toNumber(row.wordCount),
         };
         if (!target.gsc && !target.ga4) target.representativeUrl = url || target.representativeUrl;
@@ -249,9 +342,17 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
       const reconciledRows = Array.from(rowsByKey.values())
         .map((row) => {
           const flags = getFlags(row, Boolean(propertyId));
+          const canonicalPageKeyValue = row.crawl?.canonicalUrl ? canonicalPageKey(row.crawl.canonicalUrl) : null;
           return {
             ...row,
             flags,
+            match: {
+              canonicalPageKey: canonicalPageKeyValue,
+              crawlPageKey: row.crawl ? row.pageKey : null,
+              ga4PageKey: row.ga4 ? row.pageKey : null,
+              gscPageKey: row.gsc ? row.pageKey : null,
+            },
+            reasons: getReasons(row, flags, rowsByKey),
             sources: {
               crawl: row.crawl ? 'present' : 'missing',
               ga4: row.ga4 ? 'present' : 'missing',
@@ -287,6 +388,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
             row.crawl?.url,
             row.crawl?.title,
             row.crawl?.canonicalUrl,
+            ...row.reasons.map((reason) => `${reason.label} ${reason.detail}`),
           ].join(' ').toLowerCase();
           return haystack.includes(search);
         });

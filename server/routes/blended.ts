@@ -193,6 +193,7 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
             queryCount: 0,
           },
           ga4: null,
+          crawl: null,
           weightedPosition: 0,
         };
         const clicks = toFiniteNumber(readField(row, 'gscClicks'));
@@ -270,6 +271,7 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
             pageKey,
             gsc: null,
             ga4: null,
+            crawl: null,
           };
           existing.ga4 = {
             sessions: toFiniteNumber(row.sessions),
@@ -279,6 +281,66 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
             eventCount: toFiniteNumber(readField(row, 'eventCount')),
           };
           rowsByKey.set(pageKey, existing);
+        }
+      }
+
+      const latestCrawlJob = await db.get<any>(`
+        SELECT id
+        FROM crawl_jobs
+        WHERE ownerId = ? AND siteUrl = ? AND status = 'completed'
+          AND EXISTS (
+            SELECT 1
+            FROM crawl_pages
+            WHERE crawl_pages.ownerId = crawl_jobs.ownerId
+              AND crawl_pages.siteUrl = crawl_jobs.siteUrl
+              AND crawl_pages.jobId = crawl_jobs.id
+          )
+        ORDER BY COALESCE(completedAt, updatedAt, startedAt) DESC
+        LIMIT 1
+      `, [ownerId, siteUrl]);
+
+      if (latestCrawlJob?.id) {
+        const crawlRows = await db.all<any>(`
+          SELECT
+            url,
+            pageKey,
+            finalUrl,
+            statusCode,
+            title,
+            metaDescription,
+            canonicalUrl,
+            h1Text,
+            h1Count,
+            noindex,
+            inboundLinkCount,
+            internalLinkCount,
+            outgoingLinkCount,
+            crawledAt,
+            errorMessage
+          FROM crawl_pages
+          WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
+        `, [ownerId, siteUrl, latestCrawlJob.id]);
+
+        for (const row of crawlRows) {
+          const pageKey = canonicalPageKey(readField(row, 'pageKey') || readField(row, 'url'), siteUrl);
+          const existing = rowsByKey.get(pageKey);
+          if (!existing) continue;
+
+          existing.crawl = {
+            canonicalUrl: readField(row, 'canonicalUrl') || null,
+            crawledAt: readField(row, 'crawledAt') || null,
+            errorMessage: readField(row, 'errorMessage') || null,
+            finalUrl: readField(row, 'finalUrl') || null,
+            h1Count: toFiniteNumber(readField(row, 'h1Count')),
+            h1Text: readField(row, 'h1Text') || null,
+            inboundLinkCount: toFiniteNumber(readField(row, 'inboundLinkCount') ?? readField(row, 'internalLinkCount')),
+            metaDescription: readField(row, 'metaDescription') || null,
+            noindex: Boolean(toFiniteNumber(readField(row, 'noindex'))),
+            outgoingLinkCount: toFiniteNumber(readField(row, 'outgoingLinkCount')),
+            statusCode: readField(row, 'statusCode') == null ? null : toFiniteNumber(readField(row, 'statusCode')),
+            title: readField(row, 'title') || null,
+            url: readField(row, 'url') || existing.page,
+          };
         }
       }
 
