@@ -6,7 +6,7 @@ import { useAuth } from "@/src/contexts/AuthContext"
 import { GscApiService } from "@/src/services/gscService"
 import { addDays, format, parseISO } from "date-fns"
 import { DateRange } from "react-day-picker"
-import { Loader2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
+import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Download } from "lucide-react"
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { authFetch } from "@/src/lib/authFetch"
 
@@ -54,6 +54,27 @@ const hasPageKeys = (row: any) => (
 
 const QUERY_VISIBILITY_NOTE =
   "Search Console only exposes non-anonymized query rows here. Rare or privacy-filtered queries can be hidden by Google, so visible query counts may be lower than total site impressions suggest.";
+
+function exportCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const escape = (value: unknown) => {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+    .map((line) => line.map(escape).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
 
 export function QueryCountView({ 
   siteUrl, 
@@ -424,6 +445,20 @@ export function QueryCountView({
     );
   };
 
+  const exportPageRows = () => {
+    const startDate = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : "start";
+    const endDate = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : "end";
+    exportCsv(`gsc-visible-queries-by-page-${startDate}-${endDate}.csv`, sortedTableData.map((row) => ({
+      page: row.page,
+      visibleQueries: row.queryCount,
+      clicks: row.clicks,
+      impressions: row.impressions,
+      compareVisibleQueries: isCompareMode ? row.compareQueryCount : "",
+      compareClicks: isCompareMode ? row.compareClicks : "",
+      compareImpressions: isCompareMode ? row.compareImpressions : "",
+    })));
+  };
+
   return (
     <div className="space-y-6">
       {error && (
@@ -529,11 +564,17 @@ export function QueryCountView({
       </Card>
 
       <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <div className="border-b border-border bg-card p-5">
-          <h3 className="font-semibold text-lg">Visible Queries by Page</h3>
-          <p className="text-sm text-muted-foreground">
-            Period totals include only non-anonymized Search Console query rows. Click a page to view its daily visible-query trend above.
-          </p>
+        <div className="flex flex-col gap-3 border-b border-border bg-card p-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="font-semibold text-lg">Visible Queries by Page</h3>
+            <p className="text-sm text-muted-foreground">
+              Period totals include only non-anonymized Search Console query rows. Click a page to view its daily visible-query trend above.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" className="rounded-xl bg-background" onClick={exportPageRows} disabled={loadingTable || sortedTableData.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
         </div>
         <div className="overflow-x-auto">
           <Table>

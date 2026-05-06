@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Target, TrendingUp, TrendingDown, Minus, RefreshCw, Plus, Trash2, ArrowRight } from "lucide-react"
+import { Target, TrendingUp, TrendingDown, Minus, RefreshCw, Plus, Trash2, ArrowRight, Download } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,27 @@ import { authFetch } from "@/src/lib/authFetch"
 
 interface RankTrackerViewProps {
   siteUrl: string;
+}
+
+function exportCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const escape = (value: unknown) => {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+    .map((line) => line.map(escape).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
 }
 
 export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
@@ -293,6 +314,30 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
     ? Math.round(keywords.filter(k => k.currentPosition && k.currentPosition <= 100).reduce((acc, k) => acc + k.currentPosition, 0) / keywords.filter(k => k.currentPosition && k.currentPosition <= 100).length)
     : 0
 
+  const exportKeywords = () => {
+    exportCsv(`rank-tracker-keywords-${new Date().toISOString().slice(0, 10)}.csv`, keywords.map((keyword) => ({
+      keyword: keyword.keyword,
+      currentPosition: keyword.currentPosition ?? "",
+      previousPosition: keyword.previousPosition ?? "",
+      rankingUrl: keyword.rankingUrl || "",
+      location: keyword.location,
+      device: keyword.device,
+      targetDomain: keyword.targetDomain || "",
+      updatedAt: keyword.updatedAt || "",
+    })));
+  };
+
+  const exportSelectedHistory = () => {
+    const keyword = keywords.find(k => k.id === selectedKeywordId);
+    if (!keyword) return;
+    const safeKeyword = String(keyword.keyword).replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "keyword";
+    exportCsv(`rank-tracker-history-${safeKeyword}-${new Date().toISOString().slice(0, 10)}.csv`, historyData.map((row) => ({
+      keyword: keyword.keyword,
+      date: row.date,
+      position: row.positionRaw,
+    })));
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 rounded-2xl border border-[#E9F0EB] bg-white/90 p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
@@ -303,6 +348,10 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
           <p className="mt-1 max-w-2xl text-sm leading-6 text-[#647067]">Monitor daily Google keyword rankings with our Hybrid Engine.</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={exportKeywords} disabled={loading || keywords.length === 0}>
+            <Download className="w-4 h-4 mr-2" />
+            Export CSV
+          </Button>
           <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing || keywords.length === 0}>
             <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Syncing...' : 'Sync Ranks'}
@@ -469,10 +518,18 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
 
         <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)] lg:col-span-1">
           <CardHeader className="border-b border-[#E6ECE8] bg-white">
-            <CardTitle>Position History</CardTitle>
-            <CardDescription className="truncate">
-              {selectedKeywordId ? keywords.find(k => k.id === selectedKeywordId)?.keyword : "Select a keyword"}
-            </CardDescription>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <CardTitle>Position History</CardTitle>
+                <CardDescription className="truncate">
+                  {selectedKeywordId ? keywords.find(k => k.id === selectedKeywordId)?.keyword : "Select a keyword"}
+                </CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={exportSelectedHistory} disabled={!selectedKeywordId || historyLoading || historyData.length === 0}>
+                <Download className="w-4 h-4 mr-2" />
+                Export
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {!selectedKeywordId ? (
