@@ -8,8 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { fetchCrawlJobs, fetchCrawlPages, type CrawlIssueFilter, type CrawlJob, type CrawlPageRow } from "@/src/services/crawlService";
-import { fetchRawGa4PageRows, fetchRawGscRows, type RawGa4PageRow, type RawGscKind, type RawGscRow, type RawPage } from "@/src/services/rawDataService";
+import { fetchCrawlJobs, fetchCrawlLinks, fetchCrawlPages, type CrawlIssueFilter, type CrawlJob, type CrawlLinkRow, type CrawlPageRow } from "@/src/services/crawlService";
+import { fetchRawGa4PageRows, fetchRawGscRows, type RawGa4Kind, type RawGa4PageRow, type RawGscKind, type RawGscRow, type RawPage } from "@/src/services/rawDataService";
 import { DataCoveragePanel } from "@/components/dashboard/DataCoveragePanel";
 
 type RawDataViewProps = {
@@ -19,6 +19,7 @@ type RawDataViewProps = {
 };
 
 type Source = "gsc" | "ga4" | "crawl";
+type CrawlRawKind = "pages" | "links";
 
 const pageSize = 100;
 const exportBatchSize = 5000;
@@ -73,7 +74,9 @@ function Pagination({ page, onPageChange }: { page: RawPage; onPageChange: (offs
 
 export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewProps) {
   const [source, setSource] = useState<Source>("gsc");
-  const [gscKind, setGscKind] = useState<RawGscKind>("page_query");
+  const [gscKind, setGscKind] = useState<RawGscKind>("page");
+  const [ga4Kind, setGa4Kind] = useState<RawGa4Kind>("page");
+  const [crawlKind, setCrawlKind] = useState<CrawlRawKind>("pages");
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -82,6 +85,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
   const [gscRows, setGscRows] = useState<RawGscRow[]>([]);
   const [ga4Rows, setGa4Rows] = useState<RawGa4PageRow[]>([]);
   const [crawlRows, setCrawlRows] = useState<CrawlPageRow[]>([]);
+  const [crawlLinkRows, setCrawlLinkRows] = useState<CrawlLinkRow[]>([]);
   const [page, setPage] = useState<RawPage>({ limit: pageSize, offset: 0, total: 0 });
   const [crawlJobs, setCrawlJobs] = useState<CrawlJob[]>([]);
   const [selectedCrawlJobId, setSelectedCrawlJobId] = useState("");
@@ -92,7 +96,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
 
   useEffect(() => {
     setOffset(0);
-  }, [source, gscKind, search, siteUrl, ga4PropertyId, startDate, endDate, selectedCrawlJobId, crawlIssueFilter]);
+  }, [source, gscKind, ga4Kind, crawlKind, search, siteUrl, ga4PropertyId, startDate, endDate, selectedCrawlJobId, crawlIssueFilter]);
 
   useEffect(() => {
     if (!siteUrl) return;
@@ -128,7 +132,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
           setPage({ limit: pageSize, offset: 0, total: 0 });
           return;
         }
-        const result = await fetchRawGa4PageRows({ endDate, limit: pageSize, offset, propertyId: ga4PropertyId, search, startDate });
+        const result = await fetchRawGa4PageRows({ endDate, kind: ga4Kind, limit: pageSize, offset, propertyId: ga4PropertyId, search, startDate });
         setGa4Rows(result.rows);
         setGscRows([]);
         setCrawlRows([]);
@@ -136,8 +140,19 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
         return;
       }
 
+      if (crawlKind === "links") {
+        const result = await fetchCrawlLinks({ jobId: selectedCrawlJobId || null, limit: pageSize, offset, search, siteUrl });
+        setCrawlLinkRows(result.rows);
+        setCrawlRows([]);
+        setGscRows([]);
+        setGa4Rows([]);
+        setPage(result.page);
+        return;
+      }
+
       const result = await fetchCrawlPages({ issue: crawlIssueFilter, jobId: selectedCrawlJobId || null, limit: pageSize, offset, search, siteUrl });
       setCrawlRows(result.rows);
+      setCrawlLinkRows([]);
       setGscRows([]);
       setGa4Rows([]);
       setPage(result.page);
@@ -146,7 +161,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
     load()
       .catch((err: any) => setError(err.message || "Failed to load raw rows"))
       .finally(() => setLoading(false));
-  }, [crawlIssueFilter, endDate, ga4PropertyId, gscKind, offset, search, selectedCrawlJobId, siteUrl, source, startDate]);
+  }, [crawlIssueFilter, crawlKind, endDate, ga4Kind, ga4PropertyId, gscKind, offset, search, selectedCrawlJobId, siteUrl, source, startDate]);
 
   const fetchAllRows = async <T,>(fetchPage: (nextOffset: number) => Promise<{ page: RawPage; rows: T[] }>) => {
     const rows: T[] = [];
@@ -183,23 +198,35 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
         if (!ga4PropertyId) return;
         const rows = await fetchAllRows((nextOffset) => fetchRawGa4PageRows({
           endDate,
+          kind: ga4Kind,
           limit: exportBatchSize,
           offset: nextOffset,
           propertyId: ga4PropertyId,
           search,
           startDate,
         }));
-        exportCsv(`raw-ga4-pages-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
+        exportCsv(`raw-ga4-${ga4Kind}-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
       } else {
-        const rows = await fetchAllRows((nextOffset) => fetchCrawlPages({
-          issue: crawlIssueFilter,
-          jobId: selectedCrawlJobId || null,
-          limit: exportBatchSize,
-          offset: nextOffset,
-          search,
-          siteUrl,
-        }));
-        exportCsv(`raw-crawl-${selectedCrawlJobId || "latest"}.csv`, rows as unknown as Record<string, unknown>[]);
+        if (crawlKind === "links") {
+          const rows = await fetchAllRows((nextOffset) => fetchCrawlLinks({
+            jobId: selectedCrawlJobId || null,
+            limit: exportBatchSize,
+            offset: nextOffset,
+            search,
+            siteUrl,
+          }));
+          exportCsv(`raw-crawl-links-${selectedCrawlJobId || "latest"}.csv`, rows as unknown as Record<string, unknown>[]);
+        } else {
+          const rows = await fetchAllRows((nextOffset) => fetchCrawlPages({
+            issue: crawlIssueFilter,
+            jobId: selectedCrawlJobId || null,
+            limit: exportBatchSize,
+            offset: nextOffset,
+            search,
+            siteUrl,
+          }));
+          exportCsv(`raw-crawl-pages-${selectedCrawlJobId || "latest"}.csv`, rows as unknown as Record<string, unknown>[]);
+        }
       }
     } catch (err: any) {
       setError(err.message || "Failed to export raw rows");
@@ -247,14 +274,35 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="page_query">Page + query rows</SelectItem>
+                    <SelectItem value="page">Pages report</SelectItem>
                     <SelectItem value="query">Query rows</SelectItem>
                     <SelectItem value="site">Site/date rows</SelectItem>
                   </SelectContent>
                 </Select>
               )}
+              {source === "ga4" && (
+                <Select value={ga4Kind} onValueChange={(value) => setGa4Kind(value as RawGa4Kind)}>
+                  <SelectTrigger className="h-11 w-[210px] rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="page">Pages report</SelectItem>
+                    <SelectItem value="page_date">Daily page rows</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
               {source === "crawl" && (
                 <>
-                  <Select value={crawlIssueFilter} onValueChange={(value) => setCrawlIssueFilter(value as CrawlIssueFilter)}>
+                  <Select value={crawlKind} onValueChange={(value) => setCrawlKind(value as CrawlRawKind)}>
+                    <SelectTrigger className="h-11 w-[180px] rounded-xl">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pages">Page rows</SelectItem>
+                      <SelectItem value="links">Link rows</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {crawlKind === "pages" && <Select value={crawlIssueFilter} onValueChange={(value) => setCrawlIssueFilter(value as CrawlIssueFilter)}>
                     <SelectTrigger className="h-11 w-[220px] rounded-xl">
                       <SelectValue />
                     </SelectTrigger>
@@ -270,7 +318,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                       <SelectItem value="missing_meta">Missing meta description</SelectItem>
                       <SelectItem value="canonicalized">Canonicalized</SelectItem>
                     </SelectContent>
-                  </Select>
+                  </Select>}
                   <Select value={selectedCrawlJobId || "__latest__"} onValueChange={(value) => setSelectedCrawlJobId(value === "__latest__" ? "" : value)}>
                     <SelectTrigger className="h-11 w-[280px] rounded-xl">
                       <SelectValue placeholder="Latest crawl" />
@@ -297,8 +345,9 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    {gscKind !== "site" && <TableHead>{gscKind === "page_query" ? "Page" : "Query"}</TableHead>}
+                    {gscKind !== "site" && <TableHead>{gscKind === "query" ? "Query" : "Page"}</TableHead>}
                     {gscKind === "page_query" && <TableHead>Query</TableHead>}
+                    {gscKind === "page" && <TableHead className="text-right">Queries</TableHead>}
                     <TableHead className="text-right">Clicks</TableHead>
                     <TableHead className="text-right">Impressions</TableHead>
                     <TableHead className="text-right">CTR</TableHead>
@@ -312,9 +361,10 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                     <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw GSC rows found.</TableCell></TableRow>
                   ) : gscRows.map((row, index) => (
                     <TableRow key={`${row.date}-${row.page || ""}-${row.query || ""}-${index}`}>
-                      <TableCell>{row.date}</TableCell>
-                      {gscKind !== "site" && <TableCell className="max-w-[520px] truncate" title={gscKind === "page_query" ? row.page || "" : row.query || ""}>{gscKind === "page_query" ? row.page : row.query}</TableCell>}
+                      <TableCell>{row.date || "Total"}</TableCell>
+                      {gscKind !== "site" && <TableCell className="max-w-[520px] truncate" title={gscKind === "query" ? row.query || "" : row.page || ""}>{gscKind === "query" ? row.query : row.page}</TableCell>}
                       {gscKind === "page_query" && <TableCell className="max-w-[320px] truncate" title={row.query || ""}>{row.query}</TableCell>}
+                      {gscKind === "page" && <TableCell className="text-right">{formatNumber(row.queryCount)}</TableCell>}
                       <TableCell className="text-right">{formatNumber(row.clicks)}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.impressions)}</TableCell>
                       <TableCell className="text-right">{formatPercent(row.ctr)}</TableCell>
@@ -349,7 +399,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                     <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw GA4 rows found.</TableCell></TableRow>
                   ) : ga4Rows.map((row, index) => (
                     <TableRow key={`${row.date}-${row.pageKey}-${index}`}>
-                      <TableCell>{row.date}</TableCell>
+                      <TableCell>{row.date || "Total"}</TableCell>
                       <TableCell className="max-w-[580px] truncate" title={row.pagePath}>{row.pagePath}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.sessions)}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.totalUsers)}</TableCell>
@@ -365,7 +415,34 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
 
           <TabsContent value="crawl">
             <div className="overflow-hidden rounded-2xl border border-border">
-              <Table>
+              {crawlKind === "links" ? <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>From URL</TableHead>
+                    <TableHead>To URL</TableHead>
+                    <TableHead>From page key</TableHead>
+                    <TableHead>To page key</TableHead>
+                    <TableHead className="text-right">Depth</TableHead>
+                    <TableHead>Discovered</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loading ? (
+                    <TableRow><TableCell colSpan={6} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading crawl links...</TableCell></TableRow>
+                  ) : crawlLinkRows.length === 0 ? (
+                    <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No raw crawl links found.</TableCell></TableRow>
+                  ) : crawlLinkRows.map((row, index) => (
+                    <TableRow key={`${row.jobId}-${row.fromUrl}-${row.toUrl}-${index}`}>
+                      <TableCell className="max-w-[360px] truncate" title={row.fromUrl}>{row.fromUrl}</TableCell>
+                      <TableCell className="max-w-[360px] truncate" title={row.toUrl}>{row.toUrl}</TableCell>
+                      <TableCell className="max-w-[220px] truncate" title={row.fromPageKey}>{row.fromPageKey}</TableCell>
+                      <TableCell className="max-w-[220px] truncate" title={row.toPageKey}>{row.toPageKey}</TableCell>
+                      <TableCell className="text-right">{row.depth}</TableCell>
+                      <TableCell>{row.discoveredAt || ""}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table> : <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>URL</TableHead>
@@ -394,7 +471,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
+              </Table>}
             </div>
           </TabsContent>
         </Tabs>

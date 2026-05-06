@@ -1094,6 +1094,33 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ORDER BY date DESC, clicks DESC, impressions DESC
           LIMIT ? OFFSET ?
         `, [...params, limit, offset]);
+      } else if (kind === 'page') {
+        const where = withSearch ? 'AND (LOWER(page) LIKE ? OR LOWER(COALESCE(NULLIF(pageKey, \'\'), page)) LIKE ?)' : '';
+        const params = withSearch ? [...baseParams, searchTerm, searchTerm] : baseParams;
+        total = await db.get<any>(`
+          SELECT COUNT(*) AS total
+          FROM (
+            SELECT COALESCE(NULLIF(pageKey, ''), page) AS pageKey
+            FROM gsc_page_query_metrics
+            WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? ${where}
+            GROUP BY COALESCE(NULLIF(pageKey, ''), page)
+          ) pages
+        `, params);
+        rows = await db.all<any>(`
+          SELECT
+            COALESCE(NULLIF(pageKey, ''), page) AS pageKey,
+            MIN(page) AS page,
+            SUM(clicks) AS clicks,
+            SUM(impressions) AS impressions,
+            CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END AS ctr,
+            CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END AS position,
+            COUNT(DISTINCT query) AS queryCount
+          FROM gsc_page_query_metrics
+          WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? ${where}
+          GROUP BY COALESCE(NULLIF(pageKey, ''), page)
+          ORDER BY clicks DESC, impressions DESC
+          LIMIT ? OFFSET ?
+        `, [...params, limit, offset]);
       } else {
         const where = withSearch ? 'AND (LOWER(page) LIKE ? OR LOWER(query) LIKE ?)' : '';
         const params = withSearch ? [...baseParams, searchTerm, searchTerm] : baseParams;
@@ -1125,6 +1152,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const propertyId = asTrimmedString(req.query.propertyId);
     const startDate = asTrimmedString(req.query.startDate);
     const endDate = asTrimmedString(req.query.endDate);
+    const kind = asTrimmedString(req.query.kind) || 'page';
     const search = asTrimmedString(req.query.search) || '';
     const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 100;
     const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
@@ -1144,18 +1172,49 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         ? [ownerId, propertyId, startDate, endDate, `%${search.toLowerCase()}%`]
         : [ownerId, propertyId, startDate, endDate];
 
-      const total = await db.get<any>(`
-        SELECT COUNT(*) AS total
-        FROM ga4_page_metrics
-        WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
-      `, params);
-      const rows = await db.all<any>(`
-        SELECT date, siteUrl, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount
-        FROM ga4_page_metrics
-        WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
-        ORDER BY date DESC, sessions DESC, pageViews DESC
-        LIMIT ? OFFSET ?
-      `, [...params, limit, offset]);
+      let total: any;
+      let rows: any[];
+
+      if (kind === 'page_date') {
+        total = await db.get<any>(`
+          SELECT COUNT(*) AS total
+          FROM ga4_page_metrics
+          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
+        `, params);
+        rows = await db.all<any>(`
+          SELECT date, siteUrl, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount
+          FROM ga4_page_metrics
+          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
+          ORDER BY date DESC, sessions DESC, pageViews DESC
+          LIMIT ? OFFSET ?
+        `, [...params, limit, offset]);
+      } else {
+        total = await db.get<any>(`
+          SELECT COUNT(*) AS total
+          FROM (
+            SELECT pageKey
+            FROM ga4_page_metrics
+            WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
+            GROUP BY pageKey
+          ) pages
+        `, params);
+        rows = await db.all<any>(`
+          SELECT
+            MAX(siteUrl) AS siteUrl,
+            MIN(pagePath) AS pagePath,
+            pageKey,
+            SUM(sessions) AS sessions,
+            SUM(totalUsers) AS totalUsers,
+            SUM(pageViews) AS pageViews,
+            CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
+            SUM(eventCount) AS eventCount
+          FROM ga4_page_metrics
+          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
+          GROUP BY pageKey
+          ORDER BY sessions DESC, pageViews DESC
+          LIMIT ? OFFSET ?
+        `, [...params, limit, offset]);
+      }
 
       return res.json({
         page: { limit, offset, total: toFiniteNumber(readField(total, 'total')) },

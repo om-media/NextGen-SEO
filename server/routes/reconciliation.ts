@@ -128,7 +128,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
 
       const gscRows = await db.all<any>(`
         SELECT
-          COALESCE(pageKey, page) AS pageKey,
+          COALESCE(NULLIF(pageKey, ''), page) AS pageKey,
           MIN(page) AS page,
           SUM(clicks) AS clicks,
           SUM(impressions) AS impressions,
@@ -137,7 +137,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
           COUNT(DISTINCT query) AS queryCount
         FROM gsc_page_query_metrics
         WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
-        GROUP BY COALESCE(pageKey, page)
+        GROUP BY COALESCE(NULLIF(pageKey, ''), page)
       `, [ownerId, siteUrl, startDate, endDate]);
 
       const ga4Rows = propertyId

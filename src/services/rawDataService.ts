@@ -6,21 +6,24 @@ export type RawPage = {
   total: number;
 };
 
-export type RawGscKind = "site" | "query" | "page_query";
+export type RawGscKind = "site" | "query" | "page" | "page_query";
+export type RawGa4Kind = "page" | "page_date";
 
 export type RawGscRow = {
   clicks: number;
   ctr: number;
-  date: string;
+  date?: string;
   impressions: number;
+  pageKey?: string | null;
   page?: string | null;
   position: number;
+  queryCount?: number;
   query?: string | null;
 };
 
 export type RawGa4PageRow = {
   bounceRate: number;
-  date: string;
+  date?: string;
   eventCount: number;
   pageKey: string;
   pagePath: string;
@@ -77,6 +80,7 @@ export async function fetchRawGscRows(params: {
 
 export async function fetchRawGa4PageRows(params: {
   endDate: string;
+  kind?: RawGa4Kind;
   limit?: number;
   offset?: number;
   propertyId: string;
@@ -84,6 +88,7 @@ export async function fetchRawGa4PageRows(params: {
   startDate: string;
 }) {
   const searchParams = new URLSearchParams({
+    kind: params.kind ?? "page",
     propertyId: params.propertyId,
   });
   appendCommonParams(searchParams, params);

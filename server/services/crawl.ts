@@ -73,6 +73,18 @@ export type CrawlPageRecord = {
   wordCount: number;
 };
 
+export type CrawlLinkRecord = {
+  depth: number;
+  discoveredAt: string | null;
+  fromPageKey: string;
+  fromUrl: string;
+  jobId: string;
+  ownerId: string;
+  siteUrl: string;
+  toPageKey: string;
+  toUrl: string;
+};
+
 export type CrawlSummary = {
   errorPages: number;
   noindexPages: number;
@@ -100,6 +112,16 @@ export type CrawlPageListResponse = {
   };
   rows: CrawlPageRecord[];
   summary: CrawlSummary | null;
+};
+
+export type CrawlLinkListResponse = {
+  job: CrawlJobRecord | null;
+  page: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
+  rows: CrawlLinkRecord[];
 };
 
 export type CrawlCompareResponse = {
@@ -1298,6 +1320,54 @@ async function listCrawlPages(
   };
 }
 
+async function listCrawlLinks(
+  db: AppDatabase,
+  ownerId: string,
+  siteUrl: string,
+  limit: number,
+  offset: number,
+  search?: string | null,
+  jobId?: string | null,
+) {
+  const activeJob = await getCrawlJob(db, ownerId, siteUrl, jobId);
+  if (!activeJob) {
+    return { job: null, page: { limit, offset, total: 0 }, rows: [] as CrawlLinkRecord[] };
+  }
+
+  const params: unknown[] = [ownerId, siteUrl, activeJob.id];
+  const where = ['ownerId = ?', 'siteUrl = ?', 'jobId = ?'];
+  if (search) {
+    const term = `%${search.trim().toLowerCase()}%`;
+    where.push('(LOWER(fromUrl) LIKE ? OR LOWER(toUrl) LIKE ? OR LOWER(fromPageKey) LIKE ? OR LOWER(toPageKey) LIKE ?)');
+    params.push(term, term, term, term);
+  }
+
+  const total = await db.get<any>(
+    `SELECT COUNT(*) AS total FROM crawl_links WHERE ${where.join(' AND ')}`,
+    params,
+  );
+  const rows = await db.all<CrawlLinkRecord>(
+    `
+      SELECT ownerId, siteUrl, jobId, fromUrl, toUrl, fromPageKey, toPageKey, discoveredAt, depth
+      FROM crawl_links
+      WHERE ${where.join(' AND ')}
+      ORDER BY depth ASC, fromUrl ASC, toUrl ASC
+      LIMIT ? OFFSET ?
+    `,
+    [...params, limit, offset],
+  );
+
+  return {
+    job: activeJob,
+    page: {
+      limit,
+      offset,
+      total: toFiniteNumber(total?.total),
+    },
+    rows,
+  };
+}
+
 export async function getCrawlStatus(db: AppDatabase, ownerId: string, siteUrl: string, jobId?: string | null): Promise<CrawlStatusResponse> {
   const job = await getCrawlJob(db, ownerId, siteUrl, jobId);
   if (!job) {
@@ -1326,6 +1396,18 @@ export async function getCrawlPages(
   issue?: CrawlIssueFilter | null,
 ): Promise<CrawlPageListResponse> {
   return listCrawlPages(db, ownerId, siteUrl, limit, offset, search, jobId, issue);
+}
+
+export async function getCrawlLinks(
+  db: AppDatabase,
+  ownerId: string,
+  siteUrl: string,
+  limit: number,
+  offset: number,
+  search?: string | null,
+  jobId?: string | null,
+): Promise<CrawlLinkListResponse> {
+  return listCrawlLinks(db, ownerId, siteUrl, limit, offset, search, jobId);
 }
 
 export async function queueCrawlJob(db: AppDatabase, input: StartCrawlInput & { ownerId: string }) {

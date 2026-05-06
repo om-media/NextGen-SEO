@@ -65,6 +65,18 @@ export type CrawlPageRow = {
   wordCount: number;
 };
 
+export type CrawlLinkRow = {
+  depth: number;
+  discoveredAt: string | null;
+  fromPageKey: string;
+  fromUrl: string;
+  jobId: string;
+  ownerId: string;
+  siteUrl: string;
+  toPageKey: string;
+  toUrl: string;
+};
+
 export type CrawlPagesResponse = {
   job: CrawlJob | null;
   page: {
@@ -74,6 +86,16 @@ export type CrawlPagesResponse = {
   };
   rows: CrawlPageRow[];
   summary: CrawlSummary | null;
+};
+
+export type CrawlLinksResponse = {
+  job: CrawlJob | null;
+  page: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
+  rows: CrawlLinkRow[];
 };
 
 export type CrawlStatusResponse = {
@@ -212,6 +234,35 @@ export async function fetchCrawlPages(params: {
     rows: Array.isArray(data?.rows) ? data.rows : [],
     summary: data?.summary ?? null,
   } satisfies CrawlPagesResponse;
+}
+
+export async function fetchCrawlLinks(params: {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  jobId?: string | null;
+  siteUrl: string;
+}) {
+  const searchParams = new URLSearchParams({
+    siteUrl: params.siteUrl,
+    limit: String(params.limit ?? 100),
+    offset: String(params.offset ?? 0),
+  });
+
+  if (params.jobId) searchParams.set("jobId", params.jobId);
+  if (params.search?.trim()) searchParams.set("search", params.search.trim());
+
+  const response = await authFetch(`/api/crawl/links?${searchParams.toString()}`);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.error || "Failed to fetch crawl links");
+  }
+
+  return {
+    job: data?.job ?? null,
+    page: data?.page ?? { limit: params.limit ?? 100, offset: params.offset ?? 0, total: 0 },
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+  } satisfies CrawlLinksResponse;
 }
 
 export async function fetchCrawlCompare(params: {

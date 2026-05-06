@@ -3,7 +3,7 @@ import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isNonEmptyString } from '../validation.js';
-import { cancelCrawlJob, compareCrawlJobs, getCrawlJobs, getCrawlPages, getCrawlStatus, queueCrawlJob, type CrawlIssueFilter } from '../services/crawl.js';
+import { cancelCrawlJob, compareCrawlJobs, getCrawlJobs, getCrawlLinks, getCrawlPages, getCrawlStatus, queueCrawlJob, type CrawlIssueFilter } from '../services/crawl.js';
 import { getPlanCrawlLimits } from '../../shared/plans.js';
 
 function isHttpUrl(value: string) {
@@ -136,6 +136,24 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/crawl/links', authRequired, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const siteUrl = asTrimmedString(req.query.siteUrl);
+    const jobId = asTrimmedString(req.query.jobId);
+    const search = asTrimmedString(req.query.search);
+    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 100;
+    const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
+
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+
+    try {
+      const result = await getCrawlLinks(db, ownerId, siteUrl, limit, offset, search, jobId);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to fetch crawl links' });
     }
   });
 
