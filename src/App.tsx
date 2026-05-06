@@ -667,6 +667,14 @@ function MainApp() {
   const ga4SitesWithSavedDefault = savedGa4Property && !ga4Sites.some((site) => site.siteUrl === savedGa4Property.siteUrl)
     ? [savedGa4Property, ...ga4Sites]
     : ga4Sites;
+  const accessibleGscSites =
+    userProfile?.tier === 'enterprise'
+      ? sites
+      : sites.filter((site) => userProfile?.unlockedSites.includes(site.siteUrl));
+  const accessibleBingSites =
+    userProfile?.tier === 'enterprise'
+      ? bingSites
+      : bingSites.filter((site) => userProfile?.unlockedSites.includes(site.siteUrl));
   const accessibleGa4Sites =
     userProfile?.tier === 'enterprise'
       ? ga4SitesWithSavedDefault
@@ -674,7 +682,7 @@ function MainApp() {
         ? ga4SitesWithSavedDefault.filter((site) => site.siteUrl === savedGa4Property.siteUrl)
         : [];
 
-  const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? bingSites : sites;
+  const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
   const currentSelection = dataSource === 'ga4' ? selectedGa4Property : selectedSite;
   const showStatusPanels = activeMenu === "Dashboard";
   const hasValidSelectedSite = currentSites.some((site) => {
@@ -846,7 +854,7 @@ function MainApp() {
             isConnectingGoogle={isConnectingGoogleData}
             onSignOut={signOut}
             onSwitchDataSource={(nextSource) => {
-              const availableSites = nextSource === 'ga4' ? ga4Sites : nextSource === 'bing' ? bingSites : sites;
+              const availableSites = nextSource === 'ga4' ? accessibleGa4Sites : nextSource === 'bing' ? accessibleBingSites : accessibleGscSites;
               switchDataSource(nextSource, availableSites);
             }}
             selectedSite={currentSelection}
@@ -883,7 +891,7 @@ function MainApp() {
                   fullGa4SitesCount={ga4Sites.length}
                   ga4SitesCount={accessibleGa4Sites.length}
                   googleConnected={Boolean(userProfile?.googleConnected)}
-                  gscSitesCount={sites.length}
+                  gscSitesCount={accessibleGscSites.length}
                   hasValidSelectedSite={hasValidSelectedSite}
                   isConnectingGoogle={isConnectingGoogleData}
                   onConnectGoogle={handleConnectGoogleData}
