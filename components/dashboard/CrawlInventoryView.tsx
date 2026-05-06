@@ -107,22 +107,32 @@ function resolveStartUrl(value: string | null | undefined, siteUrl: string) {
 function formatJobLabel(job: CrawlJob) {
   const status = job.status.charAt(0).toUpperCase() + job.status.slice(1);
   const counts = `${formatNumber(job.crawledCount)}/${formatNumber(job.discoveredCount)}`;
-  return `${status} · ${formatRelativeTime(job.startedAt || job.updatedAt || null)} · ${counts}`;
+  return `${status} - ${formatRelativeTime(job.startedAt || job.updatedAt || null)} - ${counts}`;
 }
 
 function exportCsv(rows: CrawlPageRow[]) {
   const headers = [
     "URL",
     "Final URL",
+    "Page Key",
     "Status",
+    "Content Type",
+    "Response Time MS",
     "Title",
+    "Meta Description",
+    "H1 Count",
+    "H1 Text",
+    "H2 Count",
     "Canonical",
     "Depth",
     "Discovered From",
+    "Discovered From URL",
     "Inlinks",
     "Outlinks",
     "Words",
     "Noindex",
+    "Error Message",
+    "Discovered At",
     "Crawled At",
   ];
 
@@ -134,15 +144,25 @@ function exportCsv(rows: CrawlPageRow[]) {
   const body = rows.map((row) => [
     row.url,
     row.finalUrl || "",
+    row.pageKey || "",
     row.statusCode || "",
+    row.contentType || "",
+    row.responseTimeMs ?? "",
     row.title || "",
+    row.metaDescription || "",
+    row.h1Count ?? "",
+    row.h1Text || "",
+    row.h2Count ?? "",
     row.canonicalUrl || "",
     row.depth,
     row.discoveredFrom || "",
+    row.discoveredFromUrl || "",
     row.inboundLinkCount ?? row.internalLinkCount ?? 0,
     row.outgoingLinkCount,
     row.wordCount,
     row.noindex ? "yes" : "no",
+    row.errorMessage || "",
+    row.discoveredAt || "",
     row.crawledAt || "",
   ]);
 
