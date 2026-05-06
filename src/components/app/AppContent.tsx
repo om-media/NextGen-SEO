@@ -191,7 +191,7 @@ export function AppContent({
         <div className="space-y-4">
           <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
             <h3 className="mb-1 text-lg font-semibold tracking-[-0.01em] text-foreground">Bing Webmaster Tools data</h3>
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Bing integration is currently in beta. Advanced filtering and comparison features will be added soon.</p>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Review Bing query visibility for the active workspace site and export the loaded query rows when you need parity with Bing Webmaster Tools.</p>
           </div>
           <BingDataGrid siteUrl={selectedSite} />
         </div>

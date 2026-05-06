@@ -2,10 +2,11 @@ import { useEffect, useState, useMemo } from "react"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { Ga4ApiService } from "@/src/services/ga4Service"
 import { format, parseISO } from "date-fns"
-import { ArrowDownIcon, ArrowUpIcon, Info } from "lucide-react"
+import { ArrowDownIcon, ArrowUpIcon, Download, Info } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Button } from "@/components/ui/button"
 
 import { DateRange } from "react-day-picker"
 
@@ -29,6 +30,27 @@ function classifyLlmSource(source: string): string {
 const getGa4DimensionValue = (row: any, index = 0) => {
   const value = row?.dimensionValues?.[index]?.value
   return typeof value === "string" ? value : ""
+}
+
+function exportCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return
+  const headers = Object.keys(rows[0])
+  const escape = (value: unknown) => {
+    const text = String(value ?? "")
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+  }
+  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+    .map((line) => line.map(escape).join(","))
+    .join("\n")
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
 }
 
 export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRange }: Ga4LlmTrafficProps) {
@@ -358,6 +380,39 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
 
   const lpTableData = Array.from(lpTableMap.values()).sort((a: any, b: any) => b.sessions - a.sessions).slice(0, 50) || []
 
+  const startDate = format(dateRange.from, "yyyy-MM-dd")
+  const endDate = format(dateRange.to, "yyyy-MM-dd")
+  const exportSourceRows = () => {
+    exportCsv(`ga4-llm-referrers-${startDate}-${endDate}.csv`, sourceTableData.map((row: any) => ({
+      referrer: row.referrer,
+      sessions: row.sessions,
+      engagedSessions: row.engagedSessions,
+      keyEvents: row.keyEvents,
+      sessionKeyEventRate: row.sessionKeyEventRate,
+      averageSessionDuration: row.averageSessionDuration,
+      compareSessions: row.prevSessions,
+      compareEngagedSessions: row.prevEngagedSessions,
+      compareKeyEvents: row.prevKeyEvents,
+      compareSessionKeyEventRate: row.prevSessionKeyEventRate,
+      compareAverageSessionDuration: row.prevAverageSessionDuration,
+    })))
+  }
+
+  const exportLandingPageRows = () => {
+    exportCsv(`ga4-llm-landing-pages-${startDate}-${endDate}.csv`, lpTableData.map((row: any) => ({
+      landingPage: row.landingPage,
+      referrer: row.referrer,
+      sessions: row.sessions,
+      engagedSessions: row.engagedSessions,
+      keyEvents: row.keyEvents,
+      averageSessionDuration: row.averageSessionDuration,
+      compareSessions: row.prevSessions,
+      compareEngagedSessions: row.prevEngagedSessions,
+      compareKeyEvents: row.prevKeyEvents,
+      compareAverageSessionDuration: row.prevAverageSessionDuration,
+    })))
+  }
+
   const renderPercentDiff = (current: number, previous: number) => {
     if (!isCompareMode) return null;
     if (!previous || previous === 0) return <span className="text-muted-foreground text-xs ml-1 flex items-center">&mdash;</span>;
@@ -384,9 +439,15 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="col-span-1 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-          <CardHeader className="border-b border-[#E6ECE8] bg-white">
-            <CardTitle>Traffic metrics by LLM referrer</CardTitle>
-            <CardDescription>Displays traffic metrics by LLM referrer.</CardDescription>
+          <CardHeader className="flex flex-col gap-3 border-b border-[#E6ECE8] bg-white sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle>Traffic metrics by LLM referrer</CardTitle>
+              <CardDescription>Displays traffic metrics by LLM referrer.</CardDescription>
+            </div>
+            <Button variant="outline" size="sm" className="rounded-xl bg-background" onClick={exportSourceRows} disabled={sourceTableData.length === 0}>
+              <Download className="mr-2 h-4 w-4" />
+              Export CSV
+            </Button>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -469,9 +530,15 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
       </div>
 
       <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardHeader className="border-b border-[#E6ECE8] bg-white">
-          <CardTitle>Landing pages by LLM referrer</CardTitle>
-          <CardDescription>Displays landing page performance by LLM referrer.</CardDescription>
+        <CardHeader className="flex flex-col gap-3 border-b border-[#E6ECE8] bg-white sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>Landing pages by LLM referrer</CardTitle>
+            <CardDescription>Displays landing page performance by LLM referrer.</CardDescription>
+          </div>
+          <Button variant="outline" size="sm" className="rounded-xl bg-background" onClick={exportLandingPageRows} disabled={lpTableData.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">

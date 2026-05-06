@@ -3,7 +3,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Ga4ApiService, Ga4DataRow } from "@/src/services/ga4Service"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { Loader2, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X } from "lucide-react"
+import { Loader2, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X, Download } from "lucide-react"
 import { format } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
@@ -31,6 +31,27 @@ const getGa4DimensionValue = (row: any, index = 0) => {
   const value = row?.dimensionValues?.[index]?.value;
   return typeof value === "string" ? value : "";
 };
+
+function exportCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const escape = (value: unknown) => {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+    .map((line) => line.map(escape).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
 
 export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'] }: Ga4DataGridProps) {
   const { userProfile } = useAuth()
@@ -283,6 +304,34 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
     );
   };
 
+  const exportRows = () => {
+    const startDate = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : "start";
+    const endDate = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : "end";
+    exportCsv(
+      `ga4-${dimension}-${startDate}-${endDate}.csv`,
+      sortedData.map((row) => {
+        const output: Record<string, unknown> = {
+          dimension: getGa4DimensionValue(row),
+        };
+
+        metrics.forEach((metric, index) => {
+          const current = Number(row.metricValues?.[index]?.value || 0);
+          const compare = row.compareMetricValues ? Number(row.compareMetricValues[index]?.value || 0) : "";
+          output[metric] = metric === "bounceRate" ? current : current;
+          if (metric === "bounceRate") output.bounceRatePercent = `${(current * 100).toFixed(2)}%`;
+          if (isCompareMode) {
+            output[`compare_${metric}`] = compare;
+            if (metric === "bounceRate" && compare !== "") {
+              output.compareBounceRatePercent = `${(Number(compare) * 100).toFixed(2)}%`;
+            }
+          }
+        });
+
+        return output;
+      }),
+    );
+  };
+
   return (
     <div className="space-y-6">
       {selectedRowKey && dimension !== 'date' && (
@@ -383,13 +432,17 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
       )}
 
       <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardHeader className={dimension !== 'date' ? "flex flex-row items-center justify-between border-b border-border bg-card px-5 py-4" : "border-b border-border bg-card px-5 py-4"}>
+        <CardHeader className="flex flex-col gap-3 border-b border-border bg-card px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle>{dimension === 'date' ? 'Data Table' : `Detailed ${getDimensionHeader()} Data`}</CardTitle>
             {dimension !== 'date' && (
               <CardDescription>Click any row to view its historical trend.</CardDescription>
             )}
           </div>
+          <Button variant="outline" size="sm" className="rounded-xl bg-background" onClick={exportRows} disabled={loading || sortedData.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
         </CardHeader>
         <CardContent className="px-5 pt-5">
         {loading && data.length > 0 && (
