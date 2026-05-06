@@ -5,6 +5,7 @@ import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isNonEmptyString } from '../validation.js';
 import { cancelCrawlJob, compareCrawlJobs, getCrawlJobs, getCrawlLinks, getCrawlPages, getCrawlStatus, queueCrawlJob, type CrawlIssueFilter } from '../services/crawl.js';
 import { getPlanCrawlLimits } from '../../shared/plans.js';
+import { canAccessSite } from '../accessControl.js';
 
 function isHttpUrl(value: string) {
   return /^https?:\/\//i.test(String(value || '').trim());
@@ -67,6 +68,10 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const current = await getCrawlStatus(db, ownerId, siteUrl);
       if (current.job && ['queued', 'retrying', 'running'].includes(current.job.status)) {
         return res.json({ success: true, job: current.job, startUrl: current.job.startUrl, alreadyRunning: true });
@@ -98,6 +103,10 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const status = await getCrawlStatus(db, ownerId, siteUrl, jobId);
       res.json(status);
     } catch (err: any) {
@@ -113,6 +122,10 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 50) : 20;
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const jobs = await getCrawlJobs(db, ownerId, siteUrl, limit);
       res.json(jobs);
     } catch (err: any) {
@@ -132,6 +145,10 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     const issue = parseCrawlIssueFilter(req.query.issue);
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const result = await getCrawlPages(db, ownerId, siteUrl, limit, offset, search, jobId, issue);
       res.json(result);
     } catch (err: any) {
@@ -150,6 +167,10 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const result = await getCrawlLinks(db, ownerId, siteUrl, limit, offset, search, jobId);
       return res.json(result);
     } catch (err: any) {
@@ -165,6 +186,10 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const result = await compareCrawlJobs(db, ownerId, siteUrl, baseJobId, compareJobId);
       res.json(result);
     } catch (err: any) {
@@ -180,6 +205,10 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const job = await cancelCrawlJob(db, ownerId, siteUrl, jobId);
       if (!job) {
         return res.status(404).json({ error: 'Crawl job not found' });

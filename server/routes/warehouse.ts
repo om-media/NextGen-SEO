@@ -14,6 +14,7 @@ import { canonicalPageKey } from '../reporting/url.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
 import { canUseRawExports } from '../../shared/plans.js';
 import { listWarehouseJobs, queueWarehouseSyncJob } from '../services/warehouseJobs.js';
+import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
 const GA4_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
@@ -1067,6 +1068,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       if (!canUseRawExports(user?.tier)) {
         return res.status(403).json({ error: 'Raw exports are available on paid plans.' });
       }
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
 
       const searchTerm = `%${search.toLowerCase()}%`;
       const baseParams: unknown[] = [ownerId, siteUrl, startDate, endDate];
@@ -1176,6 +1180,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       if (!canUseRawExports(user?.tier)) {
         return res.status(403).json({ error: 'Raw exports are available on paid plans.' });
       }
+      if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
 
       const where = search ? 'AND LOWER(pagePath) LIKE ?' : '';
       const params: unknown[] = search
@@ -1254,6 +1261,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
       if (!canUseRawExports(user?.tier)) {
         return res.status(403).json({ error: 'Raw exports are available on paid plans.' });
+      }
+      if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
       }
 
       const dimensionFilter = search
