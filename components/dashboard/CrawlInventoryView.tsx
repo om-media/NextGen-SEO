@@ -15,10 +15,12 @@ import {
   fetchCrawlPages,
   fetchCrawlCompare,
   fetchCrawlStatus,
+  fetchCrawlLinks,
   startCrawl,
   type CrawlCompareResponse,
   type CrawlIssueFilter,
   type CrawlJob,
+  type CrawlLinkRow,
   type CrawlPageRow,
   type CrawlSummary,
 } from "@/src/services/crawlService";
@@ -178,6 +180,42 @@ function exportCsv(rows: CrawlPageRow[]) {
   window.URL.revokeObjectURL(url);
 }
 
+function exportLinksCsv(rows: CrawlLinkRow[]) {
+  const headers = [
+    "From URL",
+    "From Page Key",
+    "To URL",
+    "To Page Key",
+    "Depth",
+    "Discovered At",
+  ];
+
+  const escape = (value: unknown) => {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+
+  const body = rows.map((row) => [
+    row.fromUrl,
+    row.fromPageKey,
+    row.toUrl,
+    row.toPageKey,
+    row.depth,
+    row.discoveredAt || "",
+  ]);
+
+  const csv = [headers, ...body].map((line) => line.map(escape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `crawl-links-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
+
 const exportBatchSize = 5000;
 
 export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryViewProps) {
@@ -190,6 +228,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
   const [compare, setCompare] = useState<CrawlCompareResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingLinks, setExportingLinks] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [hasLoadedJobs, setHasLoadedJobs] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -330,6 +369,38 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
       toast.error("Export failed", { description: err.message || "Unable to export crawl inventory." });
     } finally {
       setExporting(false);
+    }
+  };
+
+  const exportAllLinks = async () => {
+    if (!siteUrl) return;
+    setExportingLinks(true);
+    setError(null);
+
+    try {
+      const allRows: CrawlLinkRow[] = [];
+      let nextOffset = 0;
+      let total = 0;
+
+      do {
+        const result = await fetchCrawlLinks({
+          limit: exportBatchSize,
+          offset: nextOffset,
+          jobId: activeJobId,
+          search: searchTerm,
+          siteUrl,
+        });
+        allRows.push(...result.rows);
+        total = result.page.total;
+        nextOffset += result.page.limit;
+      } while (nextOffset < total);
+
+      exportLinksCsv(allRows);
+    } catch (err: any) {
+      setError(err.message || "Failed to export crawl links");
+      toast.error("Link export failed", { description: err.message || "Unable to export crawl link graph." });
+    } finally {
+      setExportingLinks(false);
     }
   };
 
@@ -482,6 +553,15 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
               >
                 {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
                 Export CSV
+              </Button>
+              <Button
+                className="h-10 rounded-xl"
+                variant="outline"
+                onClick={exportAllLinks}
+                disabled={exportingLinks || !job}
+              >
+                {exportingLinks ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                Export links
               </Button>
             </div>
           </div>
