@@ -317,7 +317,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
         metrics.forEach((metric, index) => {
           const current = Number(row.metricValues?.[index]?.value || 0);
           const compare = row.compareMetricValues ? Number(row.compareMetricValues[index]?.value || 0) : "";
-          output[metric] = metric === "bounceRate" ? current : current;
+          output[metric] = current;
           if (metric === "bounceRate") output.bounceRatePercent = `${(current * 100).toFixed(2)}%`;
           if (isCompareMode) {
             output[`compare_${metric}`] = compare;
