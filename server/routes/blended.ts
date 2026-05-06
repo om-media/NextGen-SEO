@@ -359,6 +359,108 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
       const hasMetadataGap = (row: any) => Boolean(row.crawl && (!row.crawl.title || !row.crawl.metaDescription || !row.crawl.h1Text));
       const hasIndexabilityIssue = (row: any) => Boolean(row.crawl?.noindex || (row.crawl?.canonicalUrl && row.crawl?.finalUrl && row.crawl.canonicalUrl !== row.crawl.finalUrl));
       const isLowCtrOpportunity = (row: any) => toFiniteNumber(row.gsc?.impressions) >= 500 && toFiniteNumber(row.gsc?.ctr) < 0.02;
+      const getIssueInsight = (row: any) => {
+        const reasons: string[] = [];
+        const statusCode = toFiniteNumber(row.crawl?.statusCode);
+        const impressions = toFiniteNumber(row.gsc?.impressions);
+        const ctr = toFiniteNumber(row.gsc?.ctr);
+        const sessions = toFiniteNumber(row.ga4?.sessions);
+        const bounceRate = toFiniteNumber(row.ga4?.bounceRate);
+
+        if (!row.crawl) {
+          reasons.push('Page has GSC or GA4 data but was not found in the latest completed app crawl.');
+          return {
+            action: 'Run a broader crawl or check whether this URL is orphaned, blocked, redirected, or only discoverable from XML data.',
+            label: 'Not in crawl',
+            reasons,
+            severity: 'medium',
+          };
+        }
+
+        if (row.crawl.errorMessage || statusCode >= 400) {
+          if (statusCode >= 400) reasons.push(`Crawler received HTTP ${statusCode}.`);
+          if (row.crawl.errorMessage) reasons.push(row.crawl.errorMessage);
+          return {
+            action: 'Fix the fetch error first, then re-crawl before reviewing content or traffic performance.',
+            label: 'Fix crawl error',
+            reasons,
+            severity: 'high',
+          };
+        }
+
+        if (row.crawl.noindex) {
+          reasons.push('The crawler found a noindex directive.');
+          if (impressions > 0) reasons.push('The page still has search visibility in GSC.');
+          return {
+            action: 'Confirm whether this page should be indexable; remove noindex if it is expected to rank.',
+            label: 'Review noindex',
+            reasons,
+            severity: impressions > 0 ? 'high' : 'medium',
+          };
+        }
+
+        if (row.crawl.canonicalUrl && row.crawl.finalUrl && row.crawl.canonicalUrl !== row.crawl.finalUrl) {
+          reasons.push('Canonical URL differs from the fetched final URL.');
+          return {
+            action: 'Verify the canonical target and consolidate signals if this page should be the ranking URL.',
+            label: 'Check canonical',
+            reasons,
+            severity: 'medium',
+          };
+        }
+
+        if (!row.crawl.title || !row.crawl.metaDescription || !row.crawl.h1Text) {
+          if (!row.crawl.title) reasons.push('Missing title tag.');
+          if (!row.crawl.metaDescription) reasons.push('Missing meta description.');
+          if (!row.crawl.h1Text) reasons.push('Missing H1 text.');
+          return {
+            action: 'Fill the missing on-page elements, prioritizing pages with impressions or sessions.',
+            label: 'Complete metadata',
+            reasons,
+            severity: impressions >= 100 || sessions >= 20 ? 'high' : 'medium',
+          };
+        }
+
+        if (impressions >= 500 && ctr < 0.02) {
+          reasons.push(`High impressions with ${(ctr * 100).toFixed(1)}% CTR.`);
+          return {
+            action: 'Rewrite the title/meta offer around the winning query intent and compare after the next data refresh.',
+            label: 'Improve CTR',
+            reasons,
+            severity: 'medium',
+          };
+        }
+
+        if (row.gsc && !row.ga4) {
+          reasons.push('Page has GSC visibility but no matched GA4 landing-page data.');
+          return {
+            action: 'Check GA4 landing-page collection and path normalization for this URL.',
+            label: 'Check GA4 match',
+            reasons,
+            severity: 'low',
+          };
+        }
+
+        if (toFiniteNumber(row.gsc?.clicks) >= 20 && sessions >= 20 && bounceRate >= 0.7) {
+          reasons.push(`Traffic is reaching the page, but bounce rate is ${(bounceRate * 100).toFixed(1)}%.`);
+          return {
+            action: 'Review intent match, above-the-fold content, and internal next steps for this page.',
+            label: 'Improve engagement',
+            reasons,
+            severity: 'medium',
+          };
+        }
+
+        return {
+          action: 'No immediate blended SEO issue detected from crawl, GSC, and GA4 signals.',
+          label: 'Monitor',
+          reasons: ['Crawl, search visibility, and engagement signals do not currently trigger a priority rule.'],
+          severity: 'none',
+        };
+      };
+      rows.forEach((row) => {
+        row.issueInsight = getIssueInsight(row);
+      });
       const totals = rows.reduce(
         (acc, row) => {
           acc.clicks += toFiniteNumber(row.gsc?.clicks);

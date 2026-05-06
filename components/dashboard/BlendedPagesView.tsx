@@ -107,6 +107,9 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
     "Crawl Status",
     "Crawl Title",
     "Crawl Meta Description",
+    "SEO Issue",
+    "Recommended Action",
+    "Issue Reasons",
     "GSC Clicks",
     "GSC Impressions",
     "GSC CTR",
@@ -127,6 +130,9 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
     getCrawlStatus(row).label,
     row.crawl?.title || "",
     row.crawl?.metaDescription || "",
+    row.issueInsight.label,
+    row.issueInsight.action,
+    row.issueInsight.reasons.join(" | "),
     row.gsc?.clicks ?? 0,
     row.gsc?.impressions ?? 0,
     row.gsc ? `${(row.gsc.ctr * 100).toFixed(2)}%` : "",
@@ -223,6 +229,13 @@ function getCrawlStatus(row: BlendedPagePerformanceRow) {
     className: "bg-[#EAF4EC] text-[#0F3D2E]",
     label: row.crawl.statusCode && row.crawl.statusCode >= 300 ? "Redirect" : row.crawl.statusCode ? `${row.crawl.statusCode} OK` : "Crawled",
   };
+}
+
+function getSeverityClass(severity: BlendedPagePerformanceRow["issueInsight"]["severity"]) {
+  if (severity === "high") return "bg-[#FEF2F2] text-[#B91C1C]";
+  if (severity === "medium") return "bg-[#FFF2E8] text-[#C2410C]";
+  if (severity === "low") return "bg-[#F8FAF9] text-[#647067]";
+  return "bg-[#EAF4EC] text-[#0F3D2E]";
 }
 
 function MetricCard({
@@ -664,7 +677,7 @@ export function BlendedPagesView({
 
             <div className="overflow-hidden rounded-2xl border border-[#E6ECE8]">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1320px] text-sm">
+                <table className="w-full min-w-[1600px] text-sm">
                   <thead className="bg-[#FBFCFB] text-xs font-semibold text-[#34483E]">
                     <tr>
                       <th className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-[#E6ECE8] bg-[#FBFCFB] px-4 py-3 text-left">
@@ -673,6 +686,7 @@ export function BlendedPagesView({
                         </button>
                       </th>
                       <th className="px-4 py-3 text-left">Crawl</th>
+                      <th className="px-4 py-3 text-left">Next action</th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("clicks")}>
                           GSC Clicks {sortIndicator("clicks")}
@@ -714,13 +728,13 @@ export function BlendedPagesView({
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={10} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={11} className="px-4 py-16 text-center text-[#647067]">
                           Loading blended page data...
                         </td>
                       </tr>
                     ) : paginatedRows.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={11} className="px-4 py-16 text-center text-[#647067]">
                           No page rows match this view.
                         </td>
                       </tr>
@@ -748,6 +762,19 @@ export function BlendedPagesView({
                               >
                                 <Eye className="h-3.5 w-3.5" />
                                 <span className={`rounded-full px-2 py-0.5 ${crawlStatus.className}`}>{crawlStatus.label}</span>
+                              </button>
+                            </td>
+                            <td className="px-4 py-4">
+                              <button
+                                className="max-w-[260px] text-left"
+                                onClick={() => row.crawl && setSelectedCrawlRow(row)}
+                              >
+                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getSeverityClass(row.issueInsight.severity)}`}>
+                                  {row.issueInsight.label}
+                                </span>
+                                <div className="mt-1 truncate text-xs text-[#647067]" title={row.issueInsight.action}>
+                                  {row.issueInsight.action}
+                                </div>
                               </button>
                             </td>
                             <td className="px-4 py-4 text-right">
@@ -842,9 +869,10 @@ export function BlendedPagesView({
                           <p className="mt-1 text-xs leading-5 text-[#647067]">
                             {formatCompact(row.gsc?.impressions ?? 0)} impressions, {row.ga4 ? `${formatCompact(row.ga4.sessions)} sessions` : "GA4 not matched"}.
                           </p>
+                          <p className="mt-2 text-xs font-medium leading-5 text-[#24443A]">{row.issueInsight.action}</p>
                         </div>
-                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${crawlStatus.className}`}>
-                          {crawlStatus.label}
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${getSeverityClass(row.issueInsight.severity)}`}>
+                          {row.issueInsight.label || crawlStatus.label}
                         </span>
                       </div>
                     </button>
@@ -892,6 +920,24 @@ export function BlendedPagesView({
 
           {selectedCrawlRow?.crawl && (
             <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4 md:col-span-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Review decision</div>
+                    <div className="mt-2 text-lg font-semibold text-[#0F172A]">{selectedCrawlRow.issueInsight.label}</div>
+                    <p className="mt-1 text-sm leading-6 text-[#34483E]">{selectedCrawlRow.issueInsight.action}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${getSeverityClass(selectedCrawlRow.issueInsight.severity)}`}>
+                    {selectedCrawlRow.issueInsight.severity}
+                  </span>
+                </div>
+                <ul className="mt-3 space-y-1 text-sm text-[#647067]">
+                  {selectedCrawlRow.issueInsight.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+
               <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Technical status</div>
                 <dl className="mt-3 space-y-2 text-sm">

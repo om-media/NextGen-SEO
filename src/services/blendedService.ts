@@ -32,10 +32,18 @@ export type BlendedPageCrawlSummary = {
   url: string;
 };
 
+export type BlendedPageIssueInsight = {
+  action: string;
+  label: string;
+  reasons: string[];
+  severity: "high" | "medium" | "low" | "none";
+};
+
 export type BlendedPagePerformanceRow = {
   crawl: BlendedPageCrawlSummary | null;
   ga4: BlendedPageGa4Metrics | null;
   gsc: BlendedPageGscMetrics | null;
+  issueInsight: BlendedPageIssueInsight;
   page: string;
   pageKey: string;
 };
