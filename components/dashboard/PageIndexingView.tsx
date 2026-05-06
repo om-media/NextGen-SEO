@@ -5,7 +5,7 @@ import { format, formatDistanceToNow, parseISO, subDays } from "date-fns";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { AlertCircle, CheckCircle2, ShieldAlert, Loader2, RefreshCw, ChevronDown, ChevronRight, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, ShieldAlert, Loader2, RefreshCw, ChevronDown, ChevronRight, Upload, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/src/lib/authFetch";
 
@@ -20,6 +20,27 @@ interface IndexingRow {
   inspectionResult: any;
   coverageState: string | null;
   lastInspectionTime: string | null;
+}
+
+function exportCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const escape = (value: unknown) => {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+    .map((line) => line.map(escape).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
 }
 
 export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: string, dateRange: DateRange | undefined, isLive: boolean }) {
@@ -399,6 +420,30 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
           ? 'Flagged or not indexed URLs'
           : 'All known URLs';
 
+  const exportRows = () => {
+    exportCsv(
+      `page-indexing-${filterMode}-${new Date().toISOString().slice(0, 10)}.csv`,
+      displayData.map((row) => {
+        const indexStatus = row.inspectionResult?.indexStatusResult || {};
+        return {
+          url: row.url,
+          clicks: row.clicks,
+          impressions: row.impressions,
+          lastServerLogCrawl: row.lastCrawl || "",
+          coverageState: row.coverageState || "",
+          lastInspectionTime: row.lastInspectionTime || "",
+          verdict: indexStatus.verdict || "",
+          pageFetchState: indexStatus.pageFetchState || "",
+          robotsTxtState: indexStatus.robotsTxtState || "",
+          indexingState: indexStatus.indexingState || "",
+          googleCanonical: indexStatus.googleCanonical || "",
+          userCanonical: indexStatus.userCanonical || "",
+          gscLastCrawlTime: indexStatus.lastCrawlTime || "",
+        };
+      }),
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 rounded-2xl border border-[#E9F0EB] bg-white/90 p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
@@ -424,6 +469,16 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
                Import GSC CSV
              </Button>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="bg-background"
+            onClick={exportRows}
+            disabled={loading || displayData.length === 0}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Export CSV
+          </Button>
           <Button 
             variant="outline" 
             size="sm" 

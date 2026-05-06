@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, MousePointerClick, Eye, Percent, ArrowUpRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, MousePointerClick, Eye, Percent, ArrowUpRight, Download } from "lucide-react"
 import { BingApiService, BingQueryStat } from "@/src/services/bingService"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { Loader2 } from "lucide-react"
@@ -10,6 +10,27 @@ import { cn } from "@/lib/utils"
 
 interface BingDataGridProps {
   siteUrl: string;
+}
+
+function exportCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return
+  const headers = Object.keys(rows[0])
+  const escape = (value: unknown) => {
+    const text = String(value ?? "")
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+  }
+  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+    .map((line) => line.map(escape).join(","))
+    .join("\n")
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
 }
 
 export function BingDataGrid({ siteUrl }: BingDataGridProps) {
@@ -72,6 +93,20 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
 
   const totalPages = Math.ceil(data.length / pageSize)
 
+  const exportRows = () => {
+    exportCsv(
+      `bing-queries-${new Date().toISOString().slice(0, 10)}.csv`,
+      data.map((row) => ({
+        query: row.Query,
+        clicks: row.Clicks,
+        impressions: row.Impressions,
+        ctr: row.Ctr,
+        ctrPercent: `${(row.Ctr * 100).toFixed(2)}%`,
+        avgClickPosition: row.AvgClickPosition,
+      })),
+    )
+  }
+
   if (loading) {
     return (
       <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
@@ -125,10 +160,18 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
 
       <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardHeader className="border-b border-[#E6ECE8] bg-white px-5 py-4">
-          <CardTitle>Top Queries</CardTitle>
-          <CardDescription>
-            Review Bing query performance and page through the dataset in smaller, readable batches.
-          </CardDescription>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle>Top Queries</CardTitle>
+              <CardDescription>
+                Review Bing query performance and page through the dataset in smaller, readable batches.
+              </CardDescription>
+            </div>
+            <Button variant="outline" className="rounded-xl bg-background" onClick={exportRows} disabled={data.length === 0}>
+              <Download className="mr-2 h-4 w-4" />
+              Export CSV
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-hidden rounded-2xl border border-[#E6ECE8] bg-white">

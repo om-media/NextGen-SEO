@@ -3,13 +3,34 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts"
-import { Upload, Server, AlertCircle, Loader2, Bot } from "lucide-react"
+import { Upload, Server, AlertCircle, Loader2, Bot, Download } from "lucide-react"
 import { authFetch } from "@/src/lib/authFetch"
 import { toast } from "sonner"
 
 interface LogAnalyzerViewProps {
   siteUrl: string | undefined
   dateRange: { from: Date; to?: Date }
+}
+
+function exportCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return
+  const headers = Object.keys(rows[0])
+  const escape = (value: unknown) => {
+    const text = String(value ?? "")
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+  }
+  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+    .map((line) => line.map(escape).join(","))
+    .join("\n")
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
 }
 
 export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
@@ -125,6 +146,56 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
   const totalHumans = stats.filter(s => s.botType === 'Human').reduce((sum, s) => sum + s.hits, 0)
   const totalGooglebot = stats.filter(s => s.botType === 'Googlebot').reduce((sum, s) => sum + s.hits, 0)
   const totalErrors = errors.reduce((sum, e) => sum + e.count, 0)
+  const hasExportRows = stats.length > 0 || errors.length > 0 || Boolean(insights)
+
+  const exportRows = () => {
+    const startDate = dateRange.from.toISOString().split('T')[0]
+    const endDate = dateRange.to ? dateRange.to.toISOString().split('T')[0] : startDate
+    const rows: Record<string, unknown>[] = [
+      ...stats.map((row) => ({
+        source: "daily_stats",
+        date: row.date,
+        botType: row.botType,
+        hits: row.hits,
+        urlPath: "",
+        statusCode: "",
+      })),
+      ...errors.map((row) => ({
+        source: "bot_errors",
+        date: "",
+        botType: row.botType,
+        hits: row.count,
+        urlPath: row.urlPath,
+        statusCode: row.statusCode,
+      })),
+      ...(insights?.mostCrawled || []).map((row: any) => ({
+        source: "most_crawled",
+        date: "",
+        botType: row.botType,
+        hits: row.count,
+        urlPath: row.urlPath,
+        statusCode: "",
+      })),
+      ...(insights?.llmTraffic || []).map((row: any) => ({
+        source: "llm_traffic",
+        date: "",
+        botType: row.botType,
+        hits: row.count,
+        urlPath: row.urlPath,
+        statusCode: "",
+      })),
+      ...(insights?.efficiency || []).map((row: any) => ({
+        source: "crawl_efficiency",
+        date: "",
+        botType: "",
+        hits: row.count,
+        urlPath: "",
+        statusCode: row.statusCode,
+      })),
+    ]
+
+    exportCsv(`server-logs-${startDate}-${endDate}.csv`, rows)
+  }
 
   if (!siteUrl) {
     return <div className="p-8 text-center text-muted-foreground">Select a site to view Server Logs.</div>
@@ -137,13 +208,17 @@ export function LogAnalyzerView({ siteUrl, dateRange }: LogAnalyzerViewProps) {
           <h2 className="text-xl font-semibold tracking-[-0.01em] text-[#0F172A]">Server Log Analysis</h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-[#647067]">Monitor real 100% accurate human traffic and Googlebot crawl budget.</p>
         </div>
-        <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-1.5">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-1.5">
           <input 
             type="file" 
             ref={fileInputRef}
             className="hidden" 
             onChange={handleFileUpload} 
           />
+          <Button variant="outline" className="bg-background" onClick={exportRows} disabled={loading || !hasExportRows}>
+            <Download className="w-4 h-4 mr-2" />
+            Export CSV
+          </Button>
           <Button variant="outline" className="bg-background" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
             {uploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
             {uploading ? "Parsing Logs..." : "Upload Server Logs"}
