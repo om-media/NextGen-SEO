@@ -525,10 +525,10 @@ export function BlendedPagesView({
       {sourceMeta && (
         <div className="flex flex-wrap gap-2 text-xs text-[#647067]">
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            GSC synced through {sourceMeta.freshness.gsc.latestDate || "not synced"} · {formatNumber(sourceMeta.freshness.gsc.rowCount)} rows
+            GSC synced through {sourceMeta.freshness.gsc.latestDate || "not synced"} - {formatNumber(sourceMeta.freshness.gsc.rowCount)} rows
           </span>
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            GA4 synced through {sourceMeta.freshness.ga4.latestDate || "not synced"} · {formatNumber(sourceMeta.freshness.ga4.rowCount)} rows
+            GA4 synced through {sourceMeta.freshness.ga4.latestDate || "not synced"} - {formatNumber(sourceMeta.freshness.ga4.rowCount)} rows
           </span>
         </div>
       )}
