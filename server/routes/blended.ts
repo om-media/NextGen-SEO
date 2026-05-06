@@ -109,6 +109,7 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
     const {
       endDate,
       ga4PropertyId,
+      issueFilter,
       limit,
       offset,
       search,
@@ -129,6 +130,15 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
     const rowLimit = Number.isFinite(Number(limit)) ? Math.min(Math.max(Number(limit), 1), 5000) : 500;
     const rowOffset = Number.isFinite(Number(offset)) ? Math.max(Number(offset), 0) : 0;
     const normalizedSearch = isNonEmptyString(search) ? search.trim().toLowerCase() : '';
+    const normalizedIssueFilter = [
+      'all',
+      'crawl-issues',
+      'metadata-gaps',
+      'indexability',
+      'not-crawled',
+      'low-ctr',
+      'missing-ga4',
+    ].includes(issueFilter) ? issueFilter : 'all';
     const normalizedTrafficFilter = ['all', 'with-ga4', 'without-ga4'].includes(trafficFilter) ? trafficFilter : 'all';
     const normalizedSortColumn = [
       'page',
@@ -345,6 +355,10 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
       }
 
       const rows = Array.from(rowsByKey.values()).map(({ weightedPosition, ...row }) => row);
+      const hasCrawlIssue = (row: any) => Boolean(row.crawl?.errorMessage || toFiniteNumber(row.crawl?.statusCode) >= 400);
+      const hasMetadataGap = (row: any) => Boolean(row.crawl && (!row.crawl.title || !row.crawl.metaDescription || !row.crawl.h1Text));
+      const hasIndexabilityIssue = (row: any) => Boolean(row.crawl?.noindex || (row.crawl?.canonicalUrl && row.crawl?.finalUrl && row.crawl.canonicalUrl !== row.crawl.finalUrl));
+      const isLowCtrOpportunity = (row: any) => toFiniteNumber(row.gsc?.impressions) >= 500 && toFiniteNumber(row.gsc?.ctr) < 0.02;
       const totals = rows.reduce(
         (acc, row) => {
           acc.clicks += toFiniteNumber(row.gsc?.clicks);
@@ -356,6 +370,10 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           acc.pageViews += toFiniteNumber(row.ga4?.pageViews);
           acc.eventCount += toFiniteNumber(row.ga4?.eventCount);
           acc.weightedBounce += toFiniteNumber(row.ga4?.bounceRate) * toFiniteNumber(row.ga4?.sessions);
+          if (row.crawl) acc.crawlMatchedPages += 1;
+          if (!row.crawl) acc.notCrawledPages += 1;
+          if (hasCrawlIssue(row)) acc.crawlIssuePages += 1;
+          if (hasMetadataGap(row)) acc.metadataGapPages += 1;
           if (row.gsc) acc.gscPages += 1;
           if (row.ga4) acc.ga4Pages += 1;
           if (row.gsc && row.ga4) acc.matchedPages += 1;
@@ -363,12 +381,16 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         },
         {
           clicks: 0,
+          crawlIssuePages: 0,
+          crawlMatchedPages: 0,
           ctr: 0,
           eventCount: 0,
           ga4Pages: 0,
           gscPages: 0,
           impressions: 0,
           matchedPages: 0,
+          metadataGapPages: 0,
+          notCrawledPages: 0,
           pageViews: 0,
           position: 0,
           queryCount: 0,
@@ -394,6 +416,12 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           }
           if (normalizedTrafficFilter === 'with-ga4' && !row.ga4) return false;
           if (normalizedTrafficFilter === 'without-ga4' && row.ga4) return false;
+          if (normalizedIssueFilter === 'crawl-issues' && !hasCrawlIssue(row)) return false;
+          if (normalizedIssueFilter === 'metadata-gaps' && !hasMetadataGap(row)) return false;
+          if (normalizedIssueFilter === 'indexability' && !hasIndexabilityIssue(row)) return false;
+          if (normalizedIssueFilter === 'not-crawled' && row.crawl) return false;
+          if (normalizedIssueFilter === 'low-ctr' && !isLowCtrOpportunity(row)) return false;
+          if (normalizedIssueFilter === 'missing-ga4' && row.ga4) return false;
           return true;
         })
         .sort((a, b) => {
@@ -433,6 +461,20 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         .sort((a, b) => toFiniteNumber(b.gsc?.impressions) - toFiniteNumber(a.gsc?.impressions))
         .slice(0, 4);
 
+      const topTechnicalRisks = rows
+        .filter((row) => hasCrawlIssue(row) || hasMetadataGap(row) || hasIndexabilityIssue(row) || !row.crawl)
+        .sort((a, b) => {
+          const score = (row: any) =>
+            (hasCrawlIssue(row) ? 1000000 : 0) +
+            (hasIndexabilityIssue(row) ? 750000 : 0) +
+            (hasMetadataGap(row) ? 500000 : 0) +
+            (!row.crawl ? 250000 : 0) +
+            toFiniteNumber(row.gsc?.impressions) +
+            toFiniteNumber(row.ga4?.sessions);
+          return score(b) - score(a);
+        })
+        .slice(0, 4);
+
       res.json({
         page: {
           filteredTotal: filteredRows.length,
@@ -454,12 +496,16 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           totals: {
             bounceRate,
             clicks: totals.clicks,
+            crawlIssuePages: totals.crawlIssuePages,
+            crawlMatchedPages: totals.crawlMatchedPages,
             ctr: totals.ctr,
             eventCount: totals.eventCount,
             ga4Pages: totals.ga4Pages,
             gscPages: totals.gscPages,
             impressions: totals.impressions,
             matchedPages: totals.matchedPages,
+            metadataGapPages: totals.metadataGapPages,
+            notCrawledPages: totals.notCrawledPages,
             pageViews: totals.pageViews,
             position: totals.position,
             queryCount: totals.queryCount,
@@ -469,6 +515,7 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           },
           topFolders,
           topOpportunities,
+          topTechnicalRisks,
           freshness: {
             gsc: {
               earliestDate: readField(gscFreshness, 'earliestDate') || null,

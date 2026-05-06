@@ -75,15 +75,20 @@ export type BlendedPagePerformanceResponse = {
       sessions: number;
     }>;
     topOpportunities: BlendedPagePerformanceRow[];
+    topTechnicalRisks: BlendedPagePerformanceRow[];
     totals: {
       bounceRate: number;
       clicks: number;
+      crawlIssuePages: number;
+      crawlMatchedPages: number;
       ctr: number;
       eventCount: number;
       ga4Pages: number;
       gscPages: number;
       impressions: number;
       matchedPages: number;
+      metadataGapPages: number;
+      notCrawledPages: number;
       pageViews: number;
       position: number;
       queryCount: number;
@@ -106,6 +111,7 @@ type FetchBlendedPagePerformanceParams = {
   ga4PropertyId?: string | null;
   limit?: number;
   offset?: number;
+  issueFilter?: string;
   search?: string;
   siteUrl: string;
   sortColumn?: string;
@@ -119,6 +125,7 @@ export async function fetchBlendedPagePerformance({
   ga4PropertyId,
   limit = 500,
   offset = 0,
+  issueFilter,
   search,
   siteUrl,
   sortColumn,
@@ -132,6 +139,7 @@ export async function fetchBlendedPagePerformance({
     body: JSON.stringify({
       endDate,
       ga4PropertyId: ga4PropertyId || undefined,
+      issueFilter,
       limit,
       offset,
       search,

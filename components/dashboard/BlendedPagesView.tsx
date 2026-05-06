@@ -281,6 +281,7 @@ export function BlendedPagesView({
   const [page, setPage] = useState(1);
   const [pageInfo, setPageInfo] = useState<BlendedPagePerformanceResponse["page"] | null>(null);
   const [rows, setRows] = useState<BlendedPagePerformanceRow[]>([]);
+  const [issueFilter, setIssueFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCrawlRow, setSelectedCrawlRow] = useState<BlendedPagePerformanceRow | null>(null);
   const [sourceMeta, setSourceMeta] = useState<BlendedPagePerformanceResponse["meta"] | null>(null);
@@ -301,6 +302,7 @@ export function BlendedPagesView({
     const primaryPromise = fetchBlendedPagePerformance({
       endDate: dateStrings.endDate,
       ga4PropertyId,
+      issueFilter,
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE,
       search: searchTerm,
@@ -316,6 +318,7 @@ export function BlendedPagesView({
         ? fetchBlendedPagePerformance({
             endDate: compareDateStrings.endDate,
             ga4PropertyId,
+            issueFilter,
             limit: PAGE_SIZE,
             offset: (page - 1) * PAGE_SIZE,
             search: searchTerm,
@@ -352,6 +355,7 @@ export function BlendedPagesView({
     dateStrings?.endDate,
     dateStrings?.startDate,
     ga4PropertyId,
+    issueFilter,
     isCompareMode,
     page,
     searchTerm,
@@ -459,6 +463,14 @@ export function BlendedPagesView({
       .slice(0, 4);
   }, [rows, sourceMeta?.topOpportunities]);
 
+  const technicalRisks = useMemo(() => {
+    if (sourceMeta?.topTechnicalRisks) return sourceMeta.topTechnicalRisks;
+
+    return rows
+      .filter((row) => !row.crawl || row.crawl.errorMessage || (row.crawl.statusCode && row.crawl.statusCode >= 400) || row.crawl.noindex || !row.crawl.title || !row.crawl.metaDescription)
+      .slice(0, 4);
+  }, [rows, sourceMeta?.topTechnicalRisks]);
+
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
       setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
@@ -487,6 +499,7 @@ export function BlendedPagesView({
       const response = await fetchBlendedPagePerformance({
         endDate: dateStrings.endDate,
         ga4PropertyId,
+        issueFilter,
         limit: batchSize,
         offset,
         search: searchTerm,
@@ -573,6 +586,9 @@ export function BlendedPagesView({
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
             GA4 synced through {sourceMeta.freshness.ga4.latestDate || "not synced"} - {formatNumber(sourceMeta.freshness.ga4.rowCount)} rows
           </span>
+          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
+            Crawl matched {formatNumber(sourceMeta.totals.crawlMatchedPages)} pages - {formatNumber(sourceMeta.totals.crawlIssuePages + sourceMeta.totals.metadataGapPages)} issues
+          </span>
         </div>
       )}
 
@@ -626,7 +642,21 @@ export function BlendedPagesView({
                   <SelectItem value="without-ga4">Missing GA4 data</SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="secondary" className="h-11 rounded-xl bg-[#EEF3F0] text-[#0F172A]">
+              <Select value={issueFilter} onValueChange={(value) => { setIssueFilter(value); setPage(1); }}>
+                <SelectTrigger className="h-11 w-full rounded-xl border-[#E6ECE8] bg-white lg:w-[220px]">
+                  <SelectValue placeholder="SEO issue" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All SEO states</SelectItem>
+                  <SelectItem value="crawl-issues">Crawl errors</SelectItem>
+                  <SelectItem value="metadata-gaps">Missing metadata</SelectItem>
+                  <SelectItem value="indexability">Indexability issues</SelectItem>
+                  <SelectItem value="not-crawled">Not in latest crawl</SelectItem>
+                  <SelectItem value="low-ctr">Low CTR opportunities</SelectItem>
+                  <SelectItem value="missing-ga4">Missing GA4 data</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="secondary" className="h-11 rounded-xl bg-[#EEF3F0] text-[#0F172A]" disabled>
                 <Filter className="mr-2 h-4 w-4" />
                 Filters
               </Button>
@@ -781,6 +811,46 @@ export function BlendedPagesView({
                   </div>
                 </div>
               ))}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Technical Risks</h3>
+                <p className="mt-1 text-sm text-[#647067]">Prioritized from crawl plus search demand.</p>
+              </div>
+            </div>
+            <div className="mt-5 space-y-3">
+              {technicalRisks.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[#E6ECE8] p-4 text-sm text-[#647067]">
+                  No crawl-linked technical risks in this view.
+                </div>
+              ) : (
+                technicalRisks.map((row) => {
+                  const crawlStatus = getCrawlStatus(row);
+                  return (
+                    <button
+                      key={row.pageKey}
+                      className="w-full rounded-xl border border-[#E6ECE8] p-4 text-left hover:bg-[#F8FAF9] disabled:cursor-not-allowed disabled:opacity-70"
+                      disabled={!row.crawl}
+                      onClick={() => row.crawl && setSelectedCrawlRow(row)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-[#0F172A]">{getPageTitle(row.page)}</div>
+                          <p className="mt-1 text-xs leading-5 text-[#647067]">
+                            {formatCompact(row.gsc?.impressions ?? 0)} impressions, {row.ga4 ? `${formatCompact(row.ga4.sessions)} sessions` : "GA4 not matched"}.
+                          </p>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${crawlStatus.className}`}>
+                          {crawlStatus.label}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </section>
 
