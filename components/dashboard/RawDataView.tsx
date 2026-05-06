@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchCrawlJobs, fetchCrawlLinks, fetchCrawlPages, type CrawlIssueFilter, type CrawlJob, type CrawlLinkRow, type CrawlPageRow } from "@/src/services/crawlService";
-import { fetchRawGa4PageRows, fetchRawGscRows, type RawGa4Kind, type RawGa4PageRow, type RawGscKind, type RawGscRow, type RawPage } from "@/src/services/rawDataService";
+import { fetchRawGa4PageRows, fetchRawGa4ReportRows, fetchRawGscRows, type RawGa4Kind, type RawGa4PageRow, type RawGa4ReportRow, type RawGscKind, type RawGscRow, type RawPage } from "@/src/services/rawDataService";
 import { DataCoveragePanel } from "@/components/dashboard/DataCoveragePanel";
 
 type RawDataViewProps = {
@@ -25,6 +25,7 @@ const pageSize = 100;
 const exportBatchSize = 5000;
 const formatNumber = (value: number | null | undefined) => new Intl.NumberFormat("en-US").format(Number(value || 0));
 const formatPercent = (value: number | null | undefined) => `${(Number(value || 0) * 100).toFixed(2)}%`;
+const ga4PageKinds = new Set<RawGa4Kind>(["page", "page_date"]);
 
 function toIsoDate(value: Date | undefined, fallback: Date) {
   return format(value || fallback, "yyyy-MM-dd");
@@ -84,6 +85,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
   const [error, setError] = useState<string | null>(null);
   const [gscRows, setGscRows] = useState<RawGscRow[]>([]);
   const [ga4Rows, setGa4Rows] = useState<RawGa4PageRow[]>([]);
+  const [ga4ReportRows, setGa4ReportRows] = useState<RawGa4ReportRow[]>([]);
   const [crawlRows, setCrawlRows] = useState<CrawlPageRow[]>([]);
   const [crawlLinkRows, setCrawlLinkRows] = useState<CrawlLinkRow[]>([]);
   const [page, setPage] = useState<RawPage>({ limit: pageSize, offset: 0, total: 0 });
@@ -129,11 +131,31 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
       if (source === "ga4") {
         if (!ga4PropertyId) {
           setGa4Rows([]);
+          setGa4ReportRows([]);
           setPage({ limit: pageSize, offset: 0, total: 0 });
           return;
         }
-        const result = await fetchRawGa4PageRows({ endDate, kind: ga4Kind, limit: pageSize, offset, propertyId: ga4PropertyId, search, startDate });
-        setGa4Rows(result.rows);
+        if (ga4PageKinds.has(ga4Kind)) {
+          const result = await fetchRawGa4PageRows({ endDate, kind: ga4Kind, limit: pageSize, offset, propertyId: ga4PropertyId, search, startDate });
+          setGa4Rows(result.rows);
+          setGa4ReportRows([]);
+          setGscRows([]);
+          setCrawlRows([]);
+          setPage(result.page);
+          return;
+        }
+
+        const result = await fetchRawGa4ReportRows({
+          endDate,
+          kind: ga4Kind as Exclude<RawGa4Kind, "page" | "page_date">,
+          limit: pageSize,
+          offset,
+          propertyId: ga4PropertyId,
+          search,
+          startDate,
+        });
+        setGa4ReportRows(result.rows);
+        setGa4Rows([]);
         setGscRows([]);
         setCrawlRows([]);
         setPage(result.page);
@@ -196,15 +218,25 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
         exportCsv(`raw-gsc-${gscKind}-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
       } else if (source === "ga4") {
         if (!ga4PropertyId) return;
-        const rows = await fetchAllRows((nextOffset) => fetchRawGa4PageRows({
-          endDate,
-          kind: ga4Kind,
-          limit: exportBatchSize,
-          offset: nextOffset,
-          propertyId: ga4PropertyId,
-          search,
-          startDate,
-        }));
+        const rows = ga4PageKinds.has(ga4Kind)
+          ? await fetchAllRows((nextOffset) => fetchRawGa4PageRows({
+              endDate,
+              kind: ga4Kind,
+              limit: exportBatchSize,
+              offset: nextOffset,
+              propertyId: ga4PropertyId,
+              search,
+              startDate,
+            }))
+          : await fetchAllRows((nextOffset) => fetchRawGa4ReportRows({
+              endDate,
+              kind: ga4Kind as Exclude<RawGa4Kind, "page" | "page_date">,
+              limit: exportBatchSize,
+              offset: nextOffset,
+              propertyId: ga4PropertyId,
+              search,
+              startDate,
+            }));
         exportCsv(`raw-ga4-${ga4Kind}-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
       } else {
         if (crawlKind === "links") {
@@ -288,6 +320,14 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                   <SelectContent>
                     <SelectItem value="page">Pages report</SelectItem>
                     <SelectItem value="page_date">Daily page rows</SelectItem>
+                    <SelectItem value="event">Events</SelectItem>
+                    <SelectItem value="traffic">Source / medium</SelectItem>
+                    <SelectItem value="country">Countries</SelectItem>
+                    <SelectItem value="city">Cities</SelectItem>
+                    <SelectItem value="region">Regions</SelectItem>
+                    <SelectItem value="device">Devices</SelectItem>
+                    <SelectItem value="browser">Browsers</SelectItem>
+                    <SelectItem value="operatingSystem">Operating systems</SelectItem>
                   </SelectContent>
                 </Select>
               )}
@@ -395,12 +435,24 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                     <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading raw rows...</TableCell></TableRow>
                   ) : !ga4PropertyId ? (
                     <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">Assign a GA4 property to this workspace first.</TableCell></TableRow>
-                  ) : ga4Rows.length === 0 ? (
+                  ) : ga4PageKinds.has(ga4Kind) && ga4Rows.length === 0 ? (
                     <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw GA4 rows found.</TableCell></TableRow>
-                  ) : ga4Rows.map((row, index) => (
+                  ) : ga4PageKinds.has(ga4Kind) ? ga4Rows.map((row, index) => (
                     <TableRow key={`${row.date}-${row.pageKey}-${index}`}>
                       <TableCell>{row.date || "Total"}</TableCell>
                       <TableCell className="max-w-[580px] truncate" title={row.pagePath}>{row.pagePath}</TableCell>
+                      <TableCell className="text-right">{formatNumber(row.sessions)}</TableCell>
+                      <TableCell className="text-right">{formatNumber(row.totalUsers)}</TableCell>
+                      <TableCell className="text-right">{formatNumber(row.pageViews)}</TableCell>
+                      <TableCell className="text-right">{formatPercent(row.bounceRate)}</TableCell>
+                      <TableCell className="text-right">{formatNumber(row.eventCount)}</TableCell>
+                    </TableRow>
+                  )) : ga4ReportRows.length === 0 ? (
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw GA4 rows found.</TableCell></TableRow>
+                  ) : ga4ReportRows.map((row, index) => (
+                    <TableRow key={`${row.dimension}-${row.dimensionValue}-${index}`}>
+                      <TableCell>Total</TableCell>
+                      <TableCell className="max-w-[580px] truncate" title={row.dimensionValue}>{row.dimensionValue}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.sessions)}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.totalUsers)}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.pageViews)}</TableCell>

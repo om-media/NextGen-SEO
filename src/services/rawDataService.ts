@@ -7,7 +7,7 @@ export type RawPage = {
 };
 
 export type RawGscKind = "site" | "query" | "page" | "page_query";
-export type RawGa4Kind = "page" | "page_date";
+export type RawGa4Kind = "page" | "page_date" | "event" | "traffic" | "country" | "city" | "device" | "browser" | "operatingSystem" | "region";
 
 export type RawGscRow = {
   clicks: number;
@@ -30,6 +30,16 @@ export type RawGa4PageRow = {
   pageViews: number;
   sessions: number;
   siteUrl: string;
+  totalUsers: number;
+};
+
+export type RawGa4ReportRow = {
+  bounceRate: number;
+  dimension: string;
+  dimensionValue: string;
+  eventCount: number;
+  pageViews: number;
+  sessions: number;
   totalUsers: number;
 };
 
@@ -100,4 +110,28 @@ export async function fetchRawGa4PageRows(params: {
   }
 
   return data as RawResponse<RawGa4PageRow>;
+}
+
+export async function fetchRawGa4ReportRows(params: {
+  endDate: string;
+  kind: Exclude<RawGa4Kind, "page" | "page_date">;
+  limit?: number;
+  offset?: number;
+  propertyId: string;
+  search?: string;
+  startDate: string;
+}) {
+  const searchParams = new URLSearchParams({
+    kind: params.kind,
+    propertyId: params.propertyId,
+  });
+  appendCommonParams(searchParams, params);
+
+  const response = await authFetch(`/api/warehouse/raw/ga4-report?${searchParams.toString()}`);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.error || "Failed to load raw GA4 report rows");
+  }
+
+  return data as RawResponse<RawGa4ReportRow>;
 }

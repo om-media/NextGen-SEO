@@ -19,6 +19,16 @@ const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageView
 const GA4_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
 const GA4_ROW_LIMIT = 100_000;
 const GA4_MAX_PAGES_PER_DATASET = 100;
+const GA4_RAW_DIMENSIONS: Record<string, string> = {
+  browser: 'browser',
+  city: 'city',
+  country: 'country',
+  device: 'deviceCategory',
+  event: 'eventName',
+  operatingSystem: 'operatingSystem',
+  region: 'region',
+  traffic: 'sessionSourceMedium',
+};
 
 const normalizeGa4Date = (value: unknown) => {
   if (typeof value !== 'string') return null;
@@ -1222,6 +1232,73 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Failed to load raw GA4 rows' });
+    }
+  });
+
+  app.get('/api/warehouse/raw/ga4-report', authRequired, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const propertyId = asTrimmedString(req.query.propertyId);
+    const startDate = asTrimmedString(req.query.startDate);
+    const endDate = asTrimmedString(req.query.endDate);
+    const kind = asTrimmedString(req.query.kind) || '';
+    const search = asTrimmedString(req.query.search) || '';
+    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 100;
+    const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
+    const dimension = GA4_RAW_DIMENSIONS[kind];
+
+    if (!propertyId || !isIsoDateString(startDate) || !isIsoDateString(endDate) || !dimension) {
+      return res.status(400).json({ error: 'Missing or invalid raw GA4 report parameters' });
+    }
+
+    try {
+      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
+      if (!canUseRawExports(user?.tier)) {
+        return res.status(403).json({ error: 'Raw exports are available on paid plans.' });
+      }
+
+      const dimensionFilter = search
+        ? {
+            filter: {
+              fieldName: dimension,
+              stringFilter: {
+                matchType: 'CONTAINS',
+                value: search,
+              },
+            },
+          }
+        : undefined;
+
+      const report = await fetchLiveGa4Report(
+        ownerId,
+        propertyId,
+        startDate,
+        endDate,
+        [dimension],
+        ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+        dimensionFilter,
+        { limit, offset },
+      );
+
+      const rows = (Array.isArray(report?.rows) ? report.rows : []).map((row: any) => ({
+        bounceRate: toFiniteNumber(row.metricValues?.[3]?.value),
+        dimension,
+        dimensionValue: row.dimensionValues?.[0]?.value || '',
+        eventCount: toFiniteNumber(row.metricValues?.[4]?.value),
+        pageViews: toFiniteNumber(row.metricValues?.[2]?.value),
+        sessions: toFiniteNumber(row.metricValues?.[0]?.value),
+        totalUsers: toFiniteNumber(row.metricValues?.[1]?.value),
+      }));
+
+      return res.json({
+        page: {
+          limit,
+          offset,
+          total: toFiniteNumber(report?.rowCount ?? rows.length),
+        },
+        rows,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to load raw GA4 report rows' });
     }
   });
 }
