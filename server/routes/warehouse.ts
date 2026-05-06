@@ -324,12 +324,19 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
       const user = await db.get<any>('SELECT activatedSiteUrl FROM users WHERE id = ?', [ownerId]);
       const resolvedSiteUrl = isNonEmptyString(siteUrl)
         ? siteUrl
         : isNonEmptyString(readField(user, 'activatedSiteUrl'))
           ? readField(user, 'activatedSiteUrl')
           : propertyId;
+      if (isNonEmptyString(siteUrl) && !(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
 
       if (canServeGa4FromWarehouse(dimensions, metrics, dimensionFilter)) {
         await ensureGa4WarehouseRange(ownerId, propertyId, resolvedSiteUrl, startDate, endDate);
@@ -364,6 +371,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const { siteUrl, rows } = req.body;
     if (!isNonEmptyString(siteUrl) || !hasValidMetricRows(rows, 1)) return res.status(400).json({ error: 'Invalid payload' });
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const insertMany = db.transaction(async (metrics: any[]) => {
         for (const row of metrics) {
           const date = row.keys[0];
@@ -392,6 +403,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (!isNonEmptyString(siteUrl) || (!hasValidMetricRows(rows, 2) && datesToReplace.length === 0)) return res.status(400).json({ error: 'Invalid payload' });
     if (replaceDates !== undefined && datesToReplace.length !== replaceDates.length) return res.status(400).json({ error: 'Invalid replaceDates' });
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const insertMany = db.transaction(async (metrics: any[]) => {
         for (const date of datesToReplace) {
           await db.run('DELETE FROM gsc_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [ownerId, siteUrl, date]);
@@ -425,6 +440,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (!isNonEmptyString(siteUrl) || (!hasValidMetricRows(rows, 3) && datesToReplace.length === 0)) return res.status(400).json({ error: 'Invalid payload' });
     if (replaceDates !== undefined && datesToReplace.length !== replaceDates.length) return res.status(400).json({ error: 'Invalid replaceDates' });
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const insertMany = db.transaction(async (metrics: any[]) => {
         for (const date of datesToReplace) {
           await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [ownerId, siteUrl, date]);
@@ -464,6 +483,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (replaceDates !== undefined && datesToReplace.length !== replaceDates.length) return res.status(400).json({ error: 'Invalid replaceDates' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+      if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
       const insertMany = db.transaction(async (metrics: any[]) => {
         for (const date of datesToReplace) {
           await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date = ?', [ownerId, propertyId, date]);
@@ -509,10 +535,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
   app.get('/api/warehouse/status', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
-    const siteUrl = req.query.siteUrl;
-    if (siteUrl !== undefined && !isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Invalid siteUrl' });
+    const siteUrl = asTrimmedString(req.query.siteUrl);
+    if (req.query.siteUrl !== undefined && !siteUrl) return res.status(400).json({ error: 'Invalid siteUrl' });
     try {
       if (siteUrl) {
+        if (!(await canAccessSite(db, ownerId, siteUrl))) {
+          return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+        }
+
         const status = await db.get<Record<string, unknown>>('SELECT * FROM warehouse_sync_status WHERE ownerId = ? AND siteUrl = ?', [ownerId, siteUrl]);
         const metricStatus = await db.get<any>(`
           SELECT
@@ -547,7 +577,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         const keywords = await db.all<any>('SELECT DISTINCT siteUrl FROM tracked_keywords WHERE ownerId = ?', [ownerId]);
         keywords.forEach((s) => allSites.add(s.siteUrl));
 
-        const result = Array.from(allSites).map((url) => ({ siteUrl: url }));
+        const result = [];
+        for (const url of allSites) {
+          if (await canAccessSite(db, ownerId, url)) {
+            result.push({ siteUrl: url });
+          }
+        }
         res.json(result);
       }
     } catch (err: any) {
@@ -567,6 +602,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+      if (propertyId && !(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
       const expectedDates = eachIsoDate(startDate, endDate);
       const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, latestCrawl, warehouseJobRows] = await Promise.all([
         db.all<{ date: string; rowCount: number }>(`
@@ -680,6 +722,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (earliestSyncDate !== undefined && earliestSyncDate !== null && !isIsoDateString(earliestSyncDate)) return res.status(400).json({ error: 'Invalid earliestSyncDate' });
     if (status !== undefined && status !== null && !isNonEmptyString(status)) return res.status(400).json({ error: 'Invalid status' });
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       await db.run(`
         INSERT INTO warehouse_sync_status (ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, lastUpdated)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -713,6 +759,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+      if (isNonEmptyString(propertyId) && !(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
       const job = await queueWarehouseSyncJob(db, {
         ownerId,
         propertyId: isNonEmptyString(propertyId) ? propertyId : null,
@@ -733,6 +786,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+      if (isNonEmptyString(propertyId) && !(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
       const user = await db.get<any>('SELECT gscRefreshToken FROM users WHERE id = ?', [ownerId]);
       if (!user?.gscRefreshToken) {
         return res.status(409).json({ error: 'Connect Google data before queueing warehouse gap fills.' });
@@ -819,6 +879,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const user = await db.get<any>('SELECT gscRefreshToken FROM users WHERE id = ?', [ownerId]);
       if (!user?.gscRefreshToken) {
         return res.status(409).json({ error: 'Connect Google data before retrying failed warehouse jobs.' });
@@ -870,6 +934,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const jobs = await listWarehouseJobs(db, ownerId, siteUrl, limit);
       res.json({ jobs });
     } catch (err: any) {
@@ -891,6 +959,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const dims = (dimensions as string[]) || [];
       const hasDate = dims.includes('date');
       const hasQuery = dims.includes('query');

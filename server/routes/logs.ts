@@ -8,6 +8,7 @@ import { requireAuth } from '../auth.js';
 import { getBotType, NGINX_LOG_REGEX, parseLogDate } from '../logs.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
+import { canAccessSite } from '../accessControl.js';
 
 export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.Multer) {
   const authRequired = requireAuth(db);
@@ -20,6 +21,9 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
 
       if (!siteUrl || !file) {
         return res.status(400).json({ error: 'Missing siteUrl or file' });
+      }
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
 
       const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
@@ -101,6 +105,10 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       let count = 0;
       const insertManyWebhook = db.transaction(async (lines: string[]) => {
         for (const line of lines) {
@@ -143,6 +151,10 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
     if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const stats = await db.all(`
         SELECT 
           substr(timestamp, 1, 10) as date,
@@ -169,6 +181,10 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
     if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const errors = await db.all(`
         SELECT urlPath, statusCode, botType, COUNT(*) as count
         FROM server_logs
@@ -196,6 +212,10 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
     const end = endDate ? String(endDate) + 'T23:59:59' : '2099-12-31';
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const mostCrawled = await db.all(`
         SELECT urlPath, count(*) as count, botType
         FROM server_logs

@@ -6,6 +6,7 @@ import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptySt
 import { getPlanCrawlLimits, getPlanPropertyLimit } from '../../shared/plans.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseSyncJob } from '../services/warehouseJobs.js';
+import { canAccessSite } from '../accessControl.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
@@ -426,6 +427,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 
     try {
+      if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const user = await db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [req.authUser!.uid]);
       if (!user || !user.bingApiKey) {
         return res.status(400).json({ error: 'Bing API key not configured' });

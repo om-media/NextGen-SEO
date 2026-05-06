@@ -4,6 +4,7 @@ import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
+import { canAccessSite } from '../accessControl.js';
 
 type SyncJob = {
   current: number;
@@ -31,6 +32,10 @@ export function registerIndexingRoutes(
     if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
     if (isLive !== undefined && isLive !== 'true' && isLive !== 'false') return res.status(400).json({ error: 'Invalid isLive flag' });
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       let gscPages: any[] = [];
       const start = startDate ? String(startDate) : '2000-01-01';
       const end = endDate ? String(endDate) : '2099-12-31';
@@ -201,6 +206,10 @@ export function registerIndexingRoutes(
     if (!isNonEmptyString(siteUrl) || !isStringArray(urls)) return res.status(400).json({ error: 'Invalid payload' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       let added = 0;
       await db.transaction(async () => {
         for (let u of urls) {
@@ -234,6 +243,10 @@ export function registerIndexingRoutes(
     if (!isNonEmptyString(siteUrl) || !isNonEmptyString(inspectionUrl)) return res.status(400).json({ error: 'Missing required fields' });
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const data = await googleApiFetchJson(
         db,
         ownerId,
@@ -268,6 +281,9 @@ export function registerIndexingRoutes(
     const { siteUrl, uninspectedUrls } = req.body;
     if (!isNonEmptyString(siteUrl) || !isStringArray(uninspectedUrls)) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+    if (!(await canAccessSite(db, ownerId, siteUrl))) {
+      return res.status(403).json({ error: 'This site is not activated for your workspace.' });
     }
 
     const jobKey = getSyncJobKey(ownerId, siteUrl);
@@ -343,9 +359,12 @@ export function registerIndexingRoutes(
     })();
   });
 
-  app.get('/api/indexing/auto-sync/status', authRequired, (req: AuthedRequest, res) => {
+  app.get('/api/indexing/auto-sync/status', authRequired, async (req: AuthedRequest, res) => {
     const siteUrl = asTrimmedString(req.query.siteUrl);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
+      return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+    }
 
     const job = syncJobs.get(getSyncJobKey(req.authUser!.uid, siteUrl));
     if (!job) {

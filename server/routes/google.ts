@@ -12,6 +12,7 @@ import {
   storeGoogleRefreshToken,
   verifyGoogleOauthState,
 } from '../services/googleAuth.js';
+import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
 function sendOauthPopupResponse(res: Response, success: boolean, message: string) {
   const payload = JSON.stringify({
@@ -107,6 +108,10 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const data = await googleApiFetchJson(
         db,
         req.authUser!.uid,
@@ -160,6 +165,10 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      if (!(await canAccessGa4Property(db, req.authUser!.uid, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
       const data = await googleApiFetchJson(
         db,
         req.authUser!.uid,

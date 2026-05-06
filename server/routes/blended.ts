@@ -5,6 +5,7 @@ import type { AuthedRequest } from '../types.js';
 import { isIsoDateString, isNonEmptyString } from '../validation.js';
 import { canonicalPageKey } from '../reporting/url.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
+import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
 const toFiniteNumber = (value: unknown) => {
   const number = Number(value);
@@ -142,6 +143,13 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
     const normalizedSortDirection = sortDirection === 'asc' ? 'asc' : 'desc';
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+      if (isNonEmptyString(ga4PropertyId) && !(await canAccessGa4Property(db, ownerId, ga4PropertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
       const gscRows = await db.all<any>(`
         SELECT
           COALESCE(NULLIF(pageKey, ''), page) AS pageKey,

@@ -11,6 +11,7 @@ import {
   isStringArray,
   isStringRecord,
 } from '../validation.js';
+import { canAccessSite } from '../accessControl.js';
 
 export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
@@ -19,6 +20,10 @@ export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
     const siteUrl = asTrimmedString(req.query.siteUrl);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
     try {
+      if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const keywords = await db.all<any>('SELECT * FROM tracked_keywords WHERE ownerId = ? AND siteUrl = ? ORDER BY createdAt DESC', [req.authUser!.uid, siteUrl]);
 
       const enriched = await Promise.all(keywords.map(async (kw: any) => {
@@ -46,6 +51,10 @@ export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
     if (initialPositions !== undefined && !isStringRecord(initialPositions) && !isPlainObject(initialPositions)) return res.status(400).json({ error: 'Invalid initialPositions' });
 
     try {
+      if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const today = new Date().toISOString().split('T')[0];
 
       const insertMany = db.transaction(async (kws: string[]) => {
@@ -109,9 +118,12 @@ export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
 
   app.delete('/api/rank-tracking/keywords/:id', authRequired, async (req: AuthedRequest, res) => {
     try {
-      const keyword = await db.get<{ id: string }>('SELECT id FROM tracked_keywords WHERE id = ? AND ownerId = ?', [req.params.id, req.authUser!.uid]);
+      const keyword = await db.get<{ id: string; siteUrl: string }>('SELECT id, siteUrl FROM tracked_keywords WHERE id = ? AND ownerId = ?', [req.params.id, req.authUser!.uid]);
       if (!keyword) {
         return res.status(404).json({ error: 'Keyword not found' });
+      }
+      if (!(await canAccessSite(db, req.authUser!.uid, keyword.siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
       await db.run('DELETE FROM tracked_keywords WHERE id = ? AND ownerId = ?', [req.params.id, req.authUser!.uid]);
       await db.run('DELETE FROM keyword_rankings WHERE keywordId = ?', [req.params.id]);
@@ -125,9 +137,12 @@ export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
     const keywordId = asTrimmedString(req.query.keywordId);
     if (!keywordId) return res.status(400).json({ error: 'Missing keywordId' });
     try {
-      const keyword = await db.get<{ id: string }>('SELECT id FROM tracked_keywords WHERE id = ? AND ownerId = ?', [keywordId, req.authUser!.uid]);
+      const keyword = await db.get<{ id: string; siteUrl: string }>('SELECT id, siteUrl FROM tracked_keywords WHERE id = ? AND ownerId = ?', [keywordId, req.authUser!.uid]);
       if (!keyword) {
         return res.status(404).json({ error: 'Keyword not found' });
+      }
+      if (!(await canAccessSite(db, req.authUser!.uid, keyword.siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
       const history = await db.all('SELECT * FROM keyword_rankings WHERE keywordId = ? ORDER BY date ASC', [keywordId]);
       res.json(history);
@@ -143,6 +158,10 @@ export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
     if (gscHints !== undefined && !isPlainObject(gscHints)) return res.status(400).json({ error: 'Invalid gscHints' });
 
     try {
+      if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
       const result = await syncRankTrackingForSite(db, req.authUser!.uid, siteUrl, { force, gscHints });
       res.json(result);
     } catch (err: any) {
