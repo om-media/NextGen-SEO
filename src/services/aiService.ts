@@ -26,3 +26,21 @@ export async function generateGscInsights(
 
   return payload?.insights || '';
 }
+
+export async function generateContentAuditBrief(data: Record<string, unknown>[], siteUrl: string) {
+  const response = await authFetch('/api/ai/content-audit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      data: data.slice(0, 40),
+      siteUrl,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error || 'Failed to generate content audit brief');
+  }
+
+  return payload?.brief || '';
+}

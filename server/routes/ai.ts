@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
-import { generateGscInsights } from '../services/ai.js';
+import { generateContentAuditBrief, generateGscInsights } from '../services/ai.js';
 import { isNonEmptyString } from '../validation.js';
 
 type InsightRow = Record<string, unknown>;
@@ -36,6 +36,24 @@ export function registerAiRoutes(app: Express, db: AppDatabase) {
       res.json({ insights });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to generate AI insights' });
+    }
+  });
+
+  app.post('/api/ai/content-audit', authRequired, async (req, res) => {
+    const { data, siteUrl } = req.body ?? {};
+
+    if (!Array.isArray(data) || data.some((row) => !isInsightRow(row))) {
+      return res.status(400).json({ error: 'Invalid content audit payload' });
+    }
+    if (!isNonEmptyString(siteUrl)) {
+      return res.status(400).json({ error: 'Invalid siteUrl' });
+    }
+
+    try {
+      const brief = await generateContentAuditBrief(data, siteUrl);
+      res.json({ brief });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to generate content audit brief' });
     }
   });
 }

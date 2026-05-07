@@ -50,3 +50,30 @@ Keep it professional, insightful, and directly related to the provided data. Do 
 
   return response.text || '';
 }
+
+export async function generateContentAuditBrief(data: GscInsightRow[], siteUrl: string) {
+  const topData = data.slice(0, 40);
+  const prompt = `
+You are an expert SEO content strategist. I am providing a prioritized content audit for ${siteUrl}.
+Each row includes crawl quality signals and, when available, Google Search Console page performance.
+
+Audit rows:
+${JSON.stringify(topData, null, 2)}
+
+Write a concise markdown brief for a content team. Include:
+1. **Highest priority fixes:** pages or patterns to address first.
+2. **Content opportunities:** pages with search demand or engagement potential.
+3. **Technical blockers:** indexability, metadata, canonical, word count, or internal-link issues that limit performance.
+4. **Next sprint plan:** 5 specific actions.
+
+Avoid generic advice. Tie every recommendation to the provided rows.
+  `;
+
+  const ai = getAiClient();
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: prompt,
+  });
+
+  return response.text || '';
+}

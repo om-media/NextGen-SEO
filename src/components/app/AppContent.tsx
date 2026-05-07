@@ -18,6 +18,7 @@ import { RawDataView } from "@/components/dashboard/RawDataView";
 import { ReconciliationView } from "@/components/dashboard/ReconciliationView";
 import { WorkspaceSitesView } from "@/components/dashboard/WorkspaceSitesView";
 import { DataCoveragePanel } from "@/components/dashboard/DataCoveragePanel";
+import { AIContentAuditorView } from "@/components/dashboard/AIContentAuditorView";
 import { RankTrackerView } from "../dashboard/RankTrackerView";
 import type { DateRange } from "react-day-picker";
 import type { Annotation } from "../../services/annotationsService";
@@ -357,21 +358,9 @@ export function AppContent({
       )}
 
       {activeMenu === "AI Content Auditor" && (
-        <div className="rounded-2xl border border-border bg-card p-8 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-          <div className="max-w-2xl">
-            <p className="text-xl font-semibold tracking-[-0.01em] text-foreground">AI Content Auditor is being prepared</p>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              This section now has the same workspace shell, but the audit workflow still needs to be wired to real content data before we expose controls here.
-            </p>
-          </div>
-          <div className="mt-6 grid gap-3 md:grid-cols-3">
-            {["Content inventory", "Quality signals", "Actionable recommendations"].map((label) => (
-              <div key={label} className="rounded-2xl border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground">
-                {label}
-              </div>
-            ))}
-          </div>
-        </div>
+        rawWorkspaceSite && !apiError && isUnlockedSite(rawWorkspaceSite) ? (
+          <AIContentAuditorView dateRange={dateRange} siteUrl={rawWorkspaceSite} useLiveData={useLiveData} />
+        ) : null
       )}
     </>
   );
