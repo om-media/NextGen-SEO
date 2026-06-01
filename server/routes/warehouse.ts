@@ -49,9 +49,13 @@ const eachIsoDate = (startDate: string, endDate: string) => {
   return dates;
 };
 
-const coverageFromRows = (expectedDates: string[], rows: Array<{ date?: string | null; rowCount?: number | null }>) => {
+const coverageFromRows = (
+  expectedDates: string[],
+  rows: Array<{ date?: string | null; rowCount?: number | null }>,
+  completedDates = new Set<string>(),
+) => {
   const countByDate = new Map(rows.map((row) => [String(row.date || ''), toCoverageNumber(row.rowCount)]));
-  const coveredDates = expectedDates.filter((date) => (countByDate.get(date) || 0) > 0);
+  const coveredDates = expectedDates.filter((date) => (countByDate.get(date) || 0) > 0 || completedDates.has(date));
   const missingDates = expectedDates.filter((date) => !coveredDates.includes(date));
   const totalRows = rows.reduce((sum, row) => sum + toCoverageNumber(row.rowCount), 0);
 
@@ -523,7 +527,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       const expectedDates = eachIsoDate(startDate, endDate);
-      const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, latestCrawl, warehouseJobRows, bingStatus, bingUser] = await Promise.all([
+      const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, latestCrawl, warehouseJobRows, completedJobRows, bingStatus, bingUser] = await Promise.all([
         db.all<{ date: string; rowCount: number }>(`
           SELECT date, COUNT(*) AS rowCount
           FROM gsc_site_metrics
@@ -567,9 +571,24 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND targetDate <= ?
           GROUP BY status
         `, [ownerId, siteUrl, startDate, endDate]),
+        db.all<{ targetDate: string; propertyId: string | null }>(`
+          SELECT targetDate, propertyId
+          FROM warehouse_jobs
+          WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND targetDate <= ? AND status = 'completed'
+          GROUP BY targetDate, propertyId
+        `, [ownerId, siteUrl, startDate, endDate]),
         getBingCacheStatus(db, ownerId, siteUrl),
         db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [ownerId]),
       ]);
+      const completedGscDates = new Set(completedJobRows.map((row) => row.targetDate).filter(Boolean));
+      const completedGa4Dates = new Set(
+        propertyId
+          ? completedJobRows
+            .filter((row) => row.propertyId === propertyId)
+            .map((row) => row.targetDate)
+            .filter(Boolean)
+          : [],
+      );
 
       const crawlSummary = latestCrawl
         ? await db.get<any>(`
@@ -606,13 +625,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         },
         ga4: {
           enabled: Boolean(propertyId),
-          pages: coverageFromRows(expectedDates, ga4PageRows),
+          pages: coverageFromRows(expectedDates, ga4PageRows, completedGa4Dates),
           propertyId: propertyId || null,
         },
         gsc: {
-          pageQuery: coverageFromRows(expectedDates, gscPageQueryRows),
-          query: coverageFromRows(expectedDates, gscQueryRows),
-          site: coverageFromRows(expectedDates, gscSiteRows),
+          pageQuery: coverageFromRows(expectedDates, gscPageQueryRows, completedGscDates),
+          query: coverageFromRows(expectedDates, gscQueryRows, completedGscDates),
+          site: coverageFromRows(expectedDates, gscSiteRows, completedGscDates),
         },
         bing: {
           enabled: Boolean(bingUser?.bingApiKey),
@@ -720,6 +739,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       const expectedDates = eachIsoDate(startDate, endDate);
+      const requestedPropertyId = isNonEmptyString(propertyId) ? propertyId : '';
       const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), 120) : 60;
       const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, jobRows] = await Promise.all([
         db.all<{ date: string }>(`
@@ -748,27 +768,38 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             GROUP BY date
           `, [ownerId, propertyId, startDate, endDate])
           : Promise.resolve([]),
-        db.all<{ targetDate: string }>(`
-          SELECT targetDate
+        db.all<{ targetDate: string; propertyId: string | null }>(`
+          SELECT targetDate, propertyId
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND targetDate <= ?
             AND status IN ('queued', 'retrying', 'running', 'completed')
-          GROUP BY targetDate
+          GROUP BY targetDate, propertyId
         `, [ownerId, siteUrl, startDate, endDate]),
       ]);
       const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
       const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
       const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
       const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
-      const queuedOrSyncedDates = new Set(jobRows.map((row) => row.targetDate));
+      const jobsByDate = new Map<string, Array<{ propertyId: string | null }>>();
+      for (const row of jobRows) {
+        if (!jobsByDate.has(row.targetDate)) {
+          jobsByDate.set(row.targetDate, []);
+        }
+        jobsByDate.get(row.targetDate)?.push({ propertyId: row.propertyId || null });
+      }
+      const hasAnyWarehouseJob = (date: string) => Boolean(jobsByDate.get(date)?.length);
+      const hasMatchingPropertyJob = (date: string) => Boolean(
+        requestedPropertyId
+        && jobsByDate.get(date)?.some((row) => row.propertyId === requestedPropertyId),
+      );
+      const needsGscSync = (date: string) => !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date);
+      const needsGa4Sync = (date: string) => Boolean(requestedPropertyId && !ga4PageDates.has(date));
       const needsSync = (date: string) => (
-        !gscSiteDates.has(date)
-        || !gscQueryDates.has(date)
-        || !gscPageQueryDates.has(date)
-        || (isNonEmptyString(propertyId) && !ga4PageDates.has(date))
+        (needsGscSync(date) && !hasAnyWarehouseJob(date))
+        || (needsGa4Sync(date) && !hasMatchingPropertyJob(date))
       );
       const datesToQueue = expectedDates
-        .filter((date) => needsSync(date) && !queuedOrSyncedDates.has(date))
+        .filter(needsSync)
         .slice(0, queueLimit);
 
       const jobs = [];
@@ -785,7 +816,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       return res.json({
         jobs,
         queued: jobs.length,
-        remainingMissingDates: Math.max(expectedDates.filter((date) => needsSync(date) && !queuedOrSyncedDates.has(date)).length - jobs.length, 0),
+        remainingMissingDates: Math.max(expectedDates.filter(needsSync).length - jobs.length, 0),
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Failed to queue missing warehouse jobs' });

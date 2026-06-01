@@ -16,6 +16,8 @@ type AppToolbarProps = {
   dataSource: DataSource;
   dateRange: DateRange;
   firstName?: string;
+  ga4PropertyId?: string | null;
+  gscSyncVersion?: number;
   isCompareMode: boolean;
   onCompareFromDateChange: (date: Date | undefined) => void;
   onCompareToDateChange: (date: Date | undefined) => void;
@@ -34,6 +36,8 @@ export function AppToolbar({
   dataSource,
   dateRange,
   firstName,
+  ga4PropertyId,
+  gscSyncVersion = 0,
   isCompareMode,
   onCompareFromDateChange,
   onCompareToDateChange,
@@ -59,6 +63,7 @@ export function AppToolbar({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             endDate: range.endDate,
+            propertyId: ga4PropertyId || undefined,
             maxDates: 60,
             siteUrl: currentSiteUrl,
             startDate: range.startDate,
@@ -100,7 +105,7 @@ export function AppToolbar({
         <div className="flex w-full flex-wrap items-center gap-2 xl:justify-end">
           {(dataSource === "gsc" || dataSource === "blended") && (
             <>
-              <GscSyncStatusBadge dateRange={dateRange} refreshKey={syncRefreshKey} siteUrl={currentSiteUrl} />
+              <GscSyncStatusBadge dateRange={dateRange} refreshKey={syncRefreshKey + gscSyncVersion} siteUrl={currentSiteUrl} />
               <button
                 className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
                 disabled={syncActionState === "queueing"}
@@ -169,7 +174,9 @@ function getIsoDateRange(dateRange: DateRange) {
 
 function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: DateRange; refreshKey: number; siteUrl: string }) {
   const [coverage, setCoverage] = useState<{
+    activeJobCount: number;
     coveredDateCount: number;
+    errorJobCount: number;
     expectedDateCount: number;
     lastCoveredDate: string | null;
     missingDateCount: number;
@@ -200,15 +207,22 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
       .then((status) => {
         if (!cancelled) {
           if (range && status?.gsc?.site) {
+            const activeJobCount = Number(status?.warehouseJobs?.queued || 0)
+              + Number(status?.warehouseJobs?.running || 0)
+              + Number(status?.warehouseJobs?.retrying || 0);
             setCoverage({
+              activeJobCount,
               coveredDateCount: status.gsc.site.coveredDateCount || 0,
+              errorJobCount: Number(status?.warehouseJobs?.error || 0),
               expectedDateCount: status.gsc.site.expectedDateCount || 0,
               lastCoveredDate: status.gsc.site.lastCoveredDate || null,
               missingDateCount: status.gsc.site.missingDateCount || 0,
             });
           } else {
             setCoverage({
+              activeJobCount: 0,
               coveredDateCount: status.lastMetricDate ? 1 : 0,
+              errorJobCount: 0,
               expectedDateCount: status.lastMetricDate ? 1 : 0,
               lastCoveredDate: status.lastMetricDate || null,
               missingDateCount: 0,
@@ -233,14 +247,21 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
   }, [dateRange, refreshKey, siteUrl]);
 
   const lastMetricDate = coverage?.lastCoveredDate || null;
+  const activeJobCount = coverage?.activeJobCount || 0;
+  const errorJobCount = coverage?.errorJobCount || 0;
   const isPartial = Boolean(coverage && coverage.expectedDateCount > 0 && coverage.coveredDateCount < coverage.expectedDateCount);
-  const label = loading
-    ? "Checking coverage"
-    : lastMetricDate
-      ? isPartial
-        ? `Partial: ${coverage?.coveredDateCount}/${coverage?.expectedDateCount} days through ${format(parseISO(lastMetricDate), "MMM d")}`
-        : `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`
-      : "Preparing data";
+  let label = "Preparing data";
+  if (loading) {
+    label = "Checking coverage";
+  } else if (activeJobCount > 0) {
+    label = `Syncing ${activeJobCount} day${activeJobCount === 1 ? "" : "s"}`;
+  } else if (errorJobCount > 0) {
+    label = `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`;
+  } else if (lastMetricDate) {
+    label = isPartial
+      ? `Partial: ${coverage?.coveredDateCount}/${coverage?.expectedDateCount} days through ${format(parseISO(lastMetricDate), "MMM d")}`
+      : `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`;
+  }
 
   return (
     <div className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-muted-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)]">

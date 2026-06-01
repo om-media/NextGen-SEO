@@ -1,16 +1,22 @@
 import { useEffect, useRef } from "react";
 import { addDays, format, subDays } from "date-fns";
 import { useAuth } from "@/src/contexts/AuthContext";
-import { queueMissingCoverageSync } from "@/src/services/dataCoverageService";
+import { fetchDataCoverage, queueMissingCoverageSync, type DataCoverageResponse } from "@/src/services/dataCoverageService";
 import type { DateRange } from "react-day-picker";
 
 const GSC_REPORTING_LAG_DAYS = 2;
 const MAX_BACKGROUND_AUTO_QUEUE_DAYS = 30;
 const HISTORICAL_BACKFILL_DAYS = 480;
 const HISTORICAL_QUEUE_CHUNK_DAYS = 120;
+const VISIBLE_SYNC_POLL_MS = 5_000;
+const VISIBLE_SYNC_MAX_POLLS = 180;
 
 function toIsoDate(date: Date) {
   return format(date, "yyyy-MM-dd");
+}
+
+function getActiveWarehouseJobCount(coverage: DataCoverageResponse) {
+  return coverage.warehouseJobs.queued + coverage.warehouseJobs.running + coverage.warehouseJobs.retrying;
 }
 
 export function GscWarehouseAutoSync({
@@ -58,6 +64,27 @@ export function GscWarehouseAutoSync({
 
         if (!cancelled) {
           onSyncComplete?.();
+        }
+
+        for (let pollCount = 0; pollCount < VISIBLE_SYNC_MAX_POLLS && !cancelled; pollCount += 1) {
+          const coverage = await fetchDataCoverage({
+            endDate: requestedEndStr,
+            propertyId,
+            siteUrl,
+            startDate: requestedStartStr,
+          });
+
+          if (cancelled) {
+            return;
+          }
+
+          onSyncComplete?.();
+
+          if (getActiveWarehouseJobCount(coverage) === 0) {
+            break;
+          }
+
+          await new Promise((resolve) => window.setTimeout(resolve, VISIBLE_SYNC_POLL_MS));
         }
 
         const historicalKey = `${siteUrl}:${propertyId || "gsc"}:historical`;

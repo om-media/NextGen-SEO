@@ -3,7 +3,7 @@ import { AppSidebar } from "@/components/layout/AppSidebar"
 import { Button } from "@/components/ui/button"
 import { AuthProvider, useAuth } from "./contexts/AuthContext"
 import { BarChart3 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { GscApiService, GscSite } from "./services/gscService"
 import { subDays, differenceInDays } from "date-fns"
 import { DateRange } from "react-day-picker"
@@ -67,6 +67,7 @@ function MainApp() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [dataSource, setDataSource] = useState<DataSource>('gsc')
   const [gscSyncVersion, setGscSyncVersion] = useState(0)
+  const bumpGscSyncVersion = useCallback(() => setGscSyncVersion((version) => version + 1), [])
   
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>({
@@ -837,7 +838,7 @@ function MainApp() {
   return (
     <SidebarProvider>
       <GlobalSyncPoller siteUrl={selectedSite} />
-      <GscWarehouseAutoSync dateRange={dateRange} onSyncComplete={() => setGscSyncVersion((version) => version + 1)} siteUrl={selectedSite} />
+      <GscWarehouseAutoSync dateRange={dateRange} onSyncComplete={bumpGscSyncVersion} siteUrl={selectedSite} />
       <CrawlAutoStarter siteUrl={selectedSite} />
       <div className="app-shell-bg flex min-h-screen w-full">
         <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />
@@ -871,11 +872,13 @@ function MainApp() {
                 dataSource={dataSource}
                 dateRange={dateRange}
                 firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
+                ga4PropertyId={selectedGa4Property || userProfile?.activatedGa4PropertyId || null}
+                gscSyncVersion={gscSyncVersion}
                 isCompareMode={isCompareMode}
                 onCompareFromDateChange={handleCompareFromDateChange}
                 onCompareToDateChange={handleCompareToDateChange}
                 onFromDateChange={handleFromDateChange}
-                onGscSyncComplete={() => setGscSyncVersion((version) => version + 1)}
+                onGscSyncComplete={bumpGscSyncVersion}
                 onOpenRawData={() => setActiveMenu("Raw Data")}
                 onToDateChange={handleToDateChange}
                 rawDataAvailable={canUseRawExports(userProfile?.tier)}
@@ -905,7 +908,7 @@ function MainApp() {
 
               {(activeMenu === "Settings" || activeMenu === "AI Content Auditor" || !( !userProfile?.googleConnected && (((dataSource === 'gsc' || dataSource === 'blended') && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) )) && (
                 <AppContent
-                  key={`${dataSource}-${selectedSite}-${selectedGa4Property}`}
+                  key={`${dataSource}-${selectedSite}-${selectedGa4Property}-${gscSyncVersion}`}
                   activeMenu={activeMenu}
                   annotations={annotations}
                   apiError={apiError}
