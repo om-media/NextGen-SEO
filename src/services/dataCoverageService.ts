@@ -34,8 +34,12 @@ export type DataCoverageResponse = {
   };
   dateRange: {
     endDate: string;
+    latestAvailableDate?: string;
+    requestedEndDate?: string;
     startDate: string;
     totalDays: number;
+    unavailableDateCount?: number;
+    unavailableDates?: string[];
   };
   ga4: {
     enabled: boolean;
@@ -103,8 +107,10 @@ export async function queueMissingCoverageSync(params: {
 
   return data as {
     jobs: Array<{ id: string; status: string; targetDate: string }>;
+    latestAvailableDate?: string;
     queued: number;
     remainingMissingDates: number;
+    skippedUnavailableDates?: number;
   };
 }
 

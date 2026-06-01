@@ -112,7 +112,7 @@ export function AppToolbar({
                 className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
                 disabled={syncActionState === "queueing"}
                 onClick={handleRefreshResults}
-                title="Queue missing GSC and GA4 warehouse data for the selected date range."
+                title="Queue missing GSC and GA4 warehouse data for reportable days in the selected date range."
                 type="button"
               >
                 <RefreshCw className={`h-4 w-4 ${syncActionState === "queueing" ? "animate-spin" : ""}`} />
@@ -195,8 +195,10 @@ function GscSyncStatusBadge({
     expectedDateCount: number;
     hasGa4Gaps: boolean;
     hasGscGaps: boolean;
+    latestAvailableDate: string | null;
     lastCoveredDate: string | null;
     missingDateCount: number;
+    unavailableDateCount: number;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [pollKey, setPollKey] = useState(0);
@@ -249,8 +251,10 @@ function GscSyncStatusBadge({
               expectedDateCount: status.gsc.site.expectedDateCount || 0,
               hasGa4Gaps: ga4MissingDateCount > 0,
               hasGscGaps: gscMissingDateCount > 0,
+              latestAvailableDate: status?.dateRange?.latestAvailableDate || null,
               lastCoveredDate: status.gsc.site.lastCoveredDate || null,
               missingDateCount: status.gsc.site.missingDateCount || 0,
+              unavailableDateCount: Number(status?.dateRange?.unavailableDateCount || 0),
             });
           } else {
             setCoverage({
@@ -260,8 +264,10 @@ function GscSyncStatusBadge({
               expectedDateCount: status.lastMetricDate ? 1 : 0,
               hasGa4Gaps: false,
               hasGscGaps: false,
+              latestAvailableDate: null,
               lastCoveredDate: status.lastMetricDate || null,
               missingDateCount: 0,
+              unavailableDateCount: 0,
             });
           }
 
@@ -291,8 +297,10 @@ function GscSyncStatusBadge({
   }, [dateRange, ga4PropertyId, pollKey, refreshKey, siteUrl]);
 
   const lastMetricDate = coverage?.lastCoveredDate || null;
+  const latestAvailableDate = coverage?.latestAvailableDate || lastMetricDate;
   const activeJobCount = coverage?.activeJobCount || 0;
   const errorJobCount = coverage?.errorJobCount || 0;
+  const unavailableDateCount = coverage?.unavailableDateCount || 0;
   const isPartial = Boolean(coverage && coverage.expectedDateCount > 0 && coverage.coveredDateCount < coverage.expectedDateCount);
   const backfillSource = coverage?.hasGscGaps && coverage.hasGa4Gaps
     ? "GSC/GA4"
@@ -311,13 +319,20 @@ function GscSyncStatusBadge({
   } else if (errorJobCount > 0) {
     label = `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`;
     statusTitle = "Some warehouse sync jobs for this selected date range need attention.";
+  } else if (!lastMetricDate && latestAvailableDate && unavailableDateCount > 0) {
+    label = `Available through ${format(parseISO(latestAvailableDate), "MMM d")}`;
+    statusTitle = `Google Search Console data is delayed by about 2 days. ${unavailableDateCount} recent selected day${unavailableDateCount === 1 ? "" : "s"} will appear when Google publishes them.`;
   } else if (lastMetricDate) {
     label = isPartial
       ? `Partial: ${coverage?.coveredDateCount}/${coverage?.expectedDateCount} days through ${format(parseISO(lastMetricDate), "MMM d")}`
-      : `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`;
+      : unavailableDateCount > 0 && latestAvailableDate
+        ? `Current through ${format(parseISO(latestAvailableDate), "MMM d")}`
+        : `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`;
     statusTitle = isPartial
       ? "Stored warehouse data does not cover every day in the selected range yet."
-      : "Stored warehouse data covers the selected date range.";
+      : unavailableDateCount > 0
+        ? `Google Search Console data is delayed by about 2 days. ${unavailableDateCount} recent selected day${unavailableDateCount === 1 ? "" : "s"} will appear when Google publishes them.`
+        : "Stored warehouse data covers the selected date range.";
   }
 
   return (

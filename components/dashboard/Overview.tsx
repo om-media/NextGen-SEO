@@ -18,6 +18,21 @@ const formatCompactNumber = (number: number) => {
   }).format(number);
 }
 
+const getLatestStableGscDate = () => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - 2);
+  return date;
+};
+
+const getEffectiveGscDateRange = (dateRange?: DateRange) => {
+  if (!dateRange?.from || !dateRange.to) return null;
+  const latestStableDate = getLatestStableGscDate();
+  const endDate = dateRange.to > latestStableDate ? latestStableDate : dateRange.to;
+  if (dateRange.from > endDate) return null;
+  return { from: dateRange.from, to: endDate };
+};
+
 const CustomYAxisTick = (props: any) => {
   const { x, y, payload, fill, formatter, textAnchor } = props;
   const text = formatter ? formatter(payload.value) : payload.value;
@@ -183,12 +198,20 @@ export function Overview({
   }
 
   useEffect(() => {
-    if (siteUrl && dateRange?.from && dateRange?.to) {
+    const effectiveDateRange = getEffectiveGscDateRange(dateRange);
+    if (!siteUrl || !effectiveDateRange) {
+      setRawData([]);
+      setCompareRawData([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
       setLoading(true)
       const gscService = new GscApiService(null, userProfile?.tier || 'free')
       
-      const endDate = format(dateRange.to, 'yyyy-MM-dd')
-      const startDate = format(dateRange.from, 'yyyy-MM-dd')
+      const endDate = format(effectiveDateRange.to, 'yyyy-MM-dd')
+      const startDate = format(effectiveDateRange.from, 'yyyy-MM-dd')
 
       const filterGroups = filterDimension && filterValue ? [{
         filters: [{ dimension: filterDimension, expression: filterValue, operator: 'equals' }]
@@ -337,17 +360,18 @@ export function Overview({
       const primaryPromise = fetchPreferredMetricRows(startDate, endDate)
       const primaryQueryCountPromise = fetchPreferredQueryRows(startDate, endDate)
 
+      const effectiveCompareDateRange = getEffectiveGscDateRange(compareDateRange);
       const comparePromise =
-        isCompareMode && compareDateRange?.from && compareDateRange?.to
+        isCompareMode && effectiveCompareDateRange
           ? (() => {
-              const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
-              const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
+              const compareEndDate = format(effectiveCompareDateRange.to, 'yyyy-MM-dd')
+              const compareStartDate = format(effectiveCompareDateRange.from, 'yyyy-MM-dd')
               return fetchPreferredMetricRows(compareStartDate, compareEndDate)
             })()
           : null
       const compareQueryCountPromise =
-        hasQueryMetric && isCompareMode && compareDateRange?.from && compareDateRange?.to
-          ? fetchPreferredQueryRows(format(compareDateRange.from, 'yyyy-MM-dd'), format(compareDateRange.to, 'yyyy-MM-dd'))
+        hasQueryMetric && isCompareMode && effectiveCompareDateRange
+          ? fetchPreferredQueryRows(format(effectiveCompareDateRange.from, 'yyyy-MM-dd'), format(effectiveCompareDateRange.to, 'yyyy-MM-dd'))
           : Promise.resolve([])
 
       primaryPromise
@@ -393,11 +417,11 @@ export function Overview({
         .finally(() => {
           setLoading(false)
         })
-    }
   }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected, userProfile?.tier, useLiveData])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
-    if (!rawData.length || !dateRange?.from || !dateRange?.to) {
+    const effectiveDateRange = getEffectiveGscDateRange(dateRange);
+    if (!rawData.length || !effectiveDateRange) {
       return { chartData: [], summary: { clicks: 0, impressions: 0, ctr: 0, queries: 0, position: 0 }, compareSummary: null };
     }
 
@@ -423,8 +447,8 @@ export function Overview({
     let compareSumPositionTotal = 0;
 
     // Use exact daily boundaries from the date picker to avoid timezone shifting
-    const startPrimaryExact = parseISO(format(dateRange.from, 'yyyy-MM-dd'));
-    const endPrimaryExact = parseISO(format(dateRange.to, 'yyyy-MM-dd'));
+    const startPrimaryExact = parseISO(format(effectiveDateRange.from, 'yyyy-MM-dd'));
+    const endPrimaryExact = parseISO(format(effectiveDateRange.to, 'yyyy-MM-dd'));
     
     // Generate all exact days in the range to ensure continuous chart
     // We use eachDayOfInterval from date-fns since it creates exact day bumps
@@ -704,8 +728,9 @@ export function Overview({
     );
   };
 
-  const selectedDayCount = dateRange?.from && dateRange?.to
-    ? Math.max(1, differenceInCalendarDays(dateRange.to, dateRange.from) + 1)
+  const effectiveSummaryDateRange = getEffectiveGscDateRange(dateRange);
+  const selectedDayCount = effectiveSummaryDateRange
+    ? Math.max(1, differenceInCalendarDays(effectiveSummaryDateRange.to, effectiveSummaryDateRange.from) + 1)
     : Math.max(1, chartData.length);
   const formatRate = (value: number) => `${formatCompactNumber(value)}/day`;
 
