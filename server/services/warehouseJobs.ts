@@ -38,6 +38,7 @@ const GSC_ROW_LIMIT = 25_000;
 const GSC_MAX_PAGES_PER_DATASET = 200;
 const GA4_ROW_LIMIT = 100_000;
 const GA4_MAX_PAGES_PER_DATASET = 100;
+const LLM_SOURCE_REGEXP = 'chatgpt|openai|claude|anthropic|perplexity|copilot|bing.com/chat';
 const nowIso = () => new Date().toISOString();
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const addDays = (value: Date, days: number) => {
@@ -64,6 +65,15 @@ function normalizeGa4Date(value: unknown) {
   const match = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
   if (match) return `${match[1]}-${match[2]}-${match[3]}`;
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+}
+
+function classifyLlmSource(source: unknown) {
+  const value = String(source || '').toLowerCase();
+  if (value.includes('chatgpt') || value.includes('openai')) return 'ChatGPT';
+  if (value.includes('claude') || value.includes('anthropic')) return 'Claude';
+  if (value.includes('perplexity')) return 'Perplexity';
+  if (value.includes('copilot') || value.includes('bing.com/chat')) return 'Copilot';
+  return String(source || 'Other');
 }
 
 async function fetchGscRows(db: AppDatabase, ownerId: string, siteUrl: string, date: string, dimensions: string[]) {
@@ -182,6 +192,79 @@ async function syncGa4Date(db: AppDatabase, job: WarehouseJob) {
   return rows.length;
 }
 
+async function syncGa4LlmDate(db: AppDatabase, job: WarehouseJob) {
+  if (!job.propertyId) return 0;
+  const rows = [];
+  let offset = 0;
+
+  for (let page = 0; page < GA4_MAX_PAGES_PER_DATASET; page += 1) {
+    const data = await googleApiFetchJson(
+      db,
+      job.ownerId,
+      `https://analyticsdata.googleapis.com/v1beta/${job.propertyId}:runReport`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          dateRanges: [{ startDate: job.targetDate, endDate: job.targetDate }],
+          dimensionFilter: {
+            filter: {
+              fieldName: 'sessionSource',
+              stringFilter: {
+                matchType: 'PARTIAL_REGEXP',
+                value: LLM_SOURCE_REGEXP,
+              },
+            },
+          },
+          dimensions: [{ name: 'date' }, { name: 'landingPagePlusQueryString' }, { name: 'sessionSource' }],
+          limit: GA4_ROW_LIMIT,
+          metrics: [{ name: 'sessions' }, { name: 'engagedSessions' }, { name: 'keyEvents' }, { name: 'averageSessionDuration' }],
+          offset,
+        }),
+      },
+    );
+    const batch = Array.isArray(data?.rows) ? data.rows : [];
+    rows.push(...batch);
+    if (batch.length < GA4_ROW_LIMIT) {
+      break;
+    }
+    offset += GA4_ROW_LIMIT;
+  }
+
+  await db.run('DELETE FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ? AND date = ?', [job.ownerId, job.propertyId, job.targetDate]);
+  for (const row of rows) {
+    const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || job.targetDate;
+    const pagePath = row.dimensionValues?.[1]?.value || '/';
+    const source = row.dimensionValues?.[2]?.value || '(not set)';
+    await db.run(
+      `INSERT INTO ga4_llm_referral_metrics (ownerId, propertyId, siteUrl, date, source, sourceClass, pagePath, pageKey, sessions, engagedSessions, keyEvents, averageSessionDuration)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(ownerId, propertyId, date, source, pageKey) DO UPDATE SET
+         siteUrl=excluded.siteUrl,
+         sourceClass=excluded.sourceClass,
+         pagePath=excluded.pagePath,
+         sessions=excluded.sessions,
+         engagedSessions=excluded.engagedSessions,
+         keyEvents=excluded.keyEvents,
+         averageSessionDuration=excluded.averageSessionDuration`,
+      [
+        job.ownerId,
+        job.propertyId,
+        job.siteUrl,
+        date,
+        source,
+        classifyLlmSource(source),
+        pagePath,
+        canonicalPageKey(pagePath, job.siteUrl),
+        toNumber(row.metricValues?.[0]?.value),
+        toNumber(row.metricValues?.[1]?.value),
+        toNumber(row.metricValues?.[2]?.value),
+        toNumber(row.metricValues?.[3]?.value),
+      ],
+    );
+  }
+  return rows.length;
+}
+
 async function updateJob(db: AppDatabase, id: string, fields: Partial<WarehouseJob>) {
   const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
   if (entries.length === 0) return;
@@ -189,7 +272,17 @@ async function updateJob(db: AppDatabase, id: string, fields: Partial<WarehouseJ
 }
 
 async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
-  const rowsSynced = (await syncGscDate(db, job)) + (await syncGa4Date(db, job));
+  let rowsSynced = 0;
+  if (job.jobType === 'ga4-llm-sync') {
+    rowsSynced = await syncGa4LlmDate(db, job);
+  } else {
+    rowsSynced = (await syncGscDate(db, job)) + (await syncGa4Date(db, job));
+    try {
+      rowsSynced += await syncGa4LlmDate(db, job);
+    } catch (error) {
+      console.warn('[warehouse] Optional GA4 LLM enrichment failed during daily sync:', error);
+    }
+  }
   await db.run(
     `INSERT INTO warehouse_sync_status (ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, lastUpdated)
      VALUES (?, ?, ?, ?, ?, ?)
@@ -231,15 +324,16 @@ async function failOrRetry(db: AppDatabase, job: WarehouseJob, error: unknown) {
   });
 }
 
-export async function queueWarehouseSyncJob(db: AppDatabase, input: { ownerId: string; propertyId?: string | null; siteUrl: string; targetDate: string }) {
+export async function queueWarehouseSyncJob(db: AppDatabase, input: { jobType?: string; ownerId: string; propertyId?: string | null; siteUrl: string; targetDate: string }) {
+  const jobType = input.jobType || 'daily-sync';
   const propertyId = input.propertyId || null;
   const existing = propertyId
-    ? await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(propertyId, '') = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, propertyId])
-    : await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate]);
+    ? await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(propertyId, '') = ? AND jobType = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, propertyId, jobType])
+    : await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND jobType = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, jobType]);
   if (existing) return existing;
   const id = crypto.randomUUID();
   const queuedAt = nowIso();
-  await db.run('INSERT INTO warehouse_jobs (id, ownerId, siteUrl, propertyId, jobType, status, targetDate, attemptCount, maxAttempts, lockedAt, nextRunAt, startedAt, updatedAt, completedAt, lastError, rowsSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, input.ownerId, input.siteUrl, propertyId, 'daily-sync', 'queued', input.targetDate, 0, DEFAULT_MAX_ATTEMPTS, null, queuedAt, null, queuedAt, null, null, 0]);
+  await db.run('INSERT INTO warehouse_jobs (id, ownerId, siteUrl, propertyId, jobType, status, targetDate, attemptCount, maxAttempts, lockedAt, nextRunAt, startedAt, updatedAt, completedAt, lastError, rowsSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, input.ownerId, input.siteUrl, propertyId, jobType, 'queued', input.targetDate, 0, DEFAULT_MAX_ATTEMPTS, null, queuedAt, null, queuedAt, null, null, 0]);
   return db.get<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE id = ?', [id]);
 }
 
@@ -247,6 +341,21 @@ export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?
   const jobs = [];
   for (const targetDate of recentStableWarehouseDates(input.days)) {
     const job = await queueWarehouseSyncJob(db, {
+      ownerId: input.ownerId,
+      propertyId: input.propertyId,
+      siteUrl: input.siteUrl,
+      targetDate,
+    });
+    jobs.push(job);
+  }
+  return jobs;
+}
+
+export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
+  const jobs = [];
+  for (const targetDate of recentStableWarehouseDates(input.days)) {
+    const job = await queueWarehouseSyncJob(db, {
+      jobType: 'ga4-llm-sync',
       ownerId: input.ownerId,
       propertyId: input.propertyId,
       siteUrl: input.siteUrl,

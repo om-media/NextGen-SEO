@@ -299,6 +299,222 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
   });
 
+  app.post('/api/warehouse/ga4/llm/missing', authRequired, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const { propertyId, siteUrl, startDate, endDate, maxDates } = req.body || {};
+    if (!isNonEmptyString(propertyId) || !isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+      return res.status(400).json({ error: 'Invalid GA4 LLM warehouse sync payload' });
+    }
+
+    try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+      if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
+      const latestAvailableDate = latestStableReportingDate();
+      const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
+      const expectedDates = eachIsoDate(startDate, effectiveEndDate);
+      const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), 120) : 60;
+      const [rowDates, jobRows] = await Promise.all([
+        db.all<{ date: string }>(`
+          SELECT date
+          FROM ga4_llm_referral_metrics
+          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          GROUP BY date
+        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        db.all<{ targetDate: string }>(`
+          SELECT targetDate
+          FROM warehouse_jobs
+          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
+            AND targetDate >= ? AND targetDate <= ?
+            AND status IN ('queued', 'retrying', 'running', 'completed')
+          GROUP BY targetDate
+        `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
+      ]);
+      const coveredDates = new Set([...rowDates.map((row) => row.date), ...jobRows.map((row) => row.targetDate)]);
+      const datesToQueue = expectedDates
+        .filter((date) => !coveredDates.has(date))
+        .sort((a, b) => b.localeCompare(a))
+        .slice(0, queueLimit);
+
+      const jobs = [];
+      for (const targetDate of datesToQueue) {
+        const job = await queueWarehouseSyncJob(db, {
+          jobType: 'ga4-llm-sync',
+          ownerId,
+          propertyId,
+          siteUrl,
+          targetDate,
+        });
+        jobs.push(job);
+      }
+
+      return res.json({
+        jobs,
+        latestAvailableDate,
+        queued: jobs.length,
+        remainingMissingDates: Math.max(expectedDates.filter((date) => !coveredDates.has(date)).length - jobs.length, 0),
+        skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to queue GA4 LLM warehouse jobs' });
+    }
+  });
+
+  app.post('/api/warehouse/ga4/llm/report', authRequired, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const { propertyId, siteUrl, startDate, endDate } = req.body || {};
+    if (!isNonEmptyString(propertyId) || !isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+      return res.status(400).json({ error: 'Invalid GA4 LLM report payload' });
+    }
+
+    try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+      if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
+      const latestAvailableDate = latestStableReportingDate();
+      const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
+      const expectedDates = eachIsoDate(startDate, effectiveEndDate);
+      const [dailyRows, sourceRows, landingPageRows, coveredRows, jobRows, completedJobDateRows] = await Promise.all([
+        db.all<any>(`
+          SELECT
+            date,
+            SUM(sessions) AS sessions
+          FROM ga4_llm_referral_metrics
+          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          GROUP BY date
+          ORDER BY date ASC
+        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        db.all<any>(`
+          SELECT
+            sourceClass,
+            SUM(sessions) AS sessions,
+            SUM(engagedSessions) AS engagedSessions,
+            SUM(keyEvents) AS keyEvents,
+            CASE WHEN SUM(sessions) > 0 THEN SUM(averageSessionDuration * sessions)*1.0/SUM(sessions) ELSE 0 END AS averageSessionDuration
+          FROM ga4_llm_referral_metrics
+          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          GROUP BY sourceClass
+          ORDER BY sessions DESC
+        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        db.all<any>(`
+          SELECT
+            MIN(pagePath) AS pagePath,
+            pageKey,
+            sourceClass,
+            SUM(sessions) AS sessions,
+            SUM(engagedSessions) AS engagedSessions,
+            SUM(keyEvents) AS keyEvents,
+            CASE WHEN SUM(sessions) > 0 THEN SUM(averageSessionDuration * sessions)*1.0/SUM(sessions) ELSE 0 END AS averageSessionDuration
+          FROM ga4_llm_referral_metrics
+          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          GROUP BY pageKey, sourceClass
+          ORDER BY sessions DESC
+          LIMIT 500
+        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        db.all<{ date: string }>(`
+          SELECT date
+          FROM ga4_llm_referral_metrics
+          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          GROUP BY date
+        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        db.all<any>(`
+          SELECT status, COUNT(*) AS jobCount
+          FROM warehouse_jobs
+          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
+            AND targetDate >= ? AND targetDate <= ?
+          GROUP BY status
+        `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
+        db.all<{ targetDate: string }>(`
+          SELECT targetDate
+          FROM warehouse_jobs
+          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
+            AND targetDate >= ? AND targetDate <= ? AND status = 'completed'
+          GROUP BY targetDate
+        `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
+      ]);
+      const activeJobCount = ['queued', 'retrying', 'running'].reduce(
+        (sum, status) => sum + toCoverageNumber(jobRows.find((row) => row.status === status)?.jobCount),
+        0,
+      );
+      const coveredDates = new Set([
+        ...coveredRows.map((row) => row.date),
+        ...completedJobDateRows.map((row) => row.targetDate),
+      ]);
+      const coveredDateCount = coveredDates.size;
+      const totals = sourceRows.reduce((acc, row) => {
+        const sessions = toFiniteNumber(readField(row, 'sessions'));
+        acc.sessions += sessions;
+        acc.engagedSessions += toFiniteNumber(readField(row, 'engagedSessions'));
+        acc.keyEvents += toFiniteNumber(readField(row, 'keyEvents'));
+        acc.duration += toFiniteNumber(readField(row, 'averageSessionDuration')) * sessions;
+        return acc;
+      }, { duration: 0, engagedSessions: 0, keyEvents: 0, sessions: 0 });
+      const averageSessionDuration = totals.sessions > 0 ? totals.duration / totals.sessions : 0;
+      const metricValues = (row: any) => [
+        { value: toFiniteNumber(readField(row, 'sessions')).toString() },
+        { value: toFiniteNumber(readField(row, 'engagedSessions')).toString() },
+        { value: toFiniteNumber(readField(row, 'keyEvents')).toString() },
+        { value: toFiniteNumber(readField(row, 'averageSessionDuration')).toString() },
+      ];
+
+      return res.json({
+        coverage: {
+          activeJobCount,
+          coveredDateCount: Math.min(coveredDateCount, expectedDates.length),
+          errorJobCount: toCoverageNumber(jobRows.find((row) => row.status === 'error')?.jobCount),
+          expectedDateCount: expectedDates.length,
+          latestAvailableDate,
+          missingDateCount: Math.max(expectedDates.length - coveredDateCount, 0),
+          skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
+        },
+        daily: {
+          rows: dailyRows.map((row) => ({
+            dimensionValues: [{ value: String(readField(row, 'date') || '') }],
+            metricValues: [{ value: toFiniteNumber(readField(row, 'sessions')).toString() }],
+          })),
+        },
+        landingPage: {
+          rows: landingPageRows.map((row) => ({
+            dimensionValues: [
+              { value: String(readField(row, 'pagePath') || '') },
+              { value: String(readField(row, 'sourceClass') || '') },
+            ],
+            metricValues: metricValues(row),
+          })),
+        },
+        metadata: { source: 'warehouse' },
+        source: {
+          rows: sourceRows.map((row) => ({
+            dimensionValues: [{ value: String(readField(row, 'sourceClass') || '') }],
+            metricValues: metricValues(row),
+          })),
+        },
+        totals: {
+          rows: totals.sessions > 0 || coveredDateCount > 0
+            ? [{
+              metricValues: [
+                { value: totals.sessions.toString() },
+                { value: totals.engagedSessions.toString() },
+                { value: totals.keyEvents.toString() },
+                { value: averageSessionDuration.toString() },
+              ],
+            }]
+            : [],
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to load GA4 LLM warehouse report' });
+    }
+  });
+
   app.post('/api/warehouse/ingest/site', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, rows } = req.body;

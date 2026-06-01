@@ -16,7 +16,7 @@ import {
   verifyGoogleOauthState,
   verifyGoogleOauthStatePayload,
 } from '../services/googleAuth.js';
-import { queueWarehouseBackfillJobs } from '../services/warehouseJobs.js';
+import { queueWarehouseBackfillJobs, queueWarehouseLlmBackfillJobs } from '../services/warehouseJobs.js';
 import type { UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
@@ -81,11 +81,19 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
         ...(activatedSiteUrl ? [activatedSiteUrl] : []),
       ]);
       for (const siteUrl of sitesToBackfill) {
+        const propertyId = user?.activatedGa4PropertyId || null;
         await queueWarehouseBackfillJobs(db, {
           ownerId,
-          propertyId: user?.activatedGa4PropertyId || null,
+          propertyId,
           siteUrl,
         });
+        if (propertyId) {
+          await queueWarehouseLlmBackfillJobs(db, {
+            ownerId,
+            propertyId,
+            siteUrl,
+          });
+        }
       }
     } catch (err) {
       console.warn('Failed to queue Google warehouse backfill after connection', { ownerId, err });

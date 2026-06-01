@@ -1,8 +1,8 @@
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState } from "react"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { Ga4ApiService } from "@/src/services/ga4Service"
+import { authFetch } from "@/src/lib/authFetch"
 import { format, parseISO } from "date-fns"
-import { ArrowDownIcon, ArrowUpIcon, Database, Download, Info } from "lucide-react"
+import { ArrowDownIcon, ArrowUpIcon, Download, Loader2 } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -58,113 +58,84 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   const [compareData, setCompareData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const warehouseReady: boolean = false
-
-  const llmFilter = {
-    filter: {
-      fieldName: "sessionSource",
-      stringFilter: {
-        value: "chatgpt|openai|claude|anthropic|perplexity|copilot|bing.com/chat",
-        matchType: "PARTIAL_REGEXP"
-      }
-    }
-  }
+  const [pollKey, setPollKey] = useState(0)
+  const [coverage, setCoverage] = useState<any>(null)
 
   useEffect(() => {
-    if (!warehouseReady) return
-    if (!userProfile?.googleConnected || !siteUrl || !dateRange.from || !dateRange.to) return
+    const propertyId = siteUrl?.startsWith("properties/") ? siteUrl : userProfile?.activatedGa4PropertyId
+    const workspaceSiteUrl = userProfile?.activatedSiteUrl || (!siteUrl?.startsWith("properties/") ? siteUrl : null)
+    if (!userProfile?.googleConnected || !propertyId || !workspaceSiteUrl || !dateRange.from || !dateRange.to) {
+      setLoading(false)
+      setData(null)
+      setCompareData(null)
+      setCoverage(null)
+      return
+    }
+
     let isMounted = true
+    let pollTimer: number | null = null
+
+    const queueMissing = async (startDate: string, endDate: string) => {
+      const response = await authFetch("/api/warehouse/ga4/llm/missing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endDate,
+          maxDates: 60,
+          propertyId,
+          siteUrl: workspaceSiteUrl,
+          startDate,
+        }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(payload?.error || "Failed to queue LLM referral warehouse sync")
+      return payload
+    }
+
+    const fetchReport = async (startDate: string, endDate: string) => {
+      const response = await authFetch("/api/warehouse/ga4/llm/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endDate,
+          propertyId,
+          siteUrl: workspaceSiteUrl,
+          startDate,
+        }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(payload?.error || "Failed to load LLM referral warehouse report")
+      return payload
+    }
 
     const fetchData = async () => {
       setLoading(true)
       setError(null)
       try {
-        const ga4Service = new Ga4ApiService()
-        const metrics = ['sessions', 'engagedSessions', 'keyEvents', 'averageSessionDuration']
-
-        // Fetch totals
-        const totalsData = await ga4Service.runReport(
-          siteUrl,
-          format(dateRange.from, 'yyyy-MM-dd'),
-          format(dateRange.to, 'yyyy-MM-dd'),
-          [], // no dimensions for totals
-          metrics,
-          llmFilter
-        )
-
-        // Fetch daily trend
-        const dailyData = await ga4Service.runReport(
-          siteUrl,
-          format(dateRange.from, 'yyyy-MM-dd'),
-          format(dateRange.to, 'yyyy-MM-dd'),
-          ['date'],
-          ['sessions'],
-          llmFilter
-        )
-
-        // Fetch by source
-        const sourceData = await ga4Service.runReport(
-          siteUrl,
-          format(dateRange.from, 'yyyy-MM-dd'),
-          format(dateRange.to, 'yyyy-MM-dd'),
-          ['sessionSource'],
-          metrics,
-          llmFilter
-        )
-
-        // Fetch by landing page + source
-        const landingPageData = await ga4Service.runReport(
-          siteUrl,
-          format(dateRange.from, 'yyyy-MM-dd'),
-          format(dateRange.to, 'yyyy-MM-dd'),
-          ['landingPagePlusQueryString', 'sessionSource'],
-          metrics,
-          llmFilter
-        )
-
-        let compTotalsData = null
-        let compDailyData = null
-        let compSourceData = null
-        let compLandingPageData = null
+        const startDate = format(dateRange.from!, 'yyyy-MM-dd')
+        const endDate = format(dateRange.to!, 'yyyy-MM-dd')
+        await queueMissing(startDate, endDate)
+        const primaryReport = await fetchReport(startDate, endDate)
+        let compareReport = null
 
         if (isCompareMode && compareDateRange.from && compareDateRange.to) {
-          compTotalsData = await ga4Service.runReport(
-            siteUrl,
-            format(compareDateRange.from, 'yyyy-MM-dd'),
-            format(compareDateRange.to, 'yyyy-MM-dd'),
-            [],
-            metrics,
-            llmFilter
-          )
-          compDailyData = await ga4Service.runReport(
-            siteUrl,
-            format(compareDateRange.from, 'yyyy-MM-dd'),
-            format(compareDateRange.to, 'yyyy-MM-dd'),
-            ['date'],
-            ['sessions'],
-            llmFilter
-          )
-          compSourceData = await ga4Service.runReport(
-            siteUrl,
-            format(compareDateRange.from, 'yyyy-MM-dd'),
-            format(compareDateRange.to, 'yyyy-MM-dd'),
-            ['sessionSource'],
-            metrics,
-            llmFilter
-          )
-          compLandingPageData = await ga4Service.runReport(
-            siteUrl,
-            format(compareDateRange.from, 'yyyy-MM-dd'),
-            format(compareDateRange.to, 'yyyy-MM-dd'),
-            ['landingPagePlusQueryString', 'sessionSource'],
-            metrics,
-            llmFilter
-          )
+          const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
+          const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
+          await queueMissing(compareStartDate, compareEndDate)
+          compareReport = await fetchReport(compareStartDate, compareEndDate)
         }
 
         if (isMounted) {
-          setData({ totals: totalsData, daily: dailyData, source: sourceData, landingPage: landingPageData })
-          setCompareData(isCompareMode ? { totals: compTotalsData, daily: compDailyData, source: compSourceData, landingPage: compLandingPageData } : null)
+          setData(primaryReport)
+          setCompareData(isCompareMode ? compareReport : null)
+          setCoverage(primaryReport.coverage || null)
+          const activeJobs = Number(primaryReport.coverage?.activeJobCount || 0)
+          const missingDates = Number(primaryReport.coverage?.missingDateCount || 0)
+          if (activeJobs > 0 || missingDates > 0) {
+            pollTimer = window.setTimeout(() => {
+              if (isMounted) setPollKey((key) => key + 1)
+            }, 10_000)
+          }
         }
       } catch (err: any) {
         if (isMounted) setError(err.message)
@@ -174,8 +145,11 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     }
 
     fetchData()
-    return () => { isMounted = false }
-  }, [siteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.googleConnected, warehouseReady])
+    return () => {
+      isMounted = false
+      if (pollTimer) window.clearTimeout(pollTimer)
+    }
+  }, [siteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.activatedGa4PropertyId, userProfile?.activatedSiteUrl, userProfile?.googleConnected, pollKey])
 
 
   const formatValue = (metric: string, value: string) => {
@@ -219,16 +193,16 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     )
   }
 
-  if (!warehouseReady) {
+  if (coverage && (Number(coverage.activeJobCount || 0) > 0 || Number(coverage.missingDateCount || 0) > 0) && !data?.source?.rows?.length) {
     return (
       <Card className="rounded-2xl border border-dashed border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
         <CardContent className="flex min-h-[240px] flex-col items-center justify-center px-6 text-center">
           <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
-            <Database className="h-5 w-5" />
+            <Loader2 className="h-5 w-5 animate-spin" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground">LLM referral traffic is not warehoused yet</h3>
+          <h3 className="text-lg font-semibold text-foreground">Backfilling LLM referral traffic</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            This report needs source and landing-page GA4 facts stored in the app warehouse. It no longer performs background live GA4 reads while the dashboard is open.
+            The app is storing GA4 source and landing-page facts for this report. This will refresh automatically when the queued days finish.
           </p>
         </CardContent>
       </Card>

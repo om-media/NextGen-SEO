@@ -139,6 +139,22 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, propertyId, date, pageKey)
   );
 
+  CREATE TABLE IF NOT EXISTS ga4_llm_referral_metrics (
+    ownerId TEXT,
+    propertyId TEXT,
+    siteUrl TEXT,
+    date TEXT,
+    source TEXT,
+    sourceClass TEXT,
+    pagePath TEXT,
+    pageKey TEXT,
+    sessions INTEGER,
+    engagedSessions INTEGER,
+    keyEvents REAL,
+    averageSessionDuration REAL,
+    PRIMARY KEY (ownerId, propertyId, date, source, pageKey)
+  );
+
   CREATE TABLE IF NOT EXISTS warehouse_sync_status (
     ownerId TEXT,
     siteUrl TEXT,
@@ -335,6 +351,9 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_key ON ga4_page_metrics(ownerId, propertyId, date, pageKey);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_key_date ON ga4_page_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_path ON ga4_page_metrics(ownerId, propertyId, date, pagePath);
+  CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_date ON ga4_llm_referral_metrics(ownerId, propertyId, date);
+  CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_source_date ON ga4_llm_referral_metrics(ownerId, propertyId, sourceClass, date);
+  CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_page_date ON ga4_llm_referral_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_bing_query_stats_owner_site_fetched ON bing_query_stats(ownerId, siteUrl, fetchedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_queue ON warehouse_jobs(status, nextRunAt, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site ON warehouse_jobs(ownerId, siteUrl, updatedAt);
@@ -439,6 +458,10 @@ const camelCaseColumns: Record<string, string> = {
   pageviews: 'pageViews',
   bouncerate: 'bounceRate',
   eventcount: 'eventCount',
+  sourceclass: 'sourceClass',
+  engagedsessions: 'engagedSessions',
+  keyevents: 'keyEvents',
+  averagesessionduration: 'averageSessionDuration',
 };
 
 function normalizeRow<T>(row: T): T {
