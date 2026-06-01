@@ -57,6 +57,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   const [data, setData] = useState<any>(null)
   const [compareData, setCompareData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pollKey, setPollKey] = useState(0)
   const [coverage, setCoverage] = useState<any>(null)
@@ -69,6 +70,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
       setData(null)
       setCompareData(null)
       setCoverage(null)
+      setRefreshing(false)
       return
     }
 
@@ -109,8 +111,12 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     }
 
     const fetchData = async () => {
-      setLoading(true)
-      setError(null)
+      const hasExistingReport = Boolean(data)
+      if (isMounted) {
+        setError(null)
+        setLoading(!hasExistingReport)
+        setRefreshing(hasExistingReport)
+      }
       try {
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
@@ -140,7 +146,10 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
       } catch (err: any) {
         if (isMounted) setError(err.message)
       } finally {
-        if (isMounted) setLoading(false)
+        if (isMounted) {
+          setLoading(false)
+          setRefreshing(false)
+        }
       }
     }
 
@@ -193,7 +202,28 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     )
   }
 
-  if (coverage && (Number(coverage.activeJobCount || 0) > 0 || Number(coverage.missingDateCount || 0) > 0) && !data?.source?.rows?.length) {
+  const activeJobCount = Number(coverage?.activeJobCount || 0)
+  const missingDateCount = Number(coverage?.missingDateCount || 0)
+  const errorJobCount = Number(coverage?.errorJobCount || 0)
+  const coveredDateCount = Number(coverage?.coveredDateCount || 0)
+  const expectedDateCount = Number(coverage?.expectedDateCount || 0)
+  const isWarehouseUpdating = refreshing || activeJobCount > 0 || missingDateCount > 0
+  const coverageText = expectedDateCount > 0
+    ? `${coveredDateCount}/${expectedDateCount} days stored`
+    : "Checking warehouse coverage"
+  const statusText = error
+    ? "Could not refresh LLM report"
+    : activeJobCount > 0
+      ? `Backfilling ${activeJobCount} day${activeJobCount === 1 ? "" : "s"}`
+      : missingDateCount > 0
+        ? `Queueing ${missingDateCount} missing day${missingDateCount === 1 ? "" : "s"}`
+        : refreshing
+          ? "Refreshing stored report"
+          : errorJobCount > 0
+            ? `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`
+            : "Warehouse report ready"
+
+  if (coverage && (activeJobCount > 0 || missingDateCount > 0) && !data?.source?.rows?.length) {
     return (
       <Card className="rounded-2xl border border-dashed border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
         <CardContent className="flex min-h-[240px] flex-col items-center justify-center px-6 text-center">
@@ -202,18 +232,41 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
           </div>
           <h3 className="text-lg font-semibold text-foreground">Backfilling LLM referral traffic</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            The app is storing GA4 source and landing-page facts for this report. This will refresh automatically when the queued days finish.
+            {coverageText}. The app is storing GA4 source and landing-page facts for this report, then this view will update automatically.
           </p>
         </CardContent>
       </Card>
     )
   }
 
-  if (loading) {
-    return <div className="flex justify-center p-12"><div className="animate-pulse">Loading LLM Traffic...</div></div>
+  if (loading && !data) {
+    return (
+      <div className="space-y-6" aria-busy="true">
+        <div className="flex items-center gap-3 rounded-2xl border border-[#E9F0EB] bg-white px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span>Loading stored LLM referral data...</span>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Card key={index} className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
+              <CardHeader className="pb-2">
+                <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+              </CardHeader>
+              <CardContent>
+                <div className="h-8 w-16 animate-pulse rounded bg-muted" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <Card className="h-[360px] rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]" />
+          <Card className="h-[360px] rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]" />
+        </div>
+      </div>
+    )
   }
 
-  if (error) {
+  if (error && !data) {
     return <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-5 text-sm text-destructive">{error}</div>
   }
 
@@ -419,7 +472,24 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
 
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" aria-busy={isWarehouseUpdating}>
+      {(isWarehouseUpdating || errorJobCount > 0 || error) && (
+        <div className="flex flex-col gap-2 rounded-2xl border border-[#E9F0EB] bg-white px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_24px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            {isWarehouseUpdating && !error ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            ) : (
+              <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+            )}
+            <span className="font-medium text-foreground">{statusText}</span>
+            <span>{error || coverageText}</span>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            Existing rows stay visible while the warehouse catches up.
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {renderMetricCard("LLM Sessions", curSessions, prevSessions, 'sessions')}
         {renderMetricCard("LLM Engaged sessions", curEngaged, prevEngaged, 'engagedSessions')}
