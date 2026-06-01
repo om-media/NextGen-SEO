@@ -878,7 +878,6 @@ function MainApp() {
                 onCompareFromDateChange={handleCompareFromDateChange}
                 onCompareToDateChange={handleCompareToDateChange}
                 onFromDateChange={handleFromDateChange}
-                onGscSyncComplete={bumpGscSyncVersion}
                 onOpenRawData={() => setActiveMenu("Raw Data")}
                 onToDateChange={handleToDateChange}
                 rawDataAvailable={canUseRawExports(userProfile?.tier)}

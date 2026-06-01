@@ -54,7 +54,7 @@ export function GscWarehouseAutoSync({
       queuedKeys.current.add(queueKey);
 
       try {
-        await queueMissingCoverageSync({
+        const queueResult = await queueMissingCoverageSync({
           endDate: requestedEndStr,
           maxDates: MAX_BACKGROUND_AUTO_QUEUE_DAYS,
           propertyId,
@@ -62,10 +62,7 @@ export function GscWarehouseAutoSync({
           startDate: requestedStartStr,
         });
 
-        if (!cancelled) {
-          onSyncComplete?.();
-        }
-
+        let shouldRefreshDashboardWhenSettled = queueResult.queued > 0;
         for (let pollCount = 0; pollCount < VISIBLE_SYNC_MAX_POLLS && !cancelled; pollCount += 1) {
           const coverage = await fetchDataCoverage({
             endDate: requestedEndStr,
@@ -78,9 +75,15 @@ export function GscWarehouseAutoSync({
             return;
           }
 
-          onSyncComplete?.();
+          const activeJobCount = getActiveWarehouseJobCount(coverage);
+          if (activeJobCount > 0) {
+            shouldRefreshDashboardWhenSettled = true;
+          }
 
-          if (getActiveWarehouseJobCount(coverage) === 0) {
+          if (activeJobCount === 0) {
+            if (shouldRefreshDashboardWhenSettled) {
+              onSyncComplete?.();
+            }
             break;
           }
 

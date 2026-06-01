@@ -22,7 +22,6 @@ type AppToolbarProps = {
   onCompareFromDateChange: (date: Date | undefined) => void;
   onCompareToDateChange: (date: Date | undefined) => void;
   onFromDateChange: (date: Date | undefined) => void;
-  onGscSyncComplete?: () => void;
   onOpenRawData?: () => void;
   onToDateChange: (date: Date | undefined) => void;
   rawDataAvailable?: boolean;
@@ -42,7 +41,6 @@ export function AppToolbar({
   onCompareFromDateChange,
   onCompareToDateChange,
   onFromDateChange,
-  onGscSyncComplete,
   onOpenRawData,
   onToDateChange,
   rawDataAvailable = false,
@@ -74,7 +72,6 @@ export function AppToolbar({
       console.warn("Failed to queue missing warehouse sync jobs", error);
     } finally {
       setSyncRefreshKey((key) => key + 1);
-      onGscSyncComplete?.();
       setSyncActionState("idle");
     }
   };
@@ -182,6 +179,7 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
     missingDateCount: number;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pollKey, setPollKey] = useState(0);
 
   useEffect(() => {
     if (!siteUrl) {
@@ -206,8 +204,9 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
       })
       .then((status) => {
         if (!cancelled) {
+          let activeJobCount = 0;
           if (range && status?.gsc?.site) {
-            const activeJobCount = Number(status?.warehouseJobs?.queued || 0)
+            activeJobCount = Number(status?.warehouseJobs?.queued || 0)
               + Number(status?.warehouseJobs?.running || 0)
               + Number(status?.warehouseJobs?.retrying || 0);
             setCoverage({
@@ -228,6 +227,14 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
               missingDateCount: 0,
             });
           }
+
+          if (activeJobCount > 0) {
+            window.setTimeout(() => {
+              if (!cancelled) {
+                setPollKey((key) => key + 1);
+              }
+            }, 10_000);
+          }
         }
       })
       .catch(() => {
@@ -244,7 +251,7 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
     return () => {
       cancelled = true;
     };
-  }, [dateRange, refreshKey, siteUrl]);
+  }, [dateRange, pollKey, refreshKey, siteUrl]);
 
   const lastMetricDate = coverage?.lastCoveredDate || null;
   const activeJobCount = coverage?.activeJobCount || 0;
