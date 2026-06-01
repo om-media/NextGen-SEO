@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, Download, Filter, FileText, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, Download, ExternalLink, Filter, FileText, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -390,6 +391,32 @@ function ChangeBadge({ value, invert = false }: { value: number | null; invert?:
   );
 }
 
+function DetailBlock({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <section className="rounded-2xl border border-[#E6ECE8] bg-white p-4">
+      <h4 className="text-sm font-semibold text-[#0F172A]">{title}</h4>
+      <div className="mt-4 space-y-3">{children}</div>
+    </section>
+  );
+}
+
+function DetailItem({
+  label,
+  value,
+  valueClassName = "text-[#0F172A]",
+}: {
+  label: string;
+  value: ReactNode;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-start justify-between gap-4 border-b border-[#F0F3F1] pb-2 last:border-0 last:pb-0">
+      <span className="text-xs font-medium uppercase tracking-[0.12em] text-[#647067]">{label}</span>
+      <span className={`max-w-[70%] break-words text-right text-sm font-medium ${valueClassName}`}>{value}</span>
+    </div>
+  );
+}
+
 export function BlendedPagesView({
   compareDateRange,
   dateRange,
@@ -405,6 +432,7 @@ export function BlendedPagesView({
   const [rows, setRows] = useState<BlendedPagePerformanceRow[]>([]);
   const [analyticsFilter, setAnalyticsFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedRow, setSelectedRow] = useState<BlendedPagePerformanceRow | null>(null);
   const [sourceMeta, setSourceMeta] = useState<BlendedPagePerformanceResponse["meta"] | null>(null);
   const [sortColumn, setSortColumn] = useState<SortColumn>("clicks");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -879,7 +907,13 @@ export function BlendedPagesView({
                           <tr key={row.pageKey || row.page} className="group border-t border-[#E6ECE8] hover:bg-[#F8FAF9]">
                             <td className="sticky left-0 z-10 border-r border-[#E6ECE8] bg-white px-4 py-4 group-hover:bg-[#F8FAF9]">
                               <div className="w-[328px]">
-                                <div className="truncate font-semibold text-[#24443A]">{getPageTitle(row.page)}</div>
+                                <button
+                                  type="button"
+                                  className="block max-w-full truncate text-left font-semibold text-[#24443A] hover:text-[#0F3D2E] hover:underline"
+                                  onClick={() => setSelectedRow(row)}
+                                >
+                                  {getPageTitle(row.page)}
+                                </button>
                                 <div className="mt-1 truncate text-xs text-[#647067]">{getDisplayPath(row.page)}</div>
                               </div>
                             </td>
@@ -1011,6 +1045,103 @@ export function BlendedPagesView({
         </aside>
       </div>
 
+      <Dialog open={Boolean(selectedRow)} onOpenChange={(open) => !open && setSelectedRow(null)}>
+        <DialogContent className="max-h-[88vh] w-[calc(100vw-32px)] max-w-6xl overflow-y-auto p-0 sm:max-w-6xl">
+          {selectedRow && (
+            <>
+              <DialogHeader className="border-b border-[#E6ECE8] bg-white px-6 py-5">
+                <div className="flex flex-col gap-4 pr-8 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <DialogTitle className="text-xl">Page review</DialogTitle>
+                    <DialogDescription className="mt-2 break-all">
+                      {selectedRow.crawl?.finalUrl || selectedRow.crawl?.url || selectedRow.page}
+                    </DialogDescription>
+                  </div>
+                  <a
+                    href={selectedRow.crawl?.finalUrl || selectedRow.crawl?.url || selectedRow.page}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-xl border border-[#E6ECE8] bg-white px-3 text-sm font-medium text-[#0F172A] shadow-sm transition-colors hover:bg-[#F8FAF9]"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Open page
+                  </a>
+                </div>
+              </DialogHeader>
+
+              <div className="grid gap-4 bg-[#FBFCFB] p-5 lg:grid-cols-2">
+                <DetailBlock title="Search demand">
+                  <DetailItem label="Clicks" value={formatNumber(selectedRow.gsc?.clicks ?? 0)} />
+                  <DetailItem label="Impressions" value={formatNumber(selectedRow.gsc?.impressions ?? 0)} />
+                  <DetailItem label="CTR" value={selectedRow.gsc ? formatPercent(selectedRow.gsc.ctr) : "-"} />
+                  <DetailItem label="Position" value={selectedRow.gsc ? selectedRow.gsc.position.toFixed(1) : "-"} />
+                  <DetailItem label="Visible queries" value={formatNumber(selectedRow.gsc?.queryCount ?? 0)} />
+                </DetailBlock>
+
+                <DetailBlock title="Engagement">
+                  <DetailItem label="Sessions" value={selectedRow.ga4 ? formatNumber(selectedRow.ga4.sessions) : "-"} />
+                  <DetailItem label="Users" value={selectedRow.ga4 ? formatNumber(selectedRow.ga4.totalUsers) : "-"} />
+                  <DetailItem label="Page views" value={selectedRow.ga4 ? formatNumber(selectedRow.ga4.pageViews) : "-"} />
+                  <DetailItem label="Bounce rate" value={selectedRow.ga4 ? formatPercent(selectedRow.ga4.bounceRate) : "-"} />
+                  <DetailItem label="Events" value={selectedRow.ga4 ? formatNumber(selectedRow.ga4.eventCount) : "-"} />
+                </DetailBlock>
+
+                <DetailBlock title="Crawl fetch">
+                  <DetailItem label="Status" value={getCrawlStatus(selectedRow).label} />
+                  <DetailItem label="HTTP" value={selectedRow.crawl?.statusCode ?? "-"} />
+                  <DetailItem label="Response" value={selectedRow.crawl ? `${formatNumber(selectedRow.crawl.responseTimeMs)} ms` : "-"} />
+                  <DetailItem label="Content type" value={selectedRow.crawl?.contentType || "-"} />
+                  <DetailItem label="Depth" value={selectedRow.crawl ? formatNumber(selectedRow.crawl.depth) : "-"} />
+                  <DetailItem label="Words" value={selectedRow.crawl ? formatNumber(selectedRow.crawl.wordCount) : "-"} />
+                </DetailBlock>
+
+                <DetailBlock title="Indexability">
+                  <DetailItem label="State" value={getIndexabilityStatus(selectedRow).label} />
+                  <DetailItem label="Noindex" value={selectedRow.crawl ? (selectedRow.crawl.noindex ? "Yes" : "No") : "-"} />
+                  <DetailItem label="Final URL" value={selectedRow.crawl?.finalUrl || "-"} />
+                  <DetailItem label="Canonical" value={selectedRow.crawl?.canonicalUrl || "-"} />
+                </DetailBlock>
+
+                <DetailBlock title="Content elements">
+                  <DetailItem label="Title" value={selectedRow.crawl?.title || "-"} />
+                  <DetailItem label="Title length" value={getLengthState(selectedRow.crawl?.titleLength ?? 0, 30, 65).label} />
+                  <DetailItem label="Meta" value={selectedRow.crawl?.metaDescription || "-"} />
+                  <DetailItem label="Meta length" value={getLengthState(selectedRow.crawl?.metaDescriptionLength ?? 0, 70, 170).label} />
+                  <DetailItem label="H1" value={selectedRow.crawl?.h1Text || "-"} />
+                  <DetailItem label="Headings" value={selectedRow.crawl ? `${formatNumber(selectedRow.crawl.h1Count)} H1 / ${formatNumber(selectedRow.crawl.h2Count)} H2` : "-"} />
+                </DetailBlock>
+
+                <DetailBlock title="Internal linking">
+                  <DetailItem label="Inlinks" value={selectedRow.crawl ? formatNumber(selectedRow.crawl.inboundLinkCount) : "-"} />
+                  <DetailItem label="Internal links" value={selectedRow.crawl ? formatNumber(selectedRow.crawl.internalLinkCount) : "-"} />
+                  <DetailItem label="Outlinks" value={selectedRow.crawl ? formatNumber(selectedRow.crawl.outgoingLinkCount) : "-"} />
+                  <DetailItem label="Crawled" value={selectedRow.crawl?.crawledAt || "-"} />
+                </DetailBlock>
+
+                <section className="rounded-2xl border border-[#E6ECE8] bg-white p-4 lg:col-span-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getOpportunityStatus(selectedRow).className}`}>
+                      {getOpportunityStatus(selectedRow).label}
+                    </span>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getCrawlStatus(selectedRow).className}`}>
+                      {getCrawlStatus(selectedRow).label}
+                    </span>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getIndexabilityStatus(selectedRow).className}`}>
+                      {getIndexabilityStatus(selectedRow).label}
+                    </span>
+                  </div>
+                  <div className="mt-4 space-y-2 text-sm text-[#34483E]">
+                    {selectedRow.issueInsight.reasons.map((reason) => (
+                      <p key={reason}>{reason}</p>
+                    ))}
+                    {selectedRow.crawl?.errorMessage && <p>{selectedRow.crawl.errorMessage}</p>}
+                  </div>
+                </section>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
