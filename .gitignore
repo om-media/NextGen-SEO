@@ -8,7 +8,9 @@ coverage/
 !.env.example
 !.env.production.example
 *.db
+*.db-journal
 *.sqlite
+*.sqlite-journal
 *.db-shm
 *.db-wal
 *.sqlite-shm

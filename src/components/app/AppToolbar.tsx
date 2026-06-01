@@ -47,6 +47,7 @@ export function AppToolbar({
   setIsCompareMode,
 }: AppToolbarProps) {
   const sectionCopy = getSectionCopy(activeMenu, dataSource);
+  const blendedGa4PropertyId = dataSource === "blended" ? ga4PropertyId : null;
   const showDataControls = activeMenu !== "Settings" && activeMenu !== "AI Content Auditor";
   const [syncRefreshKey, setSyncRefreshKey] = useState(0);
   const [syncActionState, setSyncActionState] = useState<"idle" | "queueing">("idle");
@@ -61,7 +62,7 @@ export function AppToolbar({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             endDate: range.endDate,
-            propertyId: ga4PropertyId || undefined,
+            propertyId: blendedGa4PropertyId || undefined,
             maxDates: 60,
             siteUrl: currentSiteUrl,
             startDate: range.startDate,
@@ -104,7 +105,7 @@ export function AppToolbar({
             <>
               <GscSyncStatusBadge
                 dateRange={dateRange}
-                ga4PropertyId={ga4PropertyId}
+                ga4PropertyId={blendedGa4PropertyId}
                 refreshKey={syncRefreshKey + gscSyncVersion}
                 siteUrl={currentSiteUrl}
               />
@@ -112,7 +113,9 @@ export function AppToolbar({
                 className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
                 disabled={syncActionState === "queueing"}
                 onClick={handleRefreshResults}
-                title="Queue missing GSC and GA4 warehouse data for reportable days in the selected date range."
+                title={dataSource === "blended"
+                  ? "Queue missing GSC and GA4 warehouse data for reportable days in the selected date range."
+                  : "Queue missing GSC warehouse data for reportable days in the selected date range."}
                 type="button"
               >
                 <RefreshCw className={`h-4 w-4 ${syncActionState === "queueing" ? "animate-spin" : ""}`} />
@@ -189,6 +192,7 @@ function GscSyncStatusBadge({
   siteUrl: string;
 }) {
   const [coverage, setCoverage] = useState<{
+    activeDateCount: number;
     activeJobCount: number;
     coveredDateCount: number;
     errorJobCount: number;
@@ -245,6 +249,7 @@ function GscSyncStatusBadge({
               ? Number(status?.ga4?.pages?.missingDateCount || 0)
               : 0;
             setCoverage({
+              activeDateCount: Number(status?.warehouseJobs?.activeDateCount || 0),
               activeJobCount,
               coveredDateCount: status.gsc.site.coveredDateCount || 0,
               errorJobCount: Number(status?.warehouseJobs?.error || 0),
@@ -258,6 +263,7 @@ function GscSyncStatusBadge({
             });
           } else {
             setCoverage({
+              activeDateCount: 0,
               activeJobCount: 0,
               coveredDateCount: status.lastMetricDate ? 1 : 0,
               errorJobCount: 0,
@@ -299,6 +305,7 @@ function GscSyncStatusBadge({
   const lastMetricDate = coverage?.lastCoveredDate || null;
   const latestAvailableDate = coverage?.latestAvailableDate || lastMetricDate;
   const activeJobCount = coverage?.activeJobCount || 0;
+  const activeDateCount = coverage?.activeDateCount || 0;
   const errorJobCount = coverage?.errorJobCount || 0;
   const unavailableDateCount = coverage?.unavailableDateCount || 0;
   const isPartial = Boolean(coverage && coverage.expectedDateCount > 0 && coverage.coveredDateCount < coverage.expectedDateCount);
@@ -314,8 +321,10 @@ function GscSyncStatusBadge({
   if (loading) {
     label = "Checking coverage";
   } else if (activeJobCount > 0) {
-    label = `${backfillSource} backfill: ${formatWholeNumber(activeJobCount)} day${activeJobCount === 1 ? "" : "s"}`;
-    statusTitle = `Backfilling missing ${backfillSource} warehouse data for the selected date range. Charts keep using available stored rows while this runs.`;
+    label = `Importing ${backfillSource} history`;
+    statusTitle = activeDateCount > 0
+      ? `Importing stored ${backfillSource} data for ${formatWholeNumber(activeDateCount)} selected day${activeDateCount === 1 ? "" : "s"}. Charts keep using available rows while this finishes.`
+      : `Importing stored ${backfillSource} data. Charts keep using available rows while this finishes.`;
   } else if (errorJobCount > 0) {
     label = `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`;
     statusTitle = "Some warehouse sync jobs for this selected date range need attention.";
