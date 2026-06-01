@@ -6,7 +6,7 @@ import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptySt
 import { getPlanCrawlLimits, getPlanPropertyLimit } from '../../shared/plans.js';
 import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
-import { queueWarehouseSyncJob } from '../services/warehouseJobs.js';
+import { queueWarehouseBackfillJobs } from '../services/warehouseJobs.js';
 import { canAccessSite } from '../accessControl.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
@@ -22,21 +22,6 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
   };
 
   const uniqueSites = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
-  const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
-  const addDays = (value: Date, days: number) => {
-    const next = new Date(value);
-    next.setUTCDate(next.getUTCDate() + days);
-    return next;
-  };
-  const recentStableReportingDates = (days = 480) => {
-    const end = addDays(new Date(), -2);
-    const start = addDays(end, -(days - 1));
-    const dates: string[] = [];
-    for (let cursor = start; cursor <= end; cursor = addDays(cursor, 1)) {
-      dates.push(toIsoDate(cursor));
-    }
-    return dates;
-  };
 
   const resolveCrawlStartUrl = (siteUrl: string) => {
     const trimmed = String(siteUrl || '').trim();
@@ -80,14 +65,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       if (!user?.gscRefreshToken) return;
 
       const activePropertyId = propertyId || user.activatedGa4PropertyId || null;
-      for (const targetDate of recentStableReportingDates()) {
-        await queueWarehouseSyncJob(db, {
-          ownerId,
-          propertyId: activePropertyId,
-          siteUrl,
-          targetDate,
-        });
-      }
+      await queueWarehouseBackfillJobs(db, { ownerId, propertyId: activePropertyId, siteUrl });
     } catch (err) {
       console.warn('Failed to queue initial warehouse sync', { ownerId, siteUrl, err });
     }
@@ -261,7 +239,17 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
+      const user = await db.get<any>('SELECT activatedSiteUrl, unlockedSites FROM users WHERE id = ?', [req.params.id]);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
       await db.run('UPDATE users SET activatedGa4PropertyId = ?, activatedGa4DisplayName = ? WHERE id = ?', [activatedGa4PropertyId, activatedGa4DisplayName || null, req.params.id]);
+      const sitesToBackfill = uniqueSites([
+        ...parseStoredSites(user.unlockedSites),
+        ...(isNonEmptyString(user.activatedSiteUrl) ? [user.activatedSiteUrl] : []),
+      ]);
+      for (const siteUrl of sitesToBackfill) {
+        await queueInitialWarehouseSyncIfPossible(req.params.id, siteUrl, activatedGa4PropertyId);
+      }
       res.json({
         success: true,
         activatedGa4PropertyId,

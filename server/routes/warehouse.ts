@@ -800,6 +800,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       );
       const datesToQueue = expectedDates
         .filter(needsSync)
+        .sort((a, b) => b.localeCompare(a))
         .slice(0, queueLimit);
 
       const jobs = [];

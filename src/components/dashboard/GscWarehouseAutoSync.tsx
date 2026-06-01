@@ -97,19 +97,18 @@ export function GscWarehouseAutoSync({
         historicalQueuedKeys.current.add(historicalKey);
 
         const oldestAvailableDate = subDays(latestAvailableDate, HISTORICAL_BACKFILL_DAYS - 1);
-        for (
-          let cursor = oldestAvailableDate;
-          cursor <= latestAvailableDate && !cancelled;
-          cursor = addDays(cursor, HISTORICAL_QUEUE_CHUNK_DAYS)
-        ) {
-          const chunkEnd = addDays(cursor, HISTORICAL_QUEUE_CHUNK_DAYS - 1);
+        let cursorEnd = latestAvailableDate;
+        while (cursorEnd >= oldestAvailableDate && !cancelled) {
+          const chunkStart = addDays(cursorEnd, -(HISTORICAL_QUEUE_CHUNK_DAYS - 1));
+          const boundedChunkStart = chunkStart < oldestAvailableDate ? oldestAvailableDate : chunkStart;
           await queueMissingCoverageSync({
-            endDate: toIsoDate(chunkEnd > latestAvailableDate ? latestAvailableDate : chunkEnd),
+            endDate: toIsoDate(cursorEnd),
             maxDates: HISTORICAL_QUEUE_CHUNK_DAYS,
             propertyId,
             siteUrl,
-            startDate: toIsoDate(cursor),
+            startDate: toIsoDate(boundedChunkStart),
           });
+          cursorEnd = addDays(boundedChunkStart, -1);
         }
       } catch (err) {
         queuedKeys.current.delete(queueKey);

@@ -16,6 +16,7 @@ import {
   verifyGoogleOauthState,
   verifyGoogleOauthStatePayload,
 } from '../services/googleAuth.js';
+import { queueWarehouseBackfillJobs } from '../services/warehouseJobs.js';
 import type { UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
@@ -51,8 +52,45 @@ function positiveIntegerOrUndefined(value: unknown) {
   return Number.isInteger(number) && number >= 0 ? number : undefined;
 }
 
+function parseStringArray(value: unknown) {
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+function uniqueSites(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
 export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
+
+  const queueGoogleWarehouseBackfillForUnlockedSites = async (ownerId: string) => {
+    try {
+      const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null; unlockedSites?: string | null }>(
+        'SELECT activatedGa4PropertyId, activatedSiteUrl, unlockedSites FROM users WHERE id = ?',
+        [ownerId],
+      );
+      const activatedSiteUrl = isNonEmptyString(user?.activatedSiteUrl) ? user.activatedSiteUrl : null;
+      const sitesToBackfill = uniqueSites([
+        ...parseStringArray(user?.unlockedSites),
+        ...(activatedSiteUrl ? [activatedSiteUrl] : []),
+      ]);
+      for (const siteUrl of sitesToBackfill) {
+        await queueWarehouseBackfillJobs(db, {
+          ownerId,
+          propertyId: user?.activatedGa4PropertyId || null,
+          siteUrl,
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to queue Google warehouse backfill after connection', { ownerId, err });
+    }
+  };
 
   app.get('/api/auth/google/start', (_req, res) => {
     try {
@@ -146,6 +184,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       if (!tokens.refresh_token) {
         const existingRefreshToken = await getStoredGoogleRefreshToken(db, userId);
         if (existingRefreshToken) {
+          await queueGoogleWarehouseBackfillForUnlockedSites(userId);
           return sendOauthPopupResponse(res, true, 'Google account connection is already saved. You can close this window.');
         }
 
@@ -153,6 +192,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       }
 
       await storeGoogleRefreshToken(db, userId, tokens.refresh_token);
+      await queueGoogleWarehouseBackfillForUnlockedSites(userId);
       return sendOauthPopupResponse(res, true, 'Google account connected successfully. You can close this window.');
     } catch (err: any) {
       return sendOauthPopupResponse(res, false, err.message || 'Google connection failed.');

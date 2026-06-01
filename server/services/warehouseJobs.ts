@@ -27,15 +27,37 @@ const POLL_MS = 10_000;
 const DAILY_SCHEDULER_MS = 60 * 60 * 1000;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_ATTEMPTS = 3;
+const positiveIntegerEnv = (value: string | undefined, fallback: number, min: number, max: number) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.floor(parsed), min), max);
+};
+const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 4, 1, 12);
+const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, 480, 1, 720);
 const GSC_ROW_LIMIT = 25_000;
 const GSC_MAX_PAGES_PER_DATASET = 200;
 const GA4_ROW_LIMIT = 100_000;
 const GA4_MAX_PAGES_PER_DATASET = 100;
 const nowIso = () => new Date().toISOString();
+const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
+const addDays = (value: Date, days: number) => {
+  const next = new Date(value);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+};
 const toNumber = (value: unknown) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
 };
+
+export function recentStableWarehouseDates(days = INITIAL_BACKFILL_DAYS) {
+  const end = addDays(new Date(), -2);
+  const dates: string[] = [];
+  for (let offset = 0; offset < days; offset += 1) {
+    dates.push(toIsoDate(addDays(end, -offset)));
+  }
+  return dates;
+}
 
 function normalizeGa4Date(value: unknown) {
   if (typeof value !== 'string') return null;
@@ -183,7 +205,7 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
 
 async function claimJob(db: AppDatabase) {
   const now = nowIso();
-  const job = await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE status IN ('queued', 'retrying') AND (nextRunAt IS NULL OR nextRunAt <= ?) ORDER BY nextRunAt ASC, updatedAt ASC LIMIT 1", [now]);
+  const job = await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE status IN ('queued', 'retrying') AND (nextRunAt IS NULL OR nextRunAt <= ?) ORDER BY targetDate DESC, nextRunAt ASC, updatedAt ASC LIMIT 1", [now]);
   if (!job) return null;
   const result = await db.run("UPDATE warehouse_jobs SET status = 'running', attemptCount = COALESCE(attemptCount, 0) + 1, startedAt = COALESCE(startedAt, ?), updatedAt = ?, lockedAt = ?, lastError = NULL WHERE id = ? AND status IN ('queued', 'retrying')", [now, now, now, job.id]);
   if (result.changes === 0) return null;
@@ -221,6 +243,20 @@ export async function queueWarehouseSyncJob(db: AppDatabase, input: { ownerId: s
   return db.get<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE id = ?', [id]);
 }
 
+export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId?: string | null; siteUrl: string }) {
+  const jobs = [];
+  for (const targetDate of recentStableWarehouseDates(input.days)) {
+    const job = await queueWarehouseSyncJob(db, {
+      ownerId: input.ownerId,
+      propertyId: input.propertyId,
+      siteUrl: input.siteUrl,
+      targetDate,
+    });
+    jobs.push(job);
+  }
+  return jobs;
+}
+
 export async function listWarehouseJobs(db: AppDatabase, ownerId: string, siteUrl: string, limit = 20) {
   return db.all<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? ORDER BY updatedAt DESC LIMIT ?', [ownerId, siteUrl, limit]);
 }
@@ -233,8 +269,9 @@ export function startWarehouseJobWorker(db: AppDatabase) {
     running = true;
     try {
       await recoverJobs(db);
-      const job = await claimJob(db);
-      if (job) {
+      for (let i = 0; i < JOBS_PER_TICK; i += 1) {
+        const job = await claimJob(db);
+        if (!job) break;
         try {
           await executeWarehouseJob(db, job);
         } catch (error) {
