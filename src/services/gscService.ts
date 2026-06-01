@@ -59,12 +59,18 @@ export class GscApiService {
     forceLive: boolean = false
   ): Promise<GscSearchAnalyticsRow[]> {
     
-    // Check if we can fulfill this from our local data warehouse
+    // Check if we can fulfill this from our local data warehouse.
+    // Dashboard reads should not silently fall back to Google APIs; explicit
+    // sync actions are responsible for refreshing the warehouse.
     const hasUnsupportedFilter = dimensionFilterGroups?.some((group: any) => 
       group.filters?.some((filter: any) => filter.dimension !== 'query' && filter.dimension !== 'date' && filter.dimension !== 'page')
     );
     const canUseWarehouse = !forceLive && !hasUnsupportedFilter && dimensions.every(d => d === 'query' || d === 'date' || d === 'page');
-    if (canUseWarehouse) {
+    if (!forceLive) {
+      if (!canUseWarehouse) {
+        return [];
+      }
+
       try {
         const maxRowsPerRequest = 25000;
         const warehouseRows: GscSearchAnalyticsRow[] = [];
@@ -88,7 +94,7 @@ export class GscApiService {
           });
 
           if (!response.ok) {
-            break;
+            throw new Error('Warehouse query failed');
           }
 
           const rows = await response.json();
@@ -98,12 +104,10 @@ export class GscApiService {
           startRow += fetchLimit;
         }
 
-        // If the warehouse returns data, use it. It is faster and avoids live API export ceilings.
-        if (warehouseRows.length > 0) {
-          return warehouseRows;
-        }
+        return warehouseRows;
       } catch (err) {
-        console.error("Warehouse query failed, falling back to Google API", err);
+        console.error("Warehouse query failed", err);
+        throw err instanceof Error ? err : new Error("Warehouse query failed");
       }
     }
 

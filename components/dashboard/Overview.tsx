@@ -299,7 +299,7 @@ export function Overview({
       const fetchPreferredQueryRows = async (start: string, end: string) => {
         if (!hasQueryMetric) return [];
 
-        if (userProfile?.googleConnected) {
+        if (useLiveData && userProfile?.googleConnected) {
           try {
             return await fetchLiveQueryCounts(start, end);
           } catch (err) {
@@ -310,7 +310,7 @@ export function Overview({
         return fetchWarehouseQueryRows(start, end);
       };
 
-      const shouldPreferLiveDrilldown = Boolean(filterDimension && filterValue && userProfile?.googleConnected);
+      const shouldPreferLiveDrilldown = Boolean(useLiveData && filterDimension && filterValue && userProfile?.googleConnected);
       const fetchPrimaryMetricRows = (start: string, end: string) => {
         if (useLiveData || shouldPreferLiveDrilldown) {
           // Exact drilldowns are bounded to one row per day, so live GSC is safer

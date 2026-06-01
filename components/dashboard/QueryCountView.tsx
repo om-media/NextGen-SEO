@@ -310,7 +310,7 @@ export function QueryCountView({
         return warehouseRows;
       }
 
-      if (useLiveData || userProfile?.googleConnected) {
+      if (useLiveData && userProfile?.googleConnected) {
         try {
           return await fetchLiveDateQueryRows(start, end);
         } catch (err) {

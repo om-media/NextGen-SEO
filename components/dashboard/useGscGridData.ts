@@ -139,6 +139,10 @@ function isGoogleAuthError(message: string) {
 }
 
 function getFriendlyGscError(message: string) {
+  if (message === "WAREHOUSE_UNSUPPORTED_DIMENSION") {
+    return "This Search Console breakdown is not warehoused yet. Use the Queries and Pages tabs for stored dashboard data.";
+  }
+
   if (isGoogleAuthError(message)) {
     return "Your Google data connection needs attention. Please click 'Reconnect Google Data' at the top to restore reporting access.";
   }
@@ -176,7 +180,15 @@ export function useGscGridData({
     const startDate = format(dateRange.from, "yyyy-MM-dd");
     const endDate = format(dateRange.to, "yyyy-MM-dd");
 
-    const shouldUseLiveApi = useLiveData || dimension === "country";
+    const canUseWarehouse = dimension === "query" || dimension === "page";
+    if (!useLiveData && !canUseWarehouse) {
+      setData([]);
+      setError(getFriendlyGscError("WAREHOUSE_UNSUPPORTED_DIMENSION"));
+      setLoading(false);
+      return;
+    }
+
+    const shouldUseLiveApi = Boolean(useLiveData);
 
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
