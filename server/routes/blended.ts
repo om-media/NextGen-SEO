@@ -413,9 +413,77 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         const clicks = toFiniteNumber(row.gsc?.clicks);
         const sessions = toFiniteNumber(row.ga4?.sessions);
         const bounceRate = toFiniteNumber(row.ga4?.bounceRate);
+        const crawl = row.crawl;
+        const hasDemand = impressions >= 100 || clicks > 0 || sessions >= 20;
+        const canonicalKey = crawl?.canonicalUrl ? canonicalPageKey(crawl.canonicalUrl, siteUrl) : null;
+        const canonicalMismatch = Boolean(canonicalKey && canonicalKey !== row.pageKey);
+
+        if (!crawl && (row.gsc || row.ga4)) {
+          if (row.gsc) {
+            reasons.push(`${Math.round(impressions).toLocaleString('en-US')} GSC impressions matched this page key, but the latest crawl did not find the page.`);
+          }
+          if (row.ga4) {
+            reasons.push(`${Math.round(sessions).toLocaleString('en-US')} GA4 sessions matched this page key, but the latest crawl did not find the page.`);
+          }
+          return {
+            label: 'Find in crawl',
+            reasons,
+            severity: hasDemand ? 'high' : 'medium',
+          };
+        }
+
+        if (hasCrawlError(row)) {
+          const statusCode = crawl?.statusCode ? String(crawl.statusCode) : 'no response';
+          reasons.push(crawl?.errorMessage || `Crawler received ${statusCode} for this page.`);
+          if (impressions > 0) reasons.push(`${Math.round(impressions).toLocaleString('en-US')} impressions depend on this URL being fetchable.`);
+          return {
+            label: 'Fix crawl error',
+            reasons,
+            severity: hasDemand ? 'high' : 'medium',
+          };
+        }
+
+        if (crawl?.noindex && (row.gsc || row.ga4)) {
+          reasons.push(
+            row.gsc
+              ? `The crawler found noindex, but GSC still reports ${Math.round(impressions).toLocaleString('en-US')} impressions.`
+              : 'The crawler found noindex on a page with GA4 traffic.',
+          );
+          return {
+            label: 'Resolve noindex conflict',
+            reasons,
+            severity: impressions >= 100 || clicks > 0 ? 'high' : 'medium',
+          };
+        }
+
+        if (canonicalMismatch) {
+          reasons.push(`Crawler canonical points to ${canonicalKey}, but this row is grouped as ${row.pageKey}.`);
+          if (impressions > 0) reasons.push(`${Math.round(impressions).toLocaleString('en-US')} impressions may be split by the canonical target.`);
+          return {
+            label: 'Resolve canonical mismatch',
+            reasons,
+            severity: hasDemand ? 'high' : 'medium',
+          };
+        }
+
+        if (hasMetadataGap(row) && (impressions >= 100 || sessions >= 20)) {
+          const missing = [
+            !crawl?.hasTitle ? 'title' : null,
+            !crawl?.hasMetaDescription ? 'meta description' : null,
+            toFiniteNumber(crawl?.h1Count) !== 1 ? 'single H1' : null,
+          ].filter(Boolean);
+          reasons.push(`Crawler found a ${missing.join(', ')} gap on a page with measurable demand.`);
+          if (impressions > 0) reasons.push(`${Math.round(impressions).toLocaleString('en-US')} impressions can be reviewed against the visible snippet.`);
+          return {
+            label: 'Fix page metadata',
+            reasons,
+            severity: 'medium',
+          };
+        }
 
         if (impressions >= 500 && ctr < 0.02) {
           reasons.push(`High impressions with ${(ctr * 100).toFixed(1)}% CTR.`);
+          if (row.gsc?.position) reasons.push(`Average position is ${toFiniteNumber(row.gsc.position).toFixed(1)}, so snippet and intent should be checked before content expansion.`);
           return {
             label: 'Improve CTR',
             reasons,
@@ -423,12 +491,12 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           };
         }
 
-        if (row.gsc && !row.ga4) {
-          reasons.push('Page has GSC visibility but no matched GA4 landing-page data.');
+        if (crawl && impressions >= 250 && toFiniteNumber(crawl.inboundLinkCount) <= 2) {
+          reasons.push(`${Math.round(impressions).toLocaleString('en-US')} impressions, but only ${toFiniteNumber(crawl.inboundLinkCount).toLocaleString('en-US')} internal inlinks in the latest crawl.`);
           return {
-            label: 'Check GA4 match',
+            label: 'Add internal links',
             reasons,
-            severity: 'low',
+            severity: 'medium',
           };
         }
 
@@ -441,9 +509,38 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           };
         }
 
+        if (sessions >= 25 && impressions < 250) {
+          reasons.push(`${Math.round(sessions).toLocaleString('en-US')} GA4 sessions with only ${Math.round(impressions).toLocaleString('en-US')} GSC impressions.`);
+          return {
+            label: 'Build search visibility',
+            reasons,
+            severity: 'low',
+          };
+        }
+
+        if (row.gsc && !row.ga4) {
+          reasons.push('Page has GSC visibility but no matched GA4 landing-page data for the same normalized path.');
+          return {
+            label: 'Check GA4 match',
+            reasons,
+            severity: 'low',
+          };
+        }
+
+        if ((row.ga4 || row.crawl) && !row.gsc) {
+          reasons.push(row.ga4
+            ? 'GA4 has behavior data, but GSC has no page-query rows for this date range.'
+            : 'Crawler found the page, but GSC has no page-query rows for this date range.');
+          return {
+            label: 'Review search coverage',
+            reasons,
+            severity: 'low',
+          };
+        }
+
         return {
-          label: 'Monitor',
-          reasons: ['Search visibility and engagement signals do not currently trigger a blended status rule.'],
+          label: 'No priority issue',
+          reasons: ['Search, engagement, crawl, and indexability signals do not currently trigger a priority decision rule.'],
           severity: 'none',
         };
       };
@@ -548,9 +645,19 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         .sort((a, b) => b.clicks - a.clicks)
         .slice(0, 6);
 
+      const severityWeight = (severity: string) => {
+        if (severity === 'high') return 3;
+        if (severity === 'medium') return 2;
+        if (severity === 'low') return 1;
+        return 0;
+      };
       const topOpportunities = rows
-        .filter((row) => toFiniteNumber(row.gsc?.impressions) >= 100 && toFiniteNumber(row.gsc?.ctr) < 0.02)
-        .sort((a, b) => toFiniteNumber(b.gsc?.impressions) - toFiniteNumber(a.gsc?.impressions))
+        .filter((row) => row.issueInsight?.severity && row.issueInsight.severity !== 'none')
+        .sort((a, b) => (
+          severityWeight(b.issueInsight.severity) - severityWeight(a.issueInsight.severity)
+          || toFiniteNumber(b.gsc?.impressions) - toFiniteNumber(a.gsc?.impressions)
+          || toFiniteNumber(b.ga4?.sessions) - toFiniteNumber(a.ga4?.sessions)
+        ))
         .slice(0, 4);
 
       res.json({

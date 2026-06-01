@@ -136,7 +136,8 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
     "Outlinks",
     "Word Count",
     "Response Time Ms",
-    "Opportunity / Status",
+    "SEO Decision",
+    "Decision Reasons",
   ];
 
   const escape = (value: string | number) => {
@@ -169,7 +170,8 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
     row.crawl?.outgoingLinkCount ?? "",
     row.crawl?.wordCount ?? "",
     row.crawl?.responseTimeMs ?? "",
-    getOpportunityStatus(row).label,
+    getDecisionStatus(row).label,
+    row.issueInsight.reasons.join(" | "),
   ]);
 
   const csv = [headers, ...body].map((line) => line.map(escape).join(",")).join("\n");
@@ -184,7 +186,7 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
   window.URL.revokeObjectURL(url);
 }
 
-function getOpportunityStatus(row: BlendedPagePerformanceRow) {
+function getDecisionStatus(row: BlendedPagePerformanceRow) {
   if (row.issueInsight.severity !== "none") {
     return {
       className:
@@ -206,14 +208,14 @@ function getOpportunityStatus(row: BlendedPagePerformanceRow) {
   if (!row.ga4) {
     return {
       className: "bg-[#F8FAF9] text-[#647067]",
-      label: "GA4 not matched",
+      label: "Check GA4 match",
     };
   }
 
   if (impressions >= 500 && ctr < 0.02) {
     return {
       className: "bg-[#FFF2E8] text-[#C2410C]",
-      label: "CTR opportunity",
+      label: "Improve CTR",
     };
   }
 
@@ -227,13 +229,13 @@ function getOpportunityStatus(row: BlendedPagePerformanceRow) {
   if (sessions >= 25 && impressions < 250) {
     return {
       className: "bg-[#F4ECFF] text-[#6D28D9]",
-      label: "Visibility gap",
+      label: "Build visibility",
     };
   }
 
   return {
     className: "bg-[#EAF4EC] text-[#0F3D2E]",
-    label: "Stable",
+    label: "No priority issue",
   };
 }
 
@@ -694,8 +696,15 @@ export function BlendedPagesView({
     if (sourceMeta?.topOpportunities) return sourceMeta.topOpportunities;
 
     return rows
-      .filter((row) => (row.gsc?.impressions ?? 0) >= 100 && (row.gsc?.ctr ?? 0) < 0.02)
-      .sort((a, b) => (b.gsc?.impressions ?? 0) - (a.gsc?.impressions ?? 0))
+      .filter((row) => row.issueInsight.severity !== "none")
+      .sort((a, b) => {
+        const weight = { high: 3, medium: 2, low: 1, none: 0 };
+        return (
+          weight[b.issueInsight.severity] - weight[a.issueInsight.severity] ||
+          (b.gsc?.impressions ?? 0) - (a.gsc?.impressions ?? 0) ||
+          (b.ga4?.sessions ?? 0) - (a.ga4?.sessions ?? 0)
+        );
+      })
       .slice(0, 4);
   }, [rows, sourceMeta?.topOpportunities]);
 
@@ -963,7 +972,7 @@ export function BlendedPagesView({
                           Words {sortIndicator("wordCount")}
                         </button>
                       </th>
-                      <th className="px-4 py-3 text-right">Opportunity / Status</th>
+                      <th className="px-4 py-3 text-right">SEO Decision</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -984,7 +993,7 @@ export function BlendedPagesView({
                         const compareRow = compareByPageKey.get(row.pageKey);
                         const clickChange = getChange(row.gsc?.clicks ?? 0, compareRow?.gsc?.clicks ?? 0);
                         const sessionChange = getChange(row.ga4?.sessions ?? 0, compareRow?.ga4?.sessions ?? 0);
-                        const opportunityStatus = getOpportunityStatus(row);
+                        const decisionStatus = getDecisionStatus(row);
                         const crawlStatus = getCrawlStatus(row);
                         const indexabilityStatus = getIndexabilityStatus(row);
                         const titleState = getLengthState(row.crawl?.titleLength ?? 0, 30, 65);
@@ -1055,8 +1064,8 @@ export function BlendedPagesView({
                             </td>
                             <td className="px-4 py-4 text-right">{row.crawl ? formatNumber(row.crawl.wordCount) : "-"}</td>
                             <td className="px-4 py-4 text-right">
-                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${opportunityStatus.className}`}>
-                                {opportunityStatus.label}
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${decisionStatus.className}`}>
+                                {decisionStatus.label}
                               </span>
                             </td>
                           </tr>
@@ -1108,21 +1117,26 @@ export function BlendedPagesView({
           <section className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Top Opportunities</h3>
-                <p className="mt-1 text-sm text-[#647067]">High impressions, low CTR pages.</p>
+                <h3 className="text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Top SEO Decisions</h3>
+                <p className="mt-1 text-sm text-[#647067]">Highest-priority page fixes from blended evidence.</p>
               </div>
             </div>
             <div className="mt-5 space-y-3">
               {opportunities.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-[#E6ECE8] p-4 text-sm text-[#647067]">
-                  No low-CTR opportunities in this filtered range.
+                  No priority decisions in this filtered range.
                 </div>
               ) : (
                 opportunities.map((row) => (
                   <div key={row.pageKey} className="rounded-xl border border-[#E6ECE8] p-4">
-                    <div className="font-semibold text-[#0F172A]">{getPageTitle(row.page)}</div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 font-semibold text-[#0F172A]">{getPageTitle(row.page)}</div>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${getDecisionStatus(row).className}`}>
+                        {getDecisionStatus(row).label}
+                      </span>
+                    </div>
                     <p className="mt-1 text-xs leading-5 text-[#647067]">
-                      {formatCompact(row.gsc?.impressions ?? 0)} impressions at {formatPercent(row.gsc?.ctr ?? 0)} CTR.
+                      {row.issueInsight.reasons[0] || `${formatCompact(row.gsc?.impressions ?? 0)} impressions and ${formatCompact(row.ga4?.sessions ?? 0)} sessions.`}
                     </p>
                   </div>
                 ))
@@ -1223,8 +1237,8 @@ export function BlendedPagesView({
 
                 <section className="rounded-2xl border border-[#E6ECE8] bg-white p-4 lg:col-span-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getOpportunityStatus(selectedRow).className}`}>
-                      {getOpportunityStatus(selectedRow).label}
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getDecisionStatus(selectedRow).className}`}>
+                      {getDecisionStatus(selectedRow).label}
                     </span>
                     <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getCrawlStatus(selectedRow).className}`}>
                       {getCrawlStatus(selectedRow).label}
