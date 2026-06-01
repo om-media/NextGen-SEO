@@ -3,7 +3,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Ga4ApiService, Ga4DataRow } from "@/src/services/ga4Service"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { Loader2, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X, Download } from "lucide-react"
+import { Loader2, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X, Download, Database } from "lucide-react"
 import { format } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ import { Ga4Overview } from "./Ga4Overview"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts'
 
 const COLORS = ['#4285f4', '#5e35b1', '#00897b', '#e65100', '#c2185b', '#0288d1', '#fbc02d', '#7cb342'];
+const WAREHOUSED_GA4_DIMENSIONS = new Set(['date', 'pagePath']);
 
 interface Ga4DataGridProps {
   siteUrl: string;
@@ -69,6 +70,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   // Pagination state
   const [pageIndex, setPageIndex] = useState(0)
   const pageSize = 100
+  const isWarehouseDimension = WAREHOUSED_GA4_DIMENSIONS.has(dimension)
 
   // Keep an opened historic trend visible while users adjust date and compare controls.
   useEffect(() => {
@@ -76,6 +78,12 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   }, [siteUrl, dimension])
 
   useEffect(() => {
+    if (!isWarehouseDimension) {
+      setData([])
+      setError(null)
+      setLoading(false)
+      return
+    }
     if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
 
     const fetchData = async () => {
@@ -164,7 +172,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
     }
 
     fetchData()
-  }, [siteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected])
+  }, [siteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension])
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -331,6 +339,22 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
       }),
     );
   };
+
+  if (!isWarehouseDimension) {
+    return (
+      <Card className="rounded-2xl border border-dashed border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
+        <CardContent className="flex min-h-[220px] flex-col items-center justify-center px-6 text-center">
+          <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
+            <Database className="h-5 w-5" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">GA4 {getDimensionHeader()} is not warehoused yet</h3>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            This dashboard no longer reads Google Analytics live in the background. Page and date reports use the app warehouse today; this dimension needs a dedicated sync table before it can appear here.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <div className="space-y-6">

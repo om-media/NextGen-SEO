@@ -56,6 +56,18 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{current: number, total: number} | null>(null);
 
+  const getInspectionSyncUrls = (rows: IndexingRow[]) => rows.filter(r => {
+    if (!r.inspectionResult) return true;
+
+    if (r.lastCrawl && r.lastInspectionTime) {
+      const crawlTime = new Date(r.lastCrawl).getTime();
+      const inspectTime = new Date(r.lastInspectionTime).getTime();
+      return crawlTime > inspectTime;
+    }
+
+    return false;
+  }).map(r => r.url);
+
   useEffect(() => {
     fetchData();
   }, [siteUrl, dateRange, isLive, googleConnected]);
@@ -113,18 +125,8 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
 
   const triggerBackgroundSync = async (uninspectedData: IndexingRow[]) => {
     if (!googleConnected || isAutoSyncing || processingRef.current) return;
-    
-    const uninspectedUrls = uninspectedData.filter(r => {
-      if (!r.inspectionResult) return true; // Never inspected
-      
-      // Sync again ONLY if Googlebot has crawled it since our last inspection check
-      if (r.lastCrawl && r.lastInspectionTime) {
-        const crawlTime = new Date(r.lastCrawl).getTime();
-        const inspectTime = new Date(r.lastInspectionTime).getTime();
-        return crawlTime > inspectTime;
-      }
-      return false;
-    }).map(r => r.url);
+
+    const uninspectedUrls = getInspectionSyncUrls(uninspectedData);
     
     if (uninspectedUrls.length === 0) return;
 
@@ -144,7 +146,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
       if (data.success) {
         setIsAutoSyncing(true);
         if (!data.alreadyRunning) {
-          toast("Background Sync Started", {
+          toast("Inspection sync started", {
             description: "Fetching index statuses smoothly in the background. You can leave this page.",
           });
         }
@@ -157,7 +159,6 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
   };
 
   const fetchData = async () => {
-    if (!googleConnected && isLive) return;
     setLoading(true);
     try {
       const start = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : format(subDays(new Date(), 28), 'yyyy-MM-dd');
@@ -166,11 +167,6 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
       const res = await authFetch(`/api/indexing/grid?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${start}&endDate=${end}&isLive=${isLive}`);
       const json = await res.json();
       setData(json);
-      
-      if (json && json.length > 0) {
-        triggerBackgroundSync(json);
-      }
-      
     } catch (err) {
       console.error(err);
     } finally {
@@ -411,6 +407,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
   const indexedCount = data.filter(d => d.coverageState?.toLowerCase().includes("indexed") && !d.coverageState?.toLowerCase().includes("not indexed")).length;
   const notIndexedCount = data.filter(d => d.coverageState && (!d.coverageState.toLowerCase().includes("indexed") || d.coverageState.toLowerCase().includes("not indexed"))).length;
   const totalUrls = data.length;
+  const inspectionSyncCount = getInspectionSyncUrls(data).length;
   const currentFilterLabel =
     filterMode === 'at_risk'
       ? 'URLs at risk'
@@ -453,12 +450,12 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
             {isAutoSyncing && syncProgress && (
                <div className="flex items-center space-x-2 text-xs font-medium text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full animate-pulse border border-emerald-100">
                  <RefreshCw className="h-3 w-3 animate-spin" />
-                 <span>Auto-syncing {syncProgress.current} / {syncProgress.total}</span>
+                 <span>Syncing inspections {syncProgress.current} / {syncProgress.total}</span>
                </div>
             )}
           </div>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-[#647067]">
-            Fusing Live Search Console Traffic with Raw Server Logs and the Real-time URL Inspection API.
+            Reviewing warehoused Search Console pages, server-log crawl evidence, and cached URL Inspection results.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-1.5 shrink-0">
@@ -488,6 +485,16 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
           >
             {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
             Refresh results
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="bg-background"
+            onClick={() => triggerBackgroundSync(data)}
+            disabled={!googleConnected || loading || isAutoSyncing || inspectionSyncCount === 0}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${isAutoSyncing ? "animate-spin" : ""}`} />
+            {isAutoSyncing ? "Syncing" : `Sync inspections${inspectionSyncCount > 0 ? ` (${inspectionSyncCount})` : ""}`}
           </Button>
           <div className="flex items-center space-x-2">
             <Switch 

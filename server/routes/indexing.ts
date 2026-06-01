@@ -40,38 +40,10 @@ export function registerIndexingRoutes(
       const start = startDate ? String(startDate) : '2000-01-01';
       const end = endDate ? String(endDate) : '2099-12-31';
 
-      if (isLive === 'true') {
-        try {
-          const json = await googleApiFetchJson(
-            db,
-            ownerId,
-            `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
-            {
-              method: 'POST',
-              body: JSON.stringify({
-                startDate: start,
-                endDate: end,
-                dimensions: ['page'],
-                rowLimit: 5000,
-              }),
-            },
-          );
-          if (json.rows) {
-            gscPages = json.rows.map((r: any) => ({
-              url: r.keys[0],
-              clicks: r.clicks,
-              impressions: r.impressions,
-            }));
-          }
-        } catch (e) {
-          console.error('GSC Live Fetch Error in Indexing:', e);
-        }
-      } else {
-        gscPages = await db.all(
-          'SELECT page as url, SUM(clicks) as clicks, SUM(impressions) as impressions FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? GROUP BY page',
-          [ownerId, siteUrl, start, end],
-        ) as any[];
-      }
+      gscPages = await db.all(
+        'SELECT page as url, SUM(clicks) as clicks, SUM(impressions) as impressions FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? GROUP BY page',
+        [ownerId, siteUrl, start, end],
+      ) as any[];
 
       const logs = await db.all(`
         SELECT urlPath, MAX(timestamp) as lastCrawl

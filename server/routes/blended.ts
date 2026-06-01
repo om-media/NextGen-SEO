@@ -4,7 +4,6 @@ import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { isIsoDateString, isNonEmptyString } from '../validation.js';
 import { canonicalPageKey } from '../reporting/url.js';
-import { googleApiFetchJson } from '../services/googleAuth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
 const toFiniteNumber = (value: unknown) => {
@@ -14,91 +13,10 @@ const toFiniteNumber = (value: unknown) => {
 
 const readField = (row: any, key: string) => row?.[key] ?? row?.[key.toLowerCase()];
 
-const normalizeGa4Date = (value: unknown) => {
-  if (typeof value !== 'string') return null;
-  const dateValue = value;
-  if (isIsoDateString(dateValue)) return dateValue;
-  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(dateValue);
-  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
-};
-
 const getFolderKey = (pageKey: string) => {
   if (!pageKey || pageKey === '/') return '/';
   const parts = pageKey.split('/').filter(Boolean);
   return parts.length > 1 ? `/${parts[0]}/` : '/';
-};
-
-const fetchGa4LandingPages = async (
-  db: AppDatabase,
-  ownerId: string,
-  propertyId: string,
-  siteUrl: string,
-  startDate: string,
-  endDate: string,
-) => {
-  const data = await googleApiFetchJson(
-    db,
-    ownerId,
-    `https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: 'date' }, { name: 'landingPagePlusQueryString' }],
-        metrics: [
-          { name: 'sessions' },
-          { name: 'totalUsers' },
-          { name: 'screenPageViews' },
-          { name: 'bounceRate' },
-          { name: 'eventCount' },
-        ],
-        limit: '100000',
-      }),
-    },
-  );
-
-  const rows = Array.isArray(data?.rows) ? data.rows : [];
-  const replaceAndInsert = db.transaction(async () => {
-    await db.run(
-      'DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?',
-      [ownerId, propertyId, startDate, endDate],
-    );
-
-    for (const row of rows) {
-      const date = normalizeGa4Date(row.dimensionValues?.[0]?.value);
-      const pagePath = row.dimensionValues?.[1]?.value;
-      if (!date || !isNonEmptyString(pagePath)) continue;
-
-      const pageKey = canonicalPageKey(pagePath, siteUrl);
-      await db.run(`
-        INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
-          siteUrl=excluded.siteUrl,
-          pagePath=excluded.pagePath,
-          sessions=excluded.sessions,
-          totalUsers=excluded.totalUsers,
-          pageViews=excluded.pageViews,
-          bounceRate=excluded.bounceRate,
-          eventCount=excluded.eventCount
-      `, [
-        ownerId,
-        propertyId,
-        siteUrl,
-        date,
-        pagePath,
-        pageKey,
-        toFiniteNumber(row.metricValues?.[0]?.value),
-        toFiniteNumber(row.metricValues?.[1]?.value),
-        toFiniteNumber(row.metricValues?.[2]?.value),
-        toFiniteNumber(row.metricValues?.[3]?.value),
-        toFiniteNumber(row.metricValues?.[4]?.value),
-      ]);
-    }
-  });
-
-  await replaceAndInsert();
-  return rows.length;
 };
 
 export function registerBlendedRoutes(app: Express, db: AppDatabase) {
@@ -250,37 +168,6 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           FROM ga4_page_metrics
           WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
         `, [ownerId, ga4PropertyId, startDate, endDate]);
-
-        if (toFiniteNumber(readField(ga4Freshness, 'rowCount')) === 0) {
-          try {
-            await fetchGa4LandingPages(db, ownerId, ga4PropertyId, siteUrl, startDate, endDate);
-
-            ga4Rows = await db.all<any>(`
-              SELECT
-                pageKey,
-                MIN(pagePath) AS pagePath,
-                SUM(sessions) AS sessions,
-                SUM(totalUsers) AS totalUsers,
-                SUM(pageViews) AS pageViews,
-                CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
-                SUM(eventCount) AS eventCount
-              FROM ga4_page_metrics
-              WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
-              GROUP BY pageKey
-            `, [ownerId, ga4PropertyId, startDate, endDate]);
-
-            ga4Freshness = await db.get<any>(`
-              SELECT
-                MIN(date) AS earliestDate,
-                MAX(date) AS latestDate,
-                COUNT(*) AS rowCount
-              FROM ga4_page_metrics
-              WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
-            `, [ownerId, ga4PropertyId, startDate, endDate]);
-          } catch (error) {
-            console.warn('[blended/page-performance] GA4 warehouse backfill skipped', error);
-          }
-        }
 
         for (const row of ga4Rows) {
           const pageKey = canonicalPageKey(readField(row, 'pageKey'));

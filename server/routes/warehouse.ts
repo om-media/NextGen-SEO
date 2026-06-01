@@ -19,8 +19,6 @@ import { getBingCacheStatus } from '../services/bingWarehouse.js';
 
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
 const GA4_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
-const GA4_ROW_LIMIT = 100_000;
-const GA4_MAX_PAGES_PER_DATASET = 100;
 const GA4_RAW_DIMENSIONS: Record<string, string> = {
   browser: 'browser',
   city: 'city',
@@ -30,13 +28,6 @@ const GA4_RAW_DIMENSIONS: Record<string, string> = {
   operatingSystem: 'operatingSystem',
   region: 'region',
   traffic: 'sessionSourceMedium',
-};
-
-const normalizeGa4Date = (value: unknown) => {
-  if (typeof value !== 'string') return null;
-  if (isIsoDateString(value)) return value;
-  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
-  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
 };
 
 const readField = (row: any, key: string) => row?.[key] ?? row?.[key.toLowerCase()];
@@ -114,77 +105,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     },
   );
 
-  const fetchAndStoreGa4Pages = async (
-    ownerId: string,
-    propertyId: string,
-    siteUrl: string,
-    startDate: string,
-    endDate: string,
-  ) => {
-    const rows = [];
-    let offset = 0;
-
-    for (let page = 0; page < GA4_MAX_PAGES_PER_DATASET; page += 1) {
-      const data = await fetchLiveGa4Report(
-        ownerId,
-        propertyId,
-        startDate,
-        endDate,
-        ['date', 'landingPagePlusQueryString'],
-        ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
-        undefined,
-        { limit: GA4_ROW_LIMIT, offset },
-      );
-      const batch = Array.isArray(data?.rows) ? data.rows : [];
-      rows.push(...batch);
-      if (batch.length < GA4_ROW_LIMIT) {
-        break;
-      }
-      offset += GA4_ROW_LIMIT;
-    }
-
-    const replaceAndInsert = db.transaction(async () => {
-      await db.run(
-        'DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?',
-        [ownerId, propertyId, startDate, endDate],
-      );
-
-      for (const row of rows) {
-        const date = normalizeGa4Date(row.dimensionValues?.[0]?.value);
-        const pagePath = row.dimensionValues?.[1]?.value;
-        if (!date || !isNonEmptyString(pagePath)) continue;
-
-        await db.run(`
-          INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
-            siteUrl=excluded.siteUrl,
-            pagePath=excluded.pagePath,
-            sessions=excluded.sessions,
-            totalUsers=excluded.totalUsers,
-            pageViews=excluded.pageViews,
-            bounceRate=excluded.bounceRate,
-            eventCount=excluded.eventCount
-        `, [
-          ownerId,
-          propertyId,
-          siteUrl,
-          date,
-          pagePath,
-          canonicalPageKey(pagePath, siteUrl),
-          toFiniteNumber(row.metricValues?.[0]?.value),
-          toFiniteNumber(row.metricValues?.[1]?.value),
-          toFiniteNumber(row.metricValues?.[2]?.value),
-          toFiniteNumber(row.metricValues?.[3]?.value),
-          toFiniteNumber(row.metricValues?.[4]?.value),
-        ]);
-      }
-    });
-
-    await replaceAndInsert();
-    return rows.length;
-  };
-
   const isExactPageFilter = (dimensionFilter: any) => {
     const filter = dimensionFilter?.filter;
     const fieldName = filter?.fieldName;
@@ -204,27 +124,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (metrics.some((metric) => !GA4_WAREHOUSE_METRICS.has(metric))) return false;
     if (!dimensionFilter) return true;
     return isExactPageFilter(dimensionFilter);
-  };
-
-  const ensureGa4WarehouseRange = async (
-    ownerId: string,
-    propertyId: string,
-    siteUrl: string,
-    startDate: string,
-    endDate: string,
-  ) => {
-    const freshness = await db.get<any>(`
-      SELECT MIN(date) AS earliestDate, MAX(date) AS latestDate, COUNT(*) AS rowCount
-      FROM ga4_page_metrics
-      WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
-    `, [ownerId, propertyId, startDate, endDate]);
-
-    const rowCount = toFiniteNumber(readField(freshness, 'rowCount'));
-    const earliestDate = readField(freshness, 'earliestDate');
-    const latestDate = readField(freshness, 'latestDate');
-    if (rowCount === 0 || !earliestDate || !latestDate || earliestDate > startDate || latestDate < endDate) {
-      await fetchAndStoreGa4Pages(ownerId, propertyId, siteUrl, startDate, endDate);
-    }
   };
 
   const selectGa4MetricSql = (metric: string) => {
@@ -310,6 +209,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       metrics = [],
       dimensionFilter,
       siteUrl,
+      allowLive = false,
     } = req.body;
 
     if (
@@ -320,6 +220,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       || !Array.isArray(metrics)
       || dimensions.some((dimension) => !isNonEmptyString(dimension))
       || metrics.some((metric) => !isNonEmptyString(metric))
+      || typeof allowLive !== 'boolean'
     ) {
       return res.status(400).json({ error: 'Invalid GA4 report payload' });
     }
@@ -340,7 +241,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       if (canServeGa4FromWarehouse(dimensions, metrics, dimensionFilter)) {
-        await ensureGa4WarehouseRange(ownerId, propertyId, resolvedSiteUrl, startDate, endDate);
         const report = await readGa4WarehouseReport(
           ownerId,
           propertyId,
@@ -354,12 +254,24 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         return res.json(report);
       }
 
+      if (!allowLive) {
+        return res.status(409).json({
+          code: 'GA4_REPORT_NOT_WAREHOUSED',
+          error: 'This GA4 report is not warehoused yet. Use a page/date GA4 report or run an explicit sync before reviewing this dimension.',
+          metadata: {
+            source: 'warehouse',
+            supportedDimensions: Array.from(GA4_WAREHOUSE_DIMENSIONS),
+            supportedMetrics: Array.from(GA4_WAREHOUSE_METRICS),
+          },
+        });
+      }
+
       const report = await fetchLiveGa4Report(ownerId, propertyId, startDate, endDate, dimensions, metrics, dimensionFilter);
       return res.json({
         ...report,
         metadata: {
           ...(report?.metadata || {}),
-          source: 'live',
+          source: 'live-explicit',
         },
       });
     } catch (err: any) {

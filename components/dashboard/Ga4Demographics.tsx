@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Ga4ApiService } from "@/src/services/ga4Service"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { Loader2 } from "lucide-react"
+import { Database, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts'
@@ -26,8 +26,10 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
   const [data, setData] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const warehouseReady: boolean = false
 
   useEffect(() => {
+    if (!warehouseReady) return;
     if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
 
     const fetchData = async () => {
@@ -75,7 +77,23 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
     }
 
     fetchData()
-  }, [siteUrl, dateRange, userProfile?.googleConnected])
+  }, [siteUrl, dateRange, userProfile?.googleConnected, warehouseReady])
+
+  if (!warehouseReady) {
+    return (
+      <Card className="mb-4 rounded-2xl border border-dashed border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
+        <CardContent className="flex min-h-[180px] flex-col items-center justify-center px-6 text-center">
+          <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
+            <Database className="h-5 w-5" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">GA4 user breakdowns are not warehoused yet</h3>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Device, browser, OS, and geography reports now wait for an explicit warehouse sync model instead of live-loading from Google Analytics.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
 
   if (loading && Object.keys(data).length === 0) {
     return (

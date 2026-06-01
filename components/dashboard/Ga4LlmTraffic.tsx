@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { Ga4ApiService } from "@/src/services/ga4Service"
 import { format, parseISO } from "date-fns"
-import { ArrowDownIcon, ArrowUpIcon, Download, Info } from "lucide-react"
+import { ArrowDownIcon, ArrowUpIcon, Database, Download, Info } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -58,6 +58,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   const [compareData, setCompareData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const warehouseReady: boolean = false
 
   const llmFilter = {
     filter: {
@@ -70,6 +71,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   }
 
   useEffect(() => {
+    if (!warehouseReady) return
     if (!userProfile?.googleConnected || !siteUrl || !dateRange.from || !dateRange.to) return
     let isMounted = true
 
@@ -173,7 +175,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
 
     fetchData()
     return () => { isMounted = false }
-  }, [siteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.googleConnected])
+  }, [siteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.googleConnected, warehouseReady])
 
 
   const formatValue = (metric: string, value: string) => {
@@ -212,6 +214,22 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
               {Math.abs(diffPercent).toFixed(1)}% vs previous
             </div>
           )}
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!warehouseReady) {
+    return (
+      <Card className="rounded-2xl border border-dashed border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
+        <CardContent className="flex min-h-[240px] flex-col items-center justify-center px-6 text-center">
+          <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
+            <Database className="h-5 w-5" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">LLM referral traffic is not warehoused yet</h3>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            This report needs source and landing-page GA4 facts stored in the app warehouse. It no longer performs background live GA4 reads while the dashboard is open.
+          </p>
         </CardContent>
       </Card>
     )

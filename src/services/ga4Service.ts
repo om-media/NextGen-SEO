@@ -16,6 +16,10 @@ export interface Ga4DataRow {
   metricValues: { value: string }[];
 }
 
+export type Ga4RunReportOptions = {
+  allowLive?: boolean;
+};
+
 export class Ga4ApiService {
   constructor(_accessToken?: string | null) {
   }
@@ -74,7 +78,8 @@ export class Ga4ApiService {
     endDate: string,
     dimensions: string[] = ['date'],
     metrics: string[] = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate'],
-    dimensionFilter?: any
+    dimensionFilter?: any,
+    options: Ga4RunReportOptions = {},
   ) {
     const body: any = {
       dateRanges: [{ startDate, endDate }],
@@ -107,6 +112,7 @@ export class Ga4ApiService {
         dimensions,
         metrics,
         dimensionFilter: body.dimensionFilter,
+        allowLive: Boolean(options.allowLive),
       })
     });
 
