@@ -147,6 +147,7 @@ export function Overview({
   compareDateRange,
   annotations = [],
   annotationControls,
+  refreshKey = 0,
   useLiveData = true
 }: { 
   siteUrl: string, 
@@ -157,6 +158,7 @@ export function Overview({
   compareDateRange?: DateRange,
   annotations?: Annotation[],
   annotationControls?: ReactNode,
+  refreshKey?: number,
   useLiveData?: boolean
 }) {
   const { userProfile } = useAuth()
@@ -417,7 +419,7 @@ export function Overview({
         .finally(() => {
           setLoading(false)
         })
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, refreshKey, userProfile?.googleConnected, userProfile?.tier, useLiveData])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
     const effectiveDateRange = getEffectiveGscDateRange(dateRange);
@@ -729,6 +731,7 @@ export function Overview({
   };
 
   const effectiveSummaryDateRange = getEffectiveGscDateRange(dateRange);
+  const isInitialLoading = loading && rawData.length === 0;
   const selectedDayCount = effectiveSummaryDateRange
     ? Math.max(1, differenceInCalendarDays(effectiveSummaryDateRange.to, effectiveSummaryDateRange.from) + 1)
     : Math.max(1, chartData.length);
@@ -873,7 +876,7 @@ export function Overview({
                   <Info className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
                 <div className="mt-4 text-3xl font-semibold text-foreground">
-                  {loading ? <span className="block h-8 w-20 animate-pulse rounded-xl bg-muted" /> : metric.value}
+                  {isInitialLoading ? <span className="block h-8 w-20 animate-pulse rounded-xl bg-muted" /> : metric.value}
                 </div>
               </div>
               {miniSparkline(metric.key, metric.color)}
@@ -936,7 +939,7 @@ export function Overview({
           </div>
 
           {/* Chart */}
-          {loading ? (
+          {isInitialLoading ? (
             <div className="h-[320px] w-full rounded-2xl bg-background p-6">
               <div className="relative h-full overflow-hidden rounded-xl border border-border bg-card">
                 <div className="absolute inset-x-0 top-[18%] h-px bg-border" />

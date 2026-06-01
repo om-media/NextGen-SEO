@@ -81,12 +81,14 @@ export function QueryCountView({
   dateRange,
   isCompareMode,
   compareDateRange,
+  refreshKey = 0,
   useLiveData = true
 }: { 
   siteUrl: string, 
   dateRange?: DateRange,
   isCompareMode?: boolean,
   compareDateRange?: DateRange,
+  refreshKey?: number,
   useLiveData?: boolean
 }) {
   const { userProfile } = useAuth()
@@ -246,7 +248,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingTable(false)
       })
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, userProfile?.googleConnected, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, refreshKey, userProfile?.googleConnected, userProfile?.tier, useLiveData])
 
   // Fetch Chart Data (Historic Trend of Unique Queries)
   useEffect(() => {
@@ -399,7 +401,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingChart(false)
       })
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, selectedPage, userProfile?.googleConnected, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, refreshKey, selectedPage, userProfile?.googleConnected, userProfile?.tier, useLiveData])
 
   const sortedTableData = useMemo(() => {
     return [...tableData].sort((a, b) => {

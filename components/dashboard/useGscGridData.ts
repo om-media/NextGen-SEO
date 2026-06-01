@@ -11,6 +11,7 @@ type UseGscGridDataParams = {
   dimension: GridDimension;
   dimensionFilterGroups?: any[];
   isCompareMode?: boolean;
+  refreshKey?: number;
   siteUrl: string;
   tier?: "free" | "pro" | "enterprise";
   useLiveData?: boolean;
@@ -160,6 +161,7 @@ export function useGscGridData({
   dimension,
   dimensionFilterGroups,
   isCompareMode,
+  refreshKey = 0,
   siteUrl,
   tier,
   useLiveData = true,
@@ -275,7 +277,7 @@ export function useGscGridData({
       .finally(() => {
         setLoading(false);
       });
-  }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, siteUrl, tier, useLiveData]);
+  }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, refreshKey, siteUrl, tier, useLiveData]);
 
   return { data, error, loading };
 }

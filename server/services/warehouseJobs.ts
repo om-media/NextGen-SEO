@@ -89,6 +89,17 @@ const toNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : 0;
 };
 const isIsoDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+const groupRowsByDate = (rows: any[]) => {
+  const grouped = new Map<string, any[]>();
+  for (const row of rows) {
+    const date = row.keys?.[0];
+    if (!isIsoDate(date)) continue;
+    const existing = grouped.get(date) || [];
+    existing.push(row);
+    grouped.set(date, existing);
+  }
+  return grouped;
+};
 
 export function recentStableWarehouseDates(days = INITIAL_BACKFILL_DAYS) {
   const end = addDays(new Date(), -2);
@@ -157,32 +168,35 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
     fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date', 'query']),
     fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date', 'page', 'query']),
   ]);
+  const siteRowsByDate = groupRowsByDate(siteRows);
+  const queryRowsByDate = groupRowsByDate(queryRows);
+  const pageQueryRowsByDate = groupRowsByDate(pageQueryRows);
 
-  await db.transaction(async () => {
-    await db.run('DELETE FROM gsc_site_metrics WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.siteUrl, startDate, endDate]);
-    await db.run('DELETE FROM gsc_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.siteUrl, startDate, endDate]);
-    await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.siteUrl, startDate, endDate]);
+  for (const date of eachIsoDate(startDate, endDate)) {
+    const dateSiteRows = siteRowsByDate.get(date) || [];
+    const dateQueryRows = queryRowsByDate.get(date) || [];
+    const datePageQueryRows = pageQueryRowsByDate.get(date) || [];
 
-    for (const row of siteRows) {
-      const date = row.keys?.[0];
-      if (!isIsoDate(date)) continue;
-      await db.run('INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?)', [job.ownerId, job.siteUrl, date, toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
-    }
-    for (const row of queryRows) {
-      const date = row.keys?.[0];
-      if (!isIsoDate(date)) continue;
-      await db.run('INSERT INTO gsc_query_metrics (ownerId, siteUrl, date, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [job.ownerId, job.siteUrl, date, row.keys?.[1] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
-    }
-    for (const row of pageQueryRows) {
-      const date = row.keys?.[0];
-      if (!isIsoDate(date)) continue;
-      const page = row.keys?.[1] || '';
-      await db.run(
-        'INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, pageKey, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [job.ownerId, job.siteUrl, date, page, canonicalPageKey(page, job.siteUrl), row.keys?.[2] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)],
-      );
-    }
-  })();
+    await db.transaction(async () => {
+      await db.run('DELETE FROM gsc_site_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
+      await db.run('DELETE FROM gsc_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
+      await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
+
+      for (const row of dateSiteRows) {
+        await db.run('INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?)', [job.ownerId, job.siteUrl, date, toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
+      }
+      for (const row of dateQueryRows) {
+        await db.run('INSERT INTO gsc_query_metrics (ownerId, siteUrl, date, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [job.ownerId, job.siteUrl, date, row.keys?.[1] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
+      }
+      for (const row of datePageQueryRows) {
+        const page = row.keys?.[1] || '';
+        await db.run(
+          'INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, pageKey, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [job.ownerId, job.siteUrl, date, page, canonicalPageKey(page, job.siteUrl), row.keys?.[2] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)],
+        );
+      }
+    })();
+  }
 
   return siteRows.length + queryRows.length + pageQueryRows.length;
 }

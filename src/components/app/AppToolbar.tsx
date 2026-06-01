@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { authFetch } from "@/src/lib/authFetch";
 import { format, parseISO } from "date-fns";
 import { CheckCircle2, Clock3, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DateRange } from "react-day-picker";
 
 type DataSource = "gsc" | "bing" | "ga4" | "blended";
@@ -24,6 +24,7 @@ type AppToolbarProps = {
   onFromDateChange: (date: Date | undefined) => void;
   onOpenRawData?: () => void;
   onToDateChange: (date: Date | undefined) => void;
+  onWarehouseCoverageChange?: () => void;
   rawDataAvailable?: boolean;
   setIsCompareMode: (value: boolean) => void;
 };
@@ -43,6 +44,7 @@ export function AppToolbar({
   onFromDateChange,
   onOpenRawData,
   onToDateChange,
+  onWarehouseCoverageChange,
   rawDataAvailable = false,
   setIsCompareMode,
 }: AppToolbarProps) {
@@ -106,6 +108,7 @@ export function AppToolbar({
               <GscSyncStatusBadge
                 dateRange={dateRange}
                 ga4PropertyId={blendedGa4PropertyId}
+                onCoverageProgress={onWarehouseCoverageChange}
                 refreshKey={syncRefreshKey + gscSyncVersion}
                 siteUrl={currentSiteUrl}
               />
@@ -183,11 +186,13 @@ const formatWholeNumber = (value: number) => new Intl.NumberFormat("en-US").form
 function GscSyncStatusBadge({
   dateRange,
   ga4PropertyId,
+  onCoverageProgress,
   refreshKey,
   siteUrl,
 }: {
   dateRange: DateRange;
   ga4PropertyId?: string | null;
+  onCoverageProgress?: () => void;
   refreshKey: number;
   siteUrl: string;
 }) {
@@ -206,6 +211,12 @@ function GscSyncStatusBadge({
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [pollKey, setPollKey] = useState(0);
+  const lastCoverageSignature = useRef<string | null>(null);
+  const coverageScopeKey = `${siteUrl}|${ga4PropertyId || ""}|${dateRange.from?.toISOString() || ""}|${dateRange.to?.toISOString() || ""}`;
+
+  useEffect(() => {
+    lastCoverageSignature.current = null;
+  }, [coverageScopeKey]);
 
   useEffect(() => {
     if (!siteUrl) {
@@ -236,6 +247,7 @@ function GscSyncStatusBadge({
       .then((status) => {
         if (!cancelled) {
           let activeJobCount = 0;
+          let nextCoverage: typeof coverage = null;
           if (range && status?.gsc?.site) {
             activeJobCount = Number(status?.warehouseJobs?.queued || 0)
               + Number(status?.warehouseJobs?.running || 0)
@@ -248,7 +260,7 @@ function GscSyncStatusBadge({
             const ga4MissingDateCount = status?.ga4?.enabled
               ? Number(status?.ga4?.pages?.missingDateCount || 0)
               : 0;
-            setCoverage({
+            nextCoverage = {
               activeDateCount: Number(status?.warehouseJobs?.activeDateCount || 0),
               activeJobCount,
               coveredDateCount: status.gsc.site.coveredDateCount || 0,
@@ -260,9 +272,9 @@ function GscSyncStatusBadge({
               lastCoveredDate: status.gsc.site.lastCoveredDate || null,
               missingDateCount: status.gsc.site.missingDateCount || 0,
               unavailableDateCount: Number(status?.dateRange?.unavailableDateCount || 0),
-            });
+            };
           } else {
-            setCoverage({
+            nextCoverage = {
               activeDateCount: 0,
               activeJobCount: 0,
               coveredDateCount: status.lastMetricDate ? 1 : 0,
@@ -274,7 +286,23 @@ function GscSyncStatusBadge({
               lastCoveredDate: status.lastMetricDate || null,
               missingDateCount: 0,
               unavailableDateCount: 0,
-            });
+            };
+          }
+
+          setCoverage(nextCoverage);
+          if (nextCoverage) {
+            const signature = [
+              nextCoverage.activeDateCount,
+              nextCoverage.activeJobCount,
+              nextCoverage.coveredDateCount,
+              nextCoverage.errorJobCount,
+              nextCoverage.lastCoveredDate || "",
+              nextCoverage.missingDateCount,
+            ].join(":");
+            if (lastCoverageSignature.current && lastCoverageSignature.current !== signature) {
+              onCoverageProgress?.();
+            }
+            lastCoverageSignature.current = signature;
           }
 
           if (activeJobCount > 0) {

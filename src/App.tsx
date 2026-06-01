@@ -893,6 +893,7 @@ function MainApp() {
                 onFromDateChange={handleFromDateChange}
                 onOpenRawData={() => setActiveMenu("Raw Data")}
                 onToDateChange={handleToDateChange}
+                onWarehouseCoverageChange={bumpGscSyncVersion}
                 rawDataAvailable={canUseRawExports(userProfile?.tier)}
                 setIsCompareMode={setIsCompareMode}
               />
@@ -920,7 +921,7 @@ function MainApp() {
 
               {(activeMenu === "Settings" || activeMenu === "AI Content Auditor" || !( !userProfile?.googleConnected && (((dataSource === 'gsc' || dataSource === 'blended') && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) )) && (
                 <AppContent
-                  key={`${dataSource}-${selectedSite}-${selectedGa4Property}-${gscSyncVersion}`}
+                  key={`${dataSource}-${selectedSite}-${selectedGa4Property}`}
                   activeMenu={activeMenu}
                   annotations={annotations}
                   apiError={apiError}
@@ -932,6 +933,7 @@ function MainApp() {
                   ga4Sites={accessibleGa4Sites}
                   ga4UserDimension={ga4UserDimension}
                   gscDashboardTab={gscDashboardTab}
+                  warehouseRefreshKey={gscSyncVersion}
                   isCompareMode={isCompareMode}
                   onAnnotationsChange={fetchAnnotations}
                   onGa4DashboardTabChange={setGa4DashboardTab}

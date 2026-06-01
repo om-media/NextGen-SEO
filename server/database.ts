@@ -674,8 +674,15 @@ function archiveDatabaseFiles(label: string, includePrimary = true) {
 }
 
 function createSqliteConnection() {
+  const configure = (db: Database.Database) => {
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
+    db.pragma('busy_timeout = 30000');
+    return db;
+  };
+
   try {
-    return new Database(DB_FILENAME);
+    return configure(new Database(DB_FILENAME));
   } catch (error) {
     if (!isSqliteCorruptionError(error)) {
       throw error;
@@ -685,7 +692,7 @@ function createSqliteConnection() {
   archiveDatabaseFiles('corrupt-wal-recovery', false);
 
   try {
-    return new Database(DB_FILENAME);
+    return configure(new Database(DB_FILENAME));
   } catch (error) {
     if (!isSqliteCorruptionError(error)) {
       throw error;
@@ -697,7 +704,7 @@ function createSqliteConnection() {
     fs.copyFileSync(DB_BACKUP_FILENAME, DB_FILENAME);
 
     try {
-      return new Database(DB_FILENAME);
+      return configure(new Database(DB_FILENAME));
     } catch (error) {
       if (!isSqliteCorruptionError(error)) {
         throw error;
@@ -709,7 +716,7 @@ function createSqliteConnection() {
   removeIfExists(DB_FILENAME);
   removeIfExists(`${DB_FILENAME}-wal`);
   removeIfExists(`${DB_FILENAME}-shm`);
-  return new Database(DB_FILENAME);
+  return configure(new Database(DB_FILENAME));
 }
 
 function runOptionalSqliteAlter(db: Database.Database, statement: string) {

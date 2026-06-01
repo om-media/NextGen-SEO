@@ -35,6 +35,7 @@ export function GscDataGrid({
   isCompareMode,
   compareDateRange,
   useLiveData = true,
+  refreshKey = 0,
   hideTrackerButton = false,
   dimensionFilterGroups,
   showHeaderActions = true,
@@ -48,6 +49,7 @@ export function GscDataGrid({
   isCompareMode?: boolean;
   compareDateRange?: DateRange;
   useLiveData?: boolean;
+  refreshKey?: number;
   hideTrackerButton?: boolean;
   dimensionFilterGroups?: any[];
   showHeaderActions?: boolean;
@@ -99,6 +101,7 @@ export function GscDataGrid({
     dimension,
     dimensionFilterGroups: stableDimensionFilterGroups,
     isCompareMode,
+    refreshKey,
     siteUrl,
     tier: userProfile?.tier,
     useLiveData,

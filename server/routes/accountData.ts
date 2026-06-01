@@ -71,6 +71,40 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
   };
 
+  const queueKnownSiteDataIfPossible = async (ownerId: string, knownSites: string[]) => {
+    try {
+      const user = await db.get<{
+        activatedGa4PropertyId?: string | null;
+        activatedSiteUrl?: string | null;
+        gscRefreshToken?: string | null;
+        tier?: string | null;
+        unlockedSites?: string | null;
+      }>(
+        'SELECT activatedGa4PropertyId, activatedSiteUrl, gscRefreshToken, tier, unlockedSites FROM users WHERE id = ?',
+        [ownerId],
+      );
+      if (!user) return;
+
+      const unlockedSites = new Set(uniqueSites(parseStoredSites(user.unlockedSites)));
+      const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
+      const accessibleSites = uniqueSites(knownSites).filter((siteUrl) => (
+        user.tier === 'enterprise' || unlockedSites.has(siteUrl) || siteUrl === activeSiteUrl
+      ));
+
+      for (const siteUrl of accessibleSites) {
+        await queueInitialCrawlIfNeeded(ownerId, siteUrl, user.tier);
+        if (!user.gscRefreshToken) continue;
+        await queueWarehouseBootstrapJobs(db, {
+          ownerId,
+          propertyId: siteUrl === activeSiteUrl ? user.activatedGa4PropertyId || null : null,
+          siteUrl,
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to queue known site data priming', { ownerId, err });
+    }
+  };
+
   app.get('/api/users/:id', authRequired, requireMatchingParam('id'), async (req, res) => {
     try {
       const user = await db.get<any>('SELECT * FROM users WHERE id = ?', [req.params.id]);
@@ -339,8 +373,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     const { knownSites } = req.body;
     if (!isStringArray(knownSites)) return res.status(400).json({ error: 'Invalid knownSites' });
     try {
-      await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(knownSites), req.params.id]);
-      res.json({ success: true, knownSites });
+      const normalizedKnownSites = uniqueSites(knownSites);
+      await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(normalizedKnownSites), req.params.id]);
+      void queueKnownSiteDataIfPossible(req.params.id, normalizedKnownSites);
+      res.json({ success: true, knownSites: normalizedKnownSites });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

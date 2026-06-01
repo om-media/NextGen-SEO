@@ -45,6 +45,7 @@ type AppContentProps = {
   ga4Sites: Array<{ siteUrl: string; displayName: string }>;
   ga4UserDimension: Ga4Dimension;
   gscDashboardTab: GscDashboardTab;
+  warehouseRefreshKey?: number;
   isCompareMode: boolean;
   onAnnotationsChange: () => Promise<void>;
   onGa4DashboardTabChange: (value: Ga4DashboardTab) => void;
@@ -83,6 +84,7 @@ export function AppContent({
   ga4Sites,
   ga4UserDimension,
   gscDashboardTab,
+  warehouseRefreshKey = 0,
   isCompareMode,
   onAnnotationsChange,
   onGa4DashboardTabChange,
@@ -131,6 +133,7 @@ export function AppContent({
               isCompareMode={isCompareMode}
               compareDateRange={compareDateRange}
               annotations={visibleAnnotations}
+              refreshKey={warehouseRefreshKey}
               useLiveData={useLiveData}
               annotationControls={
                 <AnnotationsSettings
@@ -144,19 +147,19 @@ export function AppContent({
                 />
               }
             />
-            <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} hideTrackerButton={true} />
+            <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} hideTrackerButton={true} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="queries" className="space-y-4">
-            <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
+            <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="pages" className="space-y-4">
-            <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
+            <GscDataGrid siteUrl={selectedSite} dimension="page" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="countries" className="space-y-4">
-            <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
+            <GscDataGrid siteUrl={selectedSite} dimension="country" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="query-count" className="space-y-4">
-            <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} />
+            <QueryCountView siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} refreshKey={warehouseRefreshKey} />
           </TabsContent>
         </Tabs>
       )}
