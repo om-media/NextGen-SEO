@@ -41,6 +41,41 @@ const GA4_ROW_LIMIT = 100_000;
 const GA4_MAX_PAGES_PER_DATASET = 100;
 const LLM_SOURCE_REGEXP = 'chatgpt|openai|claude|anthropic|perplexity|copilot|bing.com/chat';
 export const LLM_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_LLM_RANGE_JOB_DAYS, 120, 14, 365);
+export const GA4_DIMENSION_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_GA4_DIMENSION_RANGE_JOB_DAYS, 120, 14, 365);
+const GA4_DIMENSION_SYNC_CONFIGS = [
+  {
+    dimension: 'sessionSourceMedium',
+    metrics: ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+  },
+  {
+    dimension: 'country',
+    metrics: ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+  },
+  {
+    dimension: 'city',
+    metrics: ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+  },
+  {
+    dimension: 'region',
+    metrics: ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+  },
+  {
+    dimension: 'deviceCategory',
+    metrics: ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+  },
+  {
+    dimension: 'browser',
+    metrics: ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+  },
+  {
+    dimension: 'operatingSystem',
+    metrics: ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
+  },
+  {
+    dimension: 'eventName',
+    metrics: ['eventCount', 'totalUsers'],
+  },
+] as const;
 const nowIso = () => new Date().toISOString();
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const addDays = (value: Date, days: number) => {
@@ -198,6 +233,85 @@ async function syncGa4LlmDate(db: AppDatabase, job: WarehouseJob) {
   return syncGa4LlmRange(db, job, job.targetDate, job.targetDate);
 }
 
+async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
+  if (!job.propertyId) return 0;
+  let rowsSynced = 0;
+
+  for (const config of GA4_DIMENSION_SYNC_CONFIGS) {
+    const rows = [];
+    let offset = 0;
+
+    for (let page = 0; page < GA4_MAX_PAGES_PER_DATASET; page += 1) {
+      const data = await googleApiFetchJson(
+        db,
+        job.ownerId,
+        `https://analyticsdata.googleapis.com/v1beta/${job.propertyId}:runReport`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            dateRanges: [{ startDate, endDate }],
+            dimensions: [{ name: 'date' }, { name: config.dimension }],
+            limit: GA4_ROW_LIMIT,
+            metrics: config.metrics.map((name) => ({ name })),
+            offset,
+          }),
+        },
+      );
+      const batch = Array.isArray(data?.rows) ? data.rows : [];
+      rows.push(...batch);
+      if (batch.length < GA4_ROW_LIMIT) {
+        break;
+      }
+      offset += GA4_ROW_LIMIT;
+    }
+
+    await db.transaction(async () => {
+      await db.run(
+        'DELETE FROM ga4_dimension_metrics WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ?',
+        [job.ownerId, job.propertyId, config.dimension, startDate, endDate],
+      );
+
+      for (const row of rows) {
+        const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
+        const dimensionValue = String(row.dimensionValues?.[1]?.value || '(not set)');
+        const metricValue = (metric: string) => {
+          const index = (config.metrics as readonly string[]).indexOf(metric);
+          return index === -1 ? 0 : toNumber(row.metricValues?.[index]?.value);
+        };
+
+        await db.run(
+          `INSERT INTO ga4_dimension_metrics (ownerId, propertyId, siteUrl, date, dimension, dimensionValue, sessions, totalUsers, pageViews, bounceRate, eventCount)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(ownerId, propertyId, date, dimension, dimensionValue) DO UPDATE SET
+             siteUrl=excluded.siteUrl,
+             sessions=excluded.sessions,
+             totalUsers=excluded.totalUsers,
+             pageViews=excluded.pageViews,
+             bounceRate=excluded.bounceRate,
+             eventCount=excluded.eventCount`,
+          [
+            job.ownerId,
+            job.propertyId,
+            job.siteUrl,
+            date,
+            config.dimension,
+            dimensionValue,
+            metricValue('sessions'),
+            metricValue('totalUsers'),
+            metricValue('screenPageViews'),
+            metricValue('bounceRate'),
+            metricValue('eventCount'),
+          ],
+        );
+      }
+    })();
+
+    rowsSynced += rows.length;
+  }
+
+  return rowsSynced;
+}
+
 async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
   if (!job.propertyId) return 0;
   const rows = [];
@@ -285,10 +399,17 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
   const jobEndDate = job.targetDate;
   if (job.jobType === 'ga4-llm-range-sync') {
     rowsSynced = await syncGa4LlmRange(db, job, jobStartDate, jobEndDate);
+  } else if (job.jobType === 'ga4-dimension-range-sync') {
+    rowsSynced = await syncGa4DimensionRange(db, job, jobStartDate, jobEndDate);
   } else if (job.jobType === 'ga4-llm-sync') {
     rowsSynced = await syncGa4LlmDate(db, job);
   } else {
     rowsSynced = (await syncGscDate(db, job)) + (await syncGa4Date(db, job));
+    try {
+      rowsSynced += await syncGa4DimensionRange(db, job, job.targetDate, job.targetDate);
+    } catch (error) {
+      console.warn('[warehouse] Optional GA4 dimension enrichment failed during daily sync:', error);
+    }
     try {
       rowsSynced += await syncGa4LlmDate(db, job);
     } catch (error) {
@@ -439,9 +560,35 @@ export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: { da
   return jobs;
 }
 
+export async function queueWarehouseGa4DimensionBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
+  const jobs = [];
+  for (const chunk of chunkDescendingDates(recentStableWarehouseDates(input.days), GA4_DIMENSION_RANGE_JOB_DAYS)) {
+    const job = await queueWarehouseGa4DimensionRangeJob(db, {
+      endDate: chunk.endDate,
+      ownerId: input.ownerId,
+      propertyId: input.propertyId,
+      siteUrl: input.siteUrl,
+      startDate: chunk.startDate,
+    });
+    jobs.push(job);
+  }
+  return jobs;
+}
+
 export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
     jobType: 'ga4-llm-range-sync',
+    ownerId: input.ownerId,
+    propertyId: input.propertyId,
+    siteUrl: input.siteUrl,
+    targetDate: input.endDate,
+    targetStartDate: input.startDate,
+  });
+}
+
+export async function queueWarehouseGa4DimensionRangeJob(db: AppDatabase, input: { ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
+  return queueWarehouseSyncJob(db, {
+    jobType: 'ga4-dimension-range-sync',
     ownerId: input.ownerId,
     propertyId: input.propertyId,
     siteUrl: input.siteUrl,

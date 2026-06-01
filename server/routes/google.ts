@@ -16,7 +16,7 @@ import {
   verifyGoogleOauthState,
   verifyGoogleOauthStatePayload,
 } from '../services/googleAuth.js';
-import { queueWarehouseBackfillJobs, queueWarehouseLlmBackfillJobs } from '../services/warehouseJobs.js';
+import { queueWarehouseBackfillJobs, queueWarehouseGa4DimensionBackfillJobs, queueWarehouseLlmBackfillJobs } from '../services/warehouseJobs.js';
 import type { UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
@@ -88,6 +88,11 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
           siteUrl,
         });
         if (propertyId) {
+          await queueWarehouseGa4DimensionBackfillJobs(db, {
+            ownerId,
+            propertyId,
+            siteUrl,
+          });
           await queueWarehouseLlmBackfillJobs(db, {
             ownerId,
             propertyId,

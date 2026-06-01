@@ -139,6 +139,21 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, propertyId, date, pageKey)
   );
 
+  CREATE TABLE IF NOT EXISTS ga4_dimension_metrics (
+    ownerId TEXT,
+    propertyId TEXT,
+    siteUrl TEXT,
+    date TEXT,
+    dimension TEXT,
+    dimensionValue TEXT,
+    sessions INTEGER,
+    totalUsers INTEGER,
+    pageViews INTEGER,
+    bounceRate REAL,
+    eventCount INTEGER,
+    PRIMARY KEY (ownerId, propertyId, date, dimension, dimensionValue)
+  );
+
   CREATE TABLE IF NOT EXISTS ga4_llm_referral_metrics (
     ownerId TEXT,
     propertyId TEXT,
@@ -352,6 +367,8 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_key ON ga4_page_metrics(ownerId, propertyId, date, pageKey);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_key_date ON ga4_page_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_path ON ga4_page_metrics(ownerId, propertyId, date, pagePath);
+  CREATE INDEX IF NOT EXISTS idx_ga4_dimension_owner_property_dimension_date ON ga4_dimension_metrics(ownerId, propertyId, dimension, date);
+  CREATE INDEX IF NOT EXISTS idx_ga4_dimension_owner_property_value_date ON ga4_dimension_metrics(ownerId, propertyId, dimension, dimensionValue, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_date ON ga4_llm_referral_metrics(ownerId, propertyId, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_source_date ON ga4_llm_referral_metrics(ownerId, propertyId, sourceClass, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_page_date ON ga4_llm_referral_metrics(ownerId, propertyId, pageKey, date);
@@ -461,6 +478,7 @@ const camelCaseColumns: Record<string, string> = {
   pageviews: 'pageViews',
   bouncerate: 'bounceRate',
   eventcount: 'eventCount',
+  dimensionvalue: 'dimensionValue',
   sourceclass: 'sourceClass',
   engagedsessions: 'engagedSessions',
   keyevents: 'keyEvents',

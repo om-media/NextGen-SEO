@@ -11,7 +11,18 @@ import { Ga4Overview } from "./Ga4Overview"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts'
 
 const COLORS = ['#4285f4', '#5e35b1', '#00897b', '#e65100', '#c2185b', '#0288d1', '#fbc02d', '#7cb342'];
-const WAREHOUSED_GA4_DIMENSIONS = new Set(['date', 'pagePath']);
+const WAREHOUSED_GA4_DIMENSIONS = new Set([
+  'browser',
+  'city',
+  'country',
+  'date',
+  'deviceCategory',
+  'eventName',
+  'operatingSystem',
+  'pagePath',
+  'region',
+  'sessionSourceMedium',
+]);
 
 interface Ga4DataGridProps {
   siteUrl: string;
@@ -26,6 +37,16 @@ type SortColumn = 'dimension' | 'sessions' | 'users' | 'pageviews' | 'bouncerate
 
 type ExtendedGa4DataRow = Ga4DataRow & {
   compareMetricValues?: { value: string }[];
+};
+
+type WarehouseCoverage = {
+  activeDateCount?: number;
+  activeJobCount?: number;
+  coveredDateCount?: number;
+  dimension?: string;
+  expectedDateCount?: number;
+  missingDateCount?: number;
+  queuedDateCount?: number;
 };
 
 const getGa4DimensionValue = (row: any, index = 0) => {
@@ -59,6 +80,8 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   const [data, setData] = useState<ExtendedGa4DataRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [coverage, setCoverage] = useState<WarehouseCoverage | null>(null)
+  const [pollKey, setPollKey] = useState(0)
   
   // Selected row for chart
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
@@ -82,6 +105,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
       setData([])
       setError(null)
       setLoading(false)
+      setCoverage(null)
       return
     }
     if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
@@ -120,6 +144,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
         
         const results = await Promise.all(promises);
         const primaryRows = (results[0].rows || []).filter((row: any) => getGa4DimensionValue(row));
+        setCoverage(results[0]?.metadata?.coverage || null)
 
         if (!isCompareMode || !results[1]) {
            setData(primaryRows);
@@ -172,7 +197,19 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
     }
 
     fetchData()
-  }, [siteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension])
+  }, [siteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey])
+
+  useEffect(() => {
+    if (!coverage || loading) return;
+    const hasWarehouseWork =
+      Number(coverage.activeDateCount || 0) > 0 ||
+      Number(coverage.queuedDateCount || 0) > 0 ||
+      Number(coverage.missingDateCount || 0) > Number(coverage.activeDateCount || 0);
+    if (!hasWarehouseWork) return;
+
+    const timeout = window.setTimeout(() => setPollKey((value) => value + 1), 10000);
+    return () => window.clearTimeout(timeout);
+  }, [coverage, loading])
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -245,6 +282,14 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   // Pagination logic
   const pageCount = Math.ceil(sortedData.length / pageSize)
   const currentData = sortedData.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)
+  const shouldShowCoverage =
+    coverage &&
+    Number(coverage.expectedDateCount || 0) > 0 &&
+    (
+      Number(coverage.activeDateCount || 0) > 0 ||
+      Number(coverage.queuedDateCount || 0) > 0 ||
+      Number(coverage.missingDateCount || 0) > 0
+    );
 
   if (loading && data.length === 0) {
     return (
@@ -358,6 +403,21 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
   return (
     <div className="space-y-6">
+      {shouldShowCoverage && (
+        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="font-medium text-foreground">
+              Backfilling {Math.max(Number(coverage.activeDateCount || 0), Number(coverage.queuedDateCount || 0), Number(coverage.missingDateCount || 0)).toLocaleString()} days
+            </span>
+            <span>
+              {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days stored
+            </span>
+          </div>
+          <span>Existing rows stay visible while the warehouse catches up.</span>
+        </div>
+      )}
+
       {selectedRowKey && dimension !== 'date' && (
         <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
           <div className="flex flex-col items-start justify-between gap-3 border-b border-border bg-card p-5 sm:flex-row sm:items-center">
@@ -512,7 +572,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             <TableBody>
               {currentData.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={metrics.length + 1} className="h-24 text-center text-muted-foreground">
                     No data available.
                   </TableCell>
                 </TableRow>

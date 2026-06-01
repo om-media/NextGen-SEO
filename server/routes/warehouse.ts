@@ -13,12 +13,33 @@ import {
 import { canonicalPageKey } from '../reporting/url.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
 import { canUseRawExports } from '../../shared/plans.js';
-import { LLM_RANGE_JOB_DAYS, listWarehouseJobs, queueWarehouseLlmRangeJob, queueWarehouseSyncJob } from '../services/warehouseJobs.js';
+import {
+  GA4_DIMENSION_RANGE_JOB_DAYS,
+  LLM_RANGE_JOB_DAYS,
+  listWarehouseJobs,
+  queueWarehouseGa4DimensionRangeJob,
+  queueWarehouseLlmRangeJob,
+  queueWarehouseSyncJob,
+} from '../services/warehouseJobs.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { getBingCacheStatus } from '../services/bingWarehouse.js';
 
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
-const GA4_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
+const GA4_PAGE_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
+const GA4_DIMENSION_WAREHOUSE_DIMENSIONS = new Set([
+  'browser',
+  'city',
+  'country',
+  'deviceCategory',
+  'eventName',
+  'operatingSystem',
+  'region',
+  'sessionSourceMedium',
+]);
+const GA4_WAREHOUSE_DIMENSIONS = new Set([
+  ...GA4_PAGE_WAREHOUSE_DIMENSIONS,
+  ...GA4_DIMENSION_WAREHOUSE_DIMENSIONS,
+]);
 const GA4_RAW_DIMENSIONS: Record<string, string> = {
   browser: 'browser',
   city: 'city',
@@ -183,11 +204,49 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     return isNonEmptyString(value) ? value : null;
   };
 
-  const canServeGa4FromWarehouse = (dimensions: string[], metrics: string[], dimensionFilter: unknown) => {
-    if (dimensions.some((dimension) => !GA4_WAREHOUSE_DIMENSIONS.has(dimension))) return false;
+  const getExactDimensionFilter = (dimensionFilter: any) => {
+    const filter = dimensionFilter?.filter;
+    const fieldName = filter?.fieldName;
+    const stringFilter = filter?.stringFilter;
+    if (!filter || !stringFilter || !isNonEmptyString(fieldName)) return null;
+    if (stringFilter.matchType !== undefined && stringFilter.matchType !== 'EXACT') return null;
+    const value = stringFilter.value;
+    return isNonEmptyString(value) ? { fieldName, value } : null;
+  };
+
+  const getGenericGa4WarehouseDimension = (dimensions: string[], dimensionFilter: unknown) => {
+    const genericDimensions = dimensions.filter((dimension) => GA4_DIMENSION_WAREHOUSE_DIMENSIONS.has(dimension));
+    if (genericDimensions.length > 1) return null;
+    if (genericDimensions.length === 1) return genericDimensions[0];
+
+    const exactFilter = getExactDimensionFilter(dimensionFilter);
+    if (
+      exactFilter
+      && GA4_DIMENSION_WAREHOUSE_DIMENSIONS.has(exactFilter.fieldName)
+      && dimensions.length === 1
+      && dimensions[0] === 'date'
+    ) {
+      return exactFilter.fieldName;
+    }
+
+    return null;
+  };
+
+  const canServeGa4PageWarehouseReport = (dimensions: string[], metrics: string[], dimensionFilter: unknown) => {
+    if (dimensions.some((dimension) => !GA4_PAGE_WAREHOUSE_DIMENSIONS.has(dimension))) return false;
     if (metrics.some((metric) => !GA4_WAREHOUSE_METRICS.has(metric))) return false;
     if (!dimensionFilter) return true;
     return isExactPageFilter(dimensionFilter);
+  };
+
+  const canServeGa4DimensionWarehouseReport = (dimensions: string[], metrics: string[], dimensionFilter: unknown) => {
+    const warehouseDimension = getGenericGa4WarehouseDimension(dimensions, dimensionFilter);
+    if (!warehouseDimension) return false;
+    if (dimensions.some((dimension) => dimension !== 'date' && dimension !== warehouseDimension)) return false;
+    if (metrics.some((metric) => !GA4_WAREHOUSE_METRICS.has(metric))) return false;
+    const exactFilter = getExactDimensionFilter(dimensionFilter);
+    if (!exactFilter) return true;
+    return exactFilter.fieldName === warehouseDimension;
   };
 
   const selectGa4MetricSql = (metric: string) => {
@@ -263,6 +322,130 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     };
   };
 
+  const getGa4DimensionCoverage = async (
+    ownerId: string,
+    propertyId: string,
+    siteUrl: string,
+    warehouseDimension: string,
+    startDate: string,
+    endDate: string,
+  ) => {
+    const latestAvailableDate = latestStableReportingDate();
+    const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
+    const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
+
+    const [rowDates, jobRows] = await Promise.all([
+      db.all<{ date: string }>(`
+        SELECT date
+        FROM ga4_dimension_metrics
+        WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ?
+        GROUP BY date
+      `, [ownerId, propertyId, warehouseDimension, startDate, effectiveEndDate]),
+      db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
+        SELECT jobType, status, targetStartDate, targetDate
+        FROM warehouse_jobs
+        WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-dimension-range-sync'
+          AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
+          AND status IN ('queued', 'retrying', 'running', 'completed', 'error')
+      `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
+    ]);
+
+    const activeJobs = jobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
+    const completedJobs = jobRows.filter((row) => row.status === 'completed');
+    const coveredDates = new Set(rowDates.map((row) => row.date));
+    const activeDates = new Set<string>();
+    addJobDatesToSet(coveredDates, completedJobs, startDate, effectiveEndDate);
+    addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
+
+    const queuedOrCoveredDates = new Set([...coveredDates, ...activeDates]);
+    const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
+    const unqueuedMissingDates = expectedDates.filter((date) => !queuedOrCoveredDates.has(date));
+    const datesToQueue = unqueuedMissingDates.slice(Math.max(unqueuedMissingDates.length - 720, 0));
+    const chunksToQueue = chunkAscendingDates(datesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS);
+
+    const queuedJobs = [];
+    for (const chunk of chunksToQueue) {
+      const job = await queueWarehouseGa4DimensionRangeJob(db, {
+        endDate: chunk.endDate,
+        ownerId,
+        propertyId,
+        siteUrl,
+        startDate: chunk.startDate,
+      });
+      queuedJobs.push(job);
+      for (const date of eachIsoDate(chunk.startDate, chunk.endDate)) activeDates.add(date);
+    }
+
+    return {
+      activeDateCount: activeDates.size,
+      activeJobCount: activeJobs.length + queuedJobs.length,
+      coveredDateCount: Math.min(coveredDates.size, expectedDates.length),
+      dimension: warehouseDimension,
+      errorJobCount: jobRows.filter((row) => row.status === 'error').length,
+      expectedDateCount: expectedDates.length,
+      latestAvailableDate,
+      missingDateCount: missingDates.length,
+      queued: queuedJobs.length,
+      queuedDateCount: datesToQueue.length,
+      skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
+    };
+  };
+
+  const readGa4DimensionWarehouseReport = async (
+    ownerId: string,
+    propertyId: string,
+    warehouseDimension: string,
+    startDate: string,
+    endDate: string,
+    dimensions: string[],
+    metrics: string[],
+    dimensionFilter?: any,
+  ) => {
+    const whereParts = ['ownerId = ?', 'propertyId = ?', 'dimension = ?', 'date >= ?', 'date <= ?'];
+    const params: unknown[] = [ownerId, propertyId, warehouseDimension, startDate, endDate];
+    const exactFilter = getExactDimensionFilter(dimensionFilter);
+    if (exactFilter?.fieldName === warehouseDimension) {
+      whereParts.push('dimensionValue = ?');
+      params.push(exactFilter.value);
+    }
+
+    const selectedDimensions = dimensions.map((dimension) => {
+      if (dimension === 'date') return 'date';
+      return 'dimensionValue';
+    });
+    const groupByFields = Array.from(new Set(selectedDimensions));
+    const groupBy = groupByFields.length > 0 ? `GROUP BY ${groupByFields.join(', ')}` : '';
+    const firstMetric = metrics[0] || 'sessions';
+    const firstMetricAlias = firstMetric === 'screenPageViews' ? 'screenPageViews' : firstMetric;
+    const orderBy = dimensions.includes('date')
+      ? 'ORDER BY date ASC'
+      : dimensions.length > 0
+        ? `ORDER BY ${firstMetricAlias} DESC`
+        : '';
+    const selectParts = [
+      ...(selectedDimensions.length > 0 ? selectedDimensions : []),
+      ...metrics.map(selectGa4MetricSql),
+    ];
+
+    const rows = await db.all<any>(`
+      SELECT ${selectParts.join(', ')}
+      FROM ga4_dimension_metrics
+      WHERE ${whereParts.join(' AND ')}
+      ${groupBy}
+      ${orderBy}
+    `, params);
+
+    return {
+      rows: rows.map((row) => ({
+        dimensionValues: dimensions.map((dimension) => ({
+          value: dimension === 'date' ? String(readField(row, 'date') || '') : String(readField(row, 'dimensionValue') || ''),
+        })),
+        metricValues: metrics.map((metric) => ({ value: readGa4MetricValue(row, metric) })),
+      })),
+      metadata: { source: 'warehouse' },
+    };
+  };
+
   app.post('/api/warehouse/ga4/report', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const {
@@ -304,7 +487,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
 
-      if (canServeGa4FromWarehouse(dimensions, metrics, dimensionFilter)) {
+      if (canServeGa4PageWarehouseReport(dimensions, metrics, dimensionFilter)) {
         const report = await readGa4WarehouseReport(
           ownerId,
           propertyId,
@@ -316,6 +499,36 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           dimensionFilter,
         );
         return res.json(report);
+      }
+
+      if (canServeGa4DimensionWarehouseReport(dimensions, metrics, dimensionFilter)) {
+        const warehouseDimension = getGenericGa4WarehouseDimension(dimensions, dimensionFilter);
+        if (!warehouseDimension) {
+          return res.status(409).json({
+            code: 'GA4_REPORT_NOT_WAREHOUSED',
+            error: 'This GA4 report is not warehoused yet.',
+          });
+        }
+        const [coverage, report] = await Promise.all([
+          getGa4DimensionCoverage(ownerId, propertyId, resolvedSiteUrl, warehouseDimension, startDate, endDate),
+          readGa4DimensionWarehouseReport(
+            ownerId,
+            propertyId,
+            warehouseDimension,
+            startDate,
+            endDate,
+            dimensions,
+            metrics,
+            dimensionFilter,
+          ),
+        ]);
+        return res.json({
+          ...report,
+          metadata: {
+            ...(report.metadata || {}),
+            coverage,
+          },
+        });
       }
 
       if (!allowLive) {
