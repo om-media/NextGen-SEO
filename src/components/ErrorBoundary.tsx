@@ -11,6 +11,19 @@ interface State {
   error: Error | null;
 }
 
+const CHUNK_RELOAD_KEY = 'nextgen-seo:last-chunk-reload';
+const CHUNK_RELOAD_COOLDOWN_MS = 60_000;
+
+function isChunkLoadError(error: Error) {
+  const message = `${error.name || ''} ${error.message || ''}`;
+  return (
+    message.includes('Failed to fetch dynamically imported module') ||
+    message.includes('Importing a module script failed') ||
+    message.includes('ChunkLoadError') ||
+    message.includes('Loading chunk')
+  );
+}
+
 export class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
@@ -23,6 +36,13 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error:', error, errorInfo);
+    if (isChunkLoadError(error) && typeof window !== 'undefined') {
+      const lastReloadAt = Number(window.sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0);
+      if (!lastReloadAt || Date.now() - lastReloadAt > CHUNK_RELOAD_COOLDOWN_MS) {
+        window.sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+        window.location.reload();
+      }
+    }
   }
 
   private handleReset = () => {

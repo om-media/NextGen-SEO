@@ -10,7 +10,7 @@ export async function attachFrontend(app: express.Express) {
   const hasBuiltClient = fs.existsSync(path.join(distPath, 'index.html'));
   const useViteMiddleware =
     process.env.USE_VITE_MIDDLEWARE === 'true' ||
-    (process.env.NODE_ENV !== 'production' && !hasBuiltClient);
+    (process.env.NODE_ENV !== 'production' && process.env.USE_VITE_MIDDLEWARE !== 'false');
 
   if (process.env.NODE_ENV === 'production' && !hasBuiltClient) {
     throw new Error('Production frontend build missing. Run npm run build before starting the server.');
