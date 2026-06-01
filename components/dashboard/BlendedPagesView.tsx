@@ -11,6 +11,7 @@ import {
   type BlendedPagePerformanceResponse,
   type BlendedPagePerformanceRow,
 } from "@/src/services/blendedService";
+import { fetchCrawlLinks, type CrawlLinkRow } from "@/src/services/crawlService";
 
 type BlendedPagesViewProps = {
   compareDateRange?: DateRange;
@@ -417,6 +418,40 @@ function DetailItem({
   );
 }
 
+function LinkExampleList({
+  emptyLabel,
+  links,
+  title,
+}: {
+  emptyLabel: string;
+  links: Array<{ label: string; url: string }>;
+  title: string;
+}) {
+  return (
+    <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-3">
+      <h5 className="text-xs font-semibold uppercase tracking-[0.12em] text-[#647067]">{title}</h5>
+      <div className="mt-3 space-y-2">
+        {links.length === 0 ? (
+          <p className="text-sm text-[#647067]">{emptyLabel}</p>
+        ) : (
+          links.slice(0, 8).map((link) => (
+            <a
+              key={`${link.label}-${link.url}`}
+              href={link.url}
+              target="_blank"
+              rel="noreferrer"
+              className="block truncate text-sm font-medium text-[#24443A] hover:text-[#0F3D2E] hover:underline"
+              title={link.url}
+            >
+              {link.label}
+            </a>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function BlendedPagesView({
   compareDateRange,
   dateRange,
@@ -432,6 +467,9 @@ export function BlendedPagesView({
   const [rows, setRows] = useState<BlendedPagePerformanceRow[]>([]);
   const [analyticsFilter, setAnalyticsFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [reviewLinks, setReviewLinks] = useState<CrawlLinkRow[]>([]);
+  const [reviewLinksError, setReviewLinksError] = useState<string | null>(null);
+  const [reviewLinksLoading, setReviewLinksLoading] = useState(false);
   const [selectedRow, setSelectedRow] = useState<BlendedPagePerformanceRow | null>(null);
   const [sourceMeta, setSourceMeta] = useState<BlendedPagePerformanceResponse["meta"] | null>(null);
   const [sortColumn, setSortColumn] = useState<SortColumn>("clicks");
@@ -515,6 +553,55 @@ export function BlendedPagesView({
   ]);
 
   const compareByPageKey = useMemo(() => new Map(compareRows.map((row) => [row.pageKey, row])), [compareRows]);
+
+  useEffect(() => {
+    if (!selectedRow?.crawl || !siteUrl) {
+      setReviewLinks([]);
+      setReviewLinksError(null);
+      setReviewLinksLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    setReviewLinksLoading(true);
+    setReviewLinksError(null);
+
+    fetchCrawlLinks({
+      limit: 80,
+      search: selectedRow.pageKey,
+      siteUrl,
+    })
+      .then((result) => {
+        if (!isMounted) return;
+        setReviewLinks(result.rows || []);
+      })
+      .catch((err: Error) => {
+        if (!isMounted) return;
+        setReviewLinks([]);
+        setReviewLinksError(err.message || "Failed to load crawl links");
+      })
+      .finally(() => {
+        if (isMounted) setReviewLinksLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedRow?.crawl, selectedRow?.pageKey, siteUrl]);
+
+  const reviewInlinks = useMemo(() => {
+    if (!selectedRow) return [];
+    return reviewLinks
+      .filter((link) => link.toPageKey === selectedRow.pageKey || link.toUrl === selectedRow.crawl?.url || link.toUrl === selectedRow.crawl?.finalUrl)
+      .map((link) => ({ label: getDisplayPath(link.fromUrl), url: link.fromUrl }));
+  }, [reviewLinks, selectedRow]);
+
+  const reviewOutlinks = useMemo(() => {
+    if (!selectedRow) return [];
+    return reviewLinks
+      .filter((link) => link.fromPageKey === selectedRow.pageKey || link.fromUrl === selectedRow.crawl?.url || link.fromUrl === selectedRow.crawl?.finalUrl)
+      .map((link) => ({ label: getDisplayPath(link.toUrl), url: link.toUrl }));
+  }, [reviewLinks, selectedRow]);
 
   const filteredTotal = pageInfo?.filteredTotal ?? rows.length;
   const totalRows = pageInfo?.total ?? rows.length;
@@ -1116,6 +1203,22 @@ export function BlendedPagesView({
                   <DetailItem label="Internal links" value={selectedRow.crawl ? formatNumber(selectedRow.crawl.internalLinkCount) : "-"} />
                   <DetailItem label="Outlinks" value={selectedRow.crawl ? formatNumber(selectedRow.crawl.outgoingLinkCount) : "-"} />
                   <DetailItem label="Crawled" value={selectedRow.crawl?.crawledAt || "-"} />
+                  <div className="pt-2">
+                    {reviewLinksLoading ? (
+                      <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-3 text-sm text-[#647067]">
+                        Loading link graph...
+                      </div>
+                    ) : reviewLinksError ? (
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                        {reviewLinksError}
+                      </div>
+                    ) : (
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <LinkExampleList emptyLabel="No inlink sample found." links={reviewInlinks} title="Inlink examples" />
+                        <LinkExampleList emptyLabel="No outlink sample found." links={reviewOutlinks} title="Outlink examples" />
+                      </div>
+                    )}
+                  </div>
                 </DetailBlock>
 
                 <section className="rounded-2xl border border-[#E6ECE8] bg-white p-4 lg:col-span-2">
