@@ -12,6 +12,12 @@ export type CoverageDataset = {
 };
 
 export type DataCoverageResponse = {
+  bing: {
+    enabled: boolean;
+    isFresh: boolean;
+    latestFetchedAt: string | null;
+    rowCount: number;
+  };
   crawl: null | {
     completedAt: string | null;
     id: string;

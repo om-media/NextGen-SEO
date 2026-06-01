@@ -15,6 +15,7 @@ import { googleApiFetchJson } from '../services/googleAuth.js';
 import { canUseRawExports } from '../../shared/plans.js';
 import { listWarehouseJobs, queueWarehouseSyncJob } from '../services/warehouseJobs.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
+import { getBingCacheStatus } from '../services/bingWarehouse.js';
 
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
 const GA4_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
@@ -610,7 +611,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       const expectedDates = eachIsoDate(startDate, endDate);
-      const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, latestCrawl, warehouseJobRows] = await Promise.all([
+      const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, latestCrawl, warehouseJobRows, bingStatus, bingUser] = await Promise.all([
         db.all<{ date: string; rowCount: number }>(`
           SELECT date, COUNT(*) AS rowCount
           FROM gsc_site_metrics
@@ -654,6 +655,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND targetDate <= ?
           GROUP BY status
         `, [ownerId, siteUrl, startDate, endDate]),
+        getBingCacheStatus(db, ownerId, siteUrl),
+        db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [ownerId]),
       ]);
 
       const crawlSummary = latestCrawl
@@ -698,6 +701,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           pageQuery: coverageFromRows(expectedDates, gscPageQueryRows),
           query: coverageFromRows(expectedDates, gscQueryRows),
           site: coverageFromRows(expectedDates, gscSiteRows),
+        },
+        bing: {
+          enabled: Boolean(bingUser?.bingApiKey),
+          isFresh: Boolean(bingStatus.isFresh),
+          latestFetchedAt: bingStatus.latestFetchedAt,
+          rowCount: toCoverageNumber(bingStatus.rowCount),
         },
         warehouseJobs: {
           completed: toCoverageNumber(warehouseJobRows.find((row) => row.status === 'completed')?.jobCount),

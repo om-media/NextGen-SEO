@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, Download, ExternalLink, Filter, FileText, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CheckCircle2, Database, Download, ExternalLink, Filter, FileText, Link2, RefreshCw, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,12 @@ import {
   type BlendedPagePerformanceRow,
 } from "@/src/services/blendedService";
 import { fetchCrawlLinks, type CrawlLinkRow } from "@/src/services/crawlService";
+import {
+  fetchDataCoverage,
+  queueMissingCoverageSync,
+  type CoverageDataset,
+  type DataCoverageResponse,
+} from "@/src/services/dataCoverageService";
 
 type BlendedPagesViewProps = {
   compareDateRange?: DateRange;
@@ -378,6 +384,179 @@ function MetricCard({
   );
 }
 
+function formatCoverageDate(value?: string | null) {
+  if (!value) return "pending";
+  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+  if (Number.isNaN(date.getTime())) return value;
+  return format(date, value.length === 10 ? "MMM d" : "MMM d, HH:mm");
+}
+
+function getDatasetCoveragePercent(dataset?: CoverageDataset | null) {
+  if (!dataset || dataset.expectedDateCount <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round(dataset.coverageRatio * 100)));
+}
+
+function getCoverageClasses(percent: number, disabled = false) {
+  if (disabled) {
+    return {
+      accent: "bg-[#F8FAF9] text-[#647067]",
+      bar: "bg-[#CBD5E1]",
+      label: "text-[#647067]",
+    };
+  }
+  if (percent >= 100) {
+    return {
+      accent: "bg-[#EAF4EC] text-[#0F3D2E]",
+      bar: "bg-[#0F3D2E]",
+      label: "text-[#0F3D2E]",
+    };
+  }
+  if (percent === 0) {
+    return {
+      accent: "bg-[#FEF2F2] text-[#B91C1C]",
+      bar: "bg-[#DC2626]",
+      label: "text-[#B91C1C]",
+    };
+  }
+  return {
+    accent: "bg-[#FFF2E8] text-[#C2410C]",
+    bar: "bg-[#F97316]",
+    label: "text-[#C2410C]",
+  };
+}
+
+function DatasetCoverageCard({
+  dataset,
+  disabledLabel,
+  icon,
+  label,
+  title,
+}: {
+  dataset?: CoverageDataset | null;
+  disabledLabel?: string;
+  icon: ReactNode;
+  label: string;
+  title: string;
+}) {
+  const percent = getDatasetCoveragePercent(dataset);
+  const classes = getCoverageClasses(percent, Boolean(disabledLabel));
+  const covered = dataset?.coveredDateCount ?? 0;
+  const expected = dataset?.expectedDateCount ?? 0;
+  const rowCount = dataset?.totalRows ?? 0;
+  const missingCount = dataset?.missingDateCount ?? 0;
+
+  return (
+    <div className="min-h-[188px] rounded-2xl border border-[#E6ECE8] bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#647067]">{label}</p>
+          <h4 className="mt-2 truncate text-base font-semibold text-[#0F172A]">{title}</h4>
+        </div>
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${classes.accent}`}>{icon}</div>
+      </div>
+      <div className="mt-5 flex items-end justify-between gap-3">
+        <div>
+          <div className="text-3xl font-semibold tracking-[-0.03em] text-[#0F172A]">
+            {disabledLabel ? "-" : `${percent}%`}
+          </div>
+          <p className={`mt-1 text-xs font-semibold ${classes.label}`}>
+            {disabledLabel || (missingCount > 0 ? `${formatNumber(missingCount)} missing days` : "Complete")}
+          </p>
+        </div>
+        <div className="text-right text-xs text-[#647067]">
+          <div>{formatNumber(covered)} / {formatNumber(expected)} days</div>
+          <div>{formatNumber(rowCount)} rows</div>
+        </div>
+      </div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#EEF3F0]">
+        <div className={`h-full rounded-full ${classes.bar}`} style={{ width: `${disabledLabel ? 0 : percent}%` }} />
+      </div>
+      <p className="mt-3 text-xs text-[#647067]">
+        Latest {formatCoverageDate(dataset?.lastCoveredDate)}
+      </p>
+    </div>
+  );
+}
+
+function CrawlCoverageCard({ crawl, loading = false }: { crawl: DataCoverageResponse["crawl"] | null | undefined; loading?: boolean }) {
+  const totalPages = crawl?.summary.totalPages ?? 0;
+  const successPages = crawl?.summary.successPages ?? 0;
+  const issuePages = (crawl?.summary.errorPages ?? 0) + (crawl?.summary.redirectPages ?? 0) + (crawl?.summary.noindexPages ?? 0);
+  const percent = totalPages > 0 ? Math.round((successPages / totalPages) * 100) : 0;
+  const isComplete = crawl?.status === "completed" && totalPages > 0;
+  const classes = getCoverageClasses(isComplete ? 100 : percent, loading && !crawl);
+
+  return (
+    <div className="min-h-[188px] rounded-2xl border border-[#E6ECE8] bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#647067]">Crawl</p>
+          <h4 className="mt-2 truncate text-base font-semibold text-[#0F172A]">Latest inventory</h4>
+        </div>
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${classes.accent}`}>
+          <Link2 className="h-4 w-4" />
+        </div>
+      </div>
+      <div className="mt-5 flex items-end justify-between gap-3">
+        <div>
+          <div className="text-3xl font-semibold tracking-[-0.03em] text-[#0F172A]">{formatNumber(totalPages)}</div>
+          <p className={`mt-1 text-xs font-semibold ${classes.label}`}>
+            {loading && !crawl ? "Loading" : crawl ? `${crawl.status} crawl` : "No crawl yet"}
+          </p>
+        </div>
+        <div className="text-right text-xs text-[#647067]">
+          <div>{formatNumber(successPages)} OK</div>
+          <div>{formatNumber(issuePages)} issues</div>
+        </div>
+      </div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#EEF3F0]">
+        <div className={`h-full rounded-full ${classes.bar}`} style={{ width: `${percent}%` }} />
+      </div>
+      <p className="mt-3 text-xs text-[#647067]">
+        Updated {formatCoverageDate(crawl?.completedAt || crawl?.updatedAt)}
+      </p>
+    </div>
+  );
+}
+
+function BingCoverageCard({ bing, loading = false }: { bing: DataCoverageResponse["bing"] | null | undefined; loading?: boolean }) {
+  const disabled = loading || !bing?.enabled;
+  const percent = disabled ? 0 : bing?.isFresh ? 100 : bing?.rowCount ? 50 : 0;
+  const classes = getCoverageClasses(percent, disabled);
+
+  return (
+    <div className="min-h-[188px] rounded-2xl border border-[#E6ECE8] bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#647067]">Bing</p>
+          <h4 className="mt-2 truncate text-base font-semibold text-[#0F172A]">Query cache</h4>
+        </div>
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${classes.accent}`}>
+          <Search className="h-4 w-4" />
+        </div>
+      </div>
+      <div className="mt-5 flex items-end justify-between gap-3">
+        <div>
+          <div className="text-3xl font-semibold tracking-[-0.03em] text-[#0F172A]">{formatNumber(bing?.rowCount ?? 0)}</div>
+          <p className={`mt-1 text-xs font-semibold ${classes.label}`}>
+            {loading ? "Loading" : !bing?.enabled ? "Not connected" : bing?.isFresh ? "Fresh cache" : "Stale or empty"}
+          </p>
+        </div>
+        <div className="text-right text-xs text-[#647067]">
+          <div>{loading ? "Checking" : bing?.enabled ? "Connected" : "No API key"}</div>
+          <div>{bing?.rowCount ? "Rows stored" : "No rows"}</div>
+        </div>
+      </div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#EEF3F0]">
+        <div className={`h-full rounded-full ${classes.bar}`} style={{ width: `${percent}%` }} />
+      </div>
+      <p className="mt-3 text-xs text-[#647067]">
+        Fetched {formatCoverageDate(bing?.latestFetchedAt)}
+      </p>
+    </div>
+  );
+}
+
 function ChangeBadge({ value, invert = false }: { value: number | null; invert?: boolean }) {
   if (value === null) {
     return <span className="text-xs text-[#647067]">No compare</span>;
@@ -468,6 +647,10 @@ export function BlendedPagesView({
   const [pageInfo, setPageInfo] = useState<BlendedPagePerformanceResponse["page"] | null>(null);
   const [rows, setRows] = useState<BlendedPagePerformanceRow[]>([]);
   const [analyticsFilter, setAnalyticsFilter] = useState("all");
+  const [coverage, setCoverage] = useState<DataCoverageResponse | null>(null);
+  const [coverageError, setCoverageError] = useState<string | null>(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
+  const [coverageSyncing, setCoverageSyncing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [reviewLinks, setReviewLinks] = useState<CrawlLinkRow[]>([]);
   const [reviewLinksError, setReviewLinksError] = useState<string | null>(null);
@@ -480,6 +663,42 @@ export function BlendedPagesView({
 
   const dateStrings = getDateStrings(dateRange);
   const compareDateStrings = getDateStrings(compareDateRange);
+
+  useEffect(() => {
+    if (!siteUrl || !dateStrings) {
+      setCoverage(null);
+      setCoverageError(null);
+      setCoverageLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    setCoverageLoading(true);
+    setCoverageError(null);
+
+    fetchDataCoverage({
+      endDate: dateStrings.endDate,
+      propertyId: ga4PropertyId,
+      siteUrl,
+      startDate: dateStrings.startDate,
+    })
+      .then((result) => {
+        if (!isMounted) return;
+        setCoverage(result);
+      })
+      .catch((err: Error) => {
+        if (!isMounted) return;
+        setCoverage(null);
+        setCoverageError(err.message || "Failed to load source coverage");
+      })
+      .finally(() => {
+        if (isMounted) setCoverageLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [dateStrings?.endDate, dateStrings?.startDate, ga4PropertyId, siteUrl]);
 
   useEffect(() => {
     if (!siteUrl || !dateStrings) return;
@@ -755,6 +974,33 @@ export function BlendedPagesView({
     downloadCsv(allRows);
   };
 
+  const handleRefreshMissingCoverage = async () => {
+    if (!dateStrings) return;
+
+    setCoverageSyncing(true);
+    setCoverageError(null);
+    try {
+      await queueMissingCoverageSync({
+        endDate: dateStrings.endDate,
+        maxDates: 60,
+        propertyId: ga4PropertyId,
+        siteUrl,
+        startDate: dateStrings.startDate,
+      });
+      const result = await fetchDataCoverage({
+        endDate: dateStrings.endDate,
+        propertyId: ga4PropertyId,
+        siteUrl,
+        startDate: dateStrings.startDate,
+      });
+      setCoverage(result);
+    } catch (err) {
+      setCoverageError(err instanceof Error ? err.message : "Failed to queue source refresh");
+    } finally {
+      setCoverageSyncing(false);
+    }
+  };
+
   if (error) {
     return (
       <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">
@@ -822,19 +1068,77 @@ export function BlendedPagesView({
         </div>
       )}
 
-      {sourceMeta && (
-        <div className="flex flex-wrap gap-2 text-xs text-[#647067]">
-          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            GSC refreshed through {sourceMeta.freshness.gsc.latestDate || "pending"} - {formatNumber(sourceMeta.freshness.gsc.rowCount)} rows
-          </span>
-          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            GA4 refreshed through {sourceMeta.freshness.ga4.latestDate || "pending"} - {formatNumber(sourceMeta.freshness.ga4.rowCount)} rows
-          </span>
-          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            Crawl refreshed {sourceMeta.freshness.crawl.completedAt || "pending"} - {formatNumber(sourceMeta.freshness.crawl.rowCount)} rows
-          </span>
+      <section className="rounded-2xl border border-[#E6ECE8] bg-[#FBFCFB] p-5 shadow-[0_12px_32px_rgba(15,61,46,0.04)]">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Source sync</p>
+            <h3 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Data readiness for this range</h3>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 w-fit rounded-xl border-[#D9E5DE] bg-white"
+            disabled={!dateStrings || coverageSyncing}
+            onClick={handleRefreshMissingCoverage}
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${coverageSyncing ? "animate-spin" : ""}`} />
+            {coverageSyncing ? "Queueing..." : "Refresh missing days"}
+          </Button>
         </div>
-      )}
+
+        {coverageError && (
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {coverageError}
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
+          <DatasetCoverageCard
+            dataset={coverage?.gsc.site}
+            disabledLabel={coverageLoading && !coverage ? "Loading" : undefined}
+            icon={coverageLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            label="GSC"
+            title="Site totals"
+          />
+          <DatasetCoverageCard
+            dataset={coverage?.gsc.pageQuery}
+            disabledLabel={coverageLoading && !coverage ? "Loading" : undefined}
+            icon={<Search className="h-4 w-4" />}
+            label="GSC"
+            title="Pages + queries"
+          />
+          <DatasetCoverageCard
+            dataset={coverage?.ga4.pages}
+            disabledLabel={coverageLoading && !coverage ? "Loading" : !ga4PropertyId ? "Not configured" : undefined}
+            icon={<BarChart3 className="h-4 w-4" />}
+            label="GA4"
+            title="Landing pages"
+          />
+          <CrawlCoverageCard crawl={coverage?.crawl} loading={coverageLoading && !coverage} />
+          <BingCoverageCard bing={coverage?.bing} loading={coverageLoading && !coverage} />
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-[#647067]">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
+            <Database className="h-3.5 w-3.5" />
+            Jobs {formatNumber(coverage?.warehouseJobs.total ?? 0)}
+          </span>
+          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
+            Queued {formatNumber((coverage?.warehouseJobs.queued ?? 0) + (coverage?.warehouseJobs.retrying ?? 0))}
+          </span>
+          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
+            Running {formatNumber(coverage?.warehouseJobs.running ?? 0)}
+          </span>
+          <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
+            Failed {formatNumber(coverage?.warehouseJobs.error ?? 0)}
+          </span>
+          {sourceMeta && (
+            <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
+              Crawl rows {formatNumber(sourceMeta.freshness.crawl.rowCount)}
+            </span>
+          )}
+        </div>
+      </section>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <section className="rounded-2xl border border-[#E6ECE8] bg-white shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
