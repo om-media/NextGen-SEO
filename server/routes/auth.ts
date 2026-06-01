@@ -3,7 +3,7 @@ import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { clearSessionCookie, createUserSession, destroySession, hashPassword, readAuthedUser, requireAuth, setSessionCookie, verifyPassword } from '../auth.js';
 
-type UserRow = {
+export type UserRow = {
   id: string;
   email: string;
   passwordHash?: string | null;
@@ -27,7 +27,7 @@ type UserRow = {
   currentPeriodEnd?: string | null;
 };
 
-function normalizeUserProfile(user: UserRow) {
+export function normalizeUserProfile(user: UserRow) {
   return {
     id: user.id,
     email: user.email,
@@ -51,7 +51,7 @@ function normalizeUserProfile(user: UserRow) {
   };
 }
 
-function buildSessionPayload(user: UserRow) {
+export function buildSessionPayload(user: UserRow) {
   const profile = normalizeUserProfile(user);
   return {
     user: {

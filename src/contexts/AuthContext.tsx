@@ -44,6 +44,7 @@ interface AuthContextType {
   loading: boolean;
   registerWithEmail: (email: string, pass: string) => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   connectGoogleServices: () => Promise<void>;
   disconnectGoogleServices: () => Promise<void>;
@@ -156,6 +157,78 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const payload = await response.json() as SessionPayload;
     applySession(payload);
+  };
+
+  const signInWithGoogle = async () => {
+    const response = await authFetch('/api/auth/google/start');
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('Google sign-in route is not available yet. Restart the dev server and try again.');
+    }
+
+    const data = await response.json();
+    if (!response.ok || !data.authUrl) {
+      throw new Error(data.error || 'Failed to start Google sign-in');
+    }
+
+    const popup = window.open(data.authUrl, 'nextgen-google-auth', 'width=520,height=720');
+    if (!popup) {
+      throw new Error('Popup blocked. Please allow popups and try again.');
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timeoutId = window.setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          window.removeEventListener('message', handleMessage);
+          reject(new Error('Google sign-in timed out.'));
+        }
+      }, 120000);
+
+      const pollId = window.setInterval(() => {
+        if (popup.closed && !settled) {
+          settled = true;
+          window.clearTimeout(timeoutId);
+          window.clearInterval(pollId);
+          window.removeEventListener('message', handleMessage);
+          reject(new Error('Google sign-in was cancelled.'));
+        }
+      }, 500);
+
+      const handleMessage = async (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) {
+          return;
+        }
+
+        if (event.data?.source !== 'nextgen-seo-google-oauth') {
+          return;
+        }
+
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        window.clearTimeout(timeoutId);
+        window.clearInterval(pollId);
+        window.removeEventListener('message', handleMessage);
+
+        if (!event.data.success) {
+          reject(new Error(event.data.message || 'Google sign-in failed.'));
+          return;
+        }
+
+        try {
+          await loadSession();
+          resolve();
+        } catch (error: any) {
+          reject(error);
+        }
+      };
+
+      window.addEventListener('message', handleMessage);
+    });
   };
 
   const signOut = async () => {
@@ -397,6 +470,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         registerWithEmail,
         loginWithEmail,
+        signInWithGoogle,
         signOut,
         connectGoogleServices,
         disconnectGoogleServices,

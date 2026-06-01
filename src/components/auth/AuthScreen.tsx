@@ -11,11 +11,12 @@ import { toast } from "sonner"
 const SIGNED_OUT_NOTICE_SESSION_KEY = "signed_out_notice";
 
 export function AuthScreen() {
-  const { registerWithEmail, loginWithEmail } = useAuth()
+  const { registerWithEmail, loginWithEmail, signInWithGoogle } = useAuth()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
+  const [providerLoading, setProviderLoading] = useState<"Google" | "Microsoft" | null>(null)
   const [signedOutMessage, setSignedOutMessage] = useState("")
 
   useEffect(() => {
@@ -63,10 +64,23 @@ export function AuthScreen() {
     }
   }
 
-  const handleProviderAuth = (provider: "Google" | "Microsoft") => {
-    toast.info(`${provider} app sign-in is not configured yet`, {
-      description: "Use email and password for now. Search Console, GA4, and Bing data connections stay separate after login.",
-    })
+  const handleProviderAuth = async (provider: "Google" | "Microsoft") => {
+    setError("")
+    if (provider === "Microsoft") {
+      toast.info("Microsoft app sign-in is not configured yet", {
+        description: "Use email and password or Google sign-in for now.",
+      })
+      return
+    }
+
+    setProviderLoading(provider)
+    try {
+      await signInWithGoogle()
+    } catch (err: any) {
+      setError(err.message || "Google sign-in failed.")
+    } finally {
+      setProviderLoading(null)
+    }
   }
 
   const ProviderButtons = ({ mode }: { mode: "login" | "register" }) => (
@@ -83,17 +97,19 @@ export function AuthScreen() {
           variant="outline"
           className="h-11 rounded-2xl border-[#E6ECE8] bg-white text-[#0F172A] shadow-sm hover:bg-[#FBFCFB]"
           onClick={() => handleProviderAuth("Google")}
+          disabled={loading || providerLoading !== null}
         >
           <span className="mr-2 flex h-5 w-5 items-center justify-center rounded-full border border-[#E6ECE8] text-[11px] font-bold text-[#4285F4]">
             G
           </span>
-          Google
+          {providerLoading === "Google" ? "Opening..." : "Google"}
         </Button>
         <Button
           type="button"
           variant="outline"
           className="h-11 rounded-2xl border-[#E6ECE8] bg-white text-[#0F172A] shadow-sm hover:bg-[#FBFCFB]"
           onClick={() => handleProviderAuth("Microsoft")}
+          disabled={loading || providerLoading !== null}
         >
           <span className="mr-2 grid h-4 w-4 grid-cols-2 gap-0.5">
             <span className="bg-[#F25022]" />
@@ -167,7 +183,7 @@ export function AuthScreen() {
               <p className="text-sm font-semibold text-[#0F3D2E]">Workspace login</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-[#0F172A]">Sign in or create an account</h2>
               <p className="mt-2 text-sm leading-6 text-[#647067]">
-                Use email first, or continue with a provider below. Reporting data connections happen after registration.
+                Use email and password, or continue with Google. Reporting data connections stay manageable after login.
               </p>
             </div>
 

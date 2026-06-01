@@ -1,17 +1,22 @@
+import crypto from 'crypto';
 import type { Express, Request, Response } from 'express';
 import type { AppDatabase } from '../database.js';
-import { requireAuth } from '../auth.js';
+import { createUserSession, requireAuth, setSessionCookie } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString, isNonEmptyString } from '../validation.js';
 import {
+  buildGoogleAppAuthUrl,
   buildGoogleOauthUrl,
   clearGoogleRefreshToken,
   exchangeGoogleCodeForTokens,
+  fetchGoogleUserInfo,
   getStoredGoogleRefreshToken,
   googleApiFetchJson,
   storeGoogleRefreshToken,
   verifyGoogleOauthState,
+  verifyGoogleOauthStatePayload,
 } from '../services/googleAuth.js';
+import type { UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
 function sendOauthPopupResponse(res: Response, success: boolean, message: string) {
@@ -49,6 +54,15 @@ function positiveIntegerOrUndefined(value: unknown) {
 export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
 
+  app.get('/api/auth/google/start', (_req, res) => {
+    try {
+      const authUrl = buildGoogleAppAuthUrl(_req as Request);
+      res.json({ authUrl });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/google/oauth/start', authRequired, (req: AuthedRequest, res) => {
     try {
       const authUrl = buildGoogleOauthUrl(req as Request, req.authUser!.uid);
@@ -72,8 +86,63 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const userId = verifyGoogleOauthState(state);
+      const statePayload = verifyGoogleOauthStatePayload(state);
       const tokens = await exchangeGoogleCodeForTokens(req, code);
+
+      if (statePayload.mode === 'app-auth') {
+        const googleUser = await fetchGoogleUserInfo(tokens.access_token!);
+        if (!googleUser.email_verified) {
+          return sendOauthPopupResponse(res, false, 'Google account email is not verified.');
+        }
+
+        const normalizedEmail = googleUser.email!.trim().toLowerCase();
+        let user = await db.get<UserRow>('SELECT * FROM users WHERE lower(email) = lower(?)', [normalizedEmail]);
+
+        if (user) {
+          await db.run(
+            `UPDATE users
+             SET name = COALESCE(NULLIF(name, ''), ?),
+                 avatarUrl = COALESCE(NULLIF(avatarUrl, ''), ?)
+             WHERE id = ?`,
+            [googleUser.name || null, googleUser.picture || null, user.id],
+          );
+          user = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [user.id]))!;
+        } else {
+          const id = crypto.randomUUID();
+          const createdAt = new Date().toISOString();
+          await db.run(`
+            INSERT INTO users (
+              id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            id,
+            normalizedEmail,
+            null,
+            'google',
+            googleUser.name || null,
+            null,
+            googleUser.picture || null,
+            null,
+            'free',
+            JSON.stringify([]),
+            createdAt,
+            null,
+            0,
+            null,
+            'active',
+            null,
+            null,
+            null,
+          ]);
+          user = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]))!;
+        }
+
+        const sessionToken = await createUserSession(db, user.id);
+        setSessionCookie(res, sessionToken);
+        return sendOauthPopupResponse(res, true, 'Google sign-in successful. You can close this window.');
+      }
+
+      const userId = verifyGoogleOauthState(state);
       if (!tokens.refresh_token) {
         const existingRefreshToken = await getStoredGoogleRefreshToken(db, userId);
         if (existingRefreshToken) {

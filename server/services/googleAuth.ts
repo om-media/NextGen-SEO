@@ -3,9 +3,14 @@ import type { Request } from 'express';
 import type { AppDatabase } from '../database.js';
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const GOOGLE_SCOPES = [
+const GOOGLE_DATA_SCOPES = [
   'https://www.googleapis.com/auth/webmasters.readonly',
   'https://www.googleapis.com/auth/analytics.readonly',
+];
+const GOOGLE_APP_AUTH_SCOPES = [
+  'openid',
+  'email',
+  'profile',
 ];
 
 type GoogleTokenResponse = {
@@ -15,6 +20,20 @@ type GoogleTokenResponse = {
   token_type?: string;
   error?: string;
   error_description?: string;
+};
+
+type GoogleOauthStatePayload = {
+  issuedAt: number;
+  mode: 'connect' | 'app-auth';
+  userId?: string;
+};
+
+export type GoogleUserInfo = {
+  email?: string;
+  email_verified?: boolean;
+  name?: string;
+  picture?: string;
+  sub?: string;
 };
 
 type GoogleOauthConfig = {
@@ -110,29 +129,44 @@ export function getGoogleOauthConfig(req: Request): GoogleOauthConfig {
   return { clientId, clientSecret, redirectUri };
 }
 
-export function buildGoogleOauthState(userId: string) {
-  const payload = encodeBase64Url(JSON.stringify({
-    userId,
-    issuedAt: Date.now(),
-  }));
-  return `${payload}.${signStatePayload(payload)}`;
+function buildGoogleOauthStatePayload(payload: GoogleOauthStatePayload) {
+  const encodedPayload = encodeBase64Url(JSON.stringify(payload));
+  return `${encodedPayload}.${signStatePayload(encodedPayload)}`;
 }
 
-export function verifyGoogleOauthState(state: string) {
+export function buildGoogleOauthState(userId: string) {
+  return buildGoogleOauthStatePayload({
+    issuedAt: Date.now(),
+    mode: 'connect',
+    userId,
+  });
+}
+
+export function buildGoogleAppAuthState() {
+  return buildGoogleOauthStatePayload({
+    issuedAt: Date.now(),
+    mode: 'app-auth',
+  });
+}
+
+export function verifyGoogleOauthStatePayload(state: string) {
   const [payload, signature] = state.split('.');
   if (!payload || !signature || signStatePayload(payload) !== signature) {
     throw new Error('Invalid OAuth state');
   }
 
-  const parsed = JSON.parse(decodeBase64Url(payload)) as { userId: string; issuedAt: number };
-  if (!parsed.userId || !parsed.issuedAt || Date.now() - parsed.issuedAt > 10 * 60 * 1000) {
+  const parsed = JSON.parse(decodeBase64Url(payload)) as GoogleOauthStatePayload;
+  if (!parsed.mode || !parsed.issuedAt || Date.now() - parsed.issuedAt > 10 * 60 * 1000) {
     throw new Error('Expired OAuth state');
   }
+  if (parsed.mode === 'connect' && !parsed.userId) {
+    throw new Error('Invalid OAuth state');
+  }
 
-  return parsed.userId;
+  return parsed;
 }
 
-export function buildGoogleOauthUrl(req: Request, userId: string) {
+function buildGoogleOauthUrlForState(req: Request, state: string, scopes: string[]) {
   const { clientId, redirectUri } = getGoogleOauthConfig(req);
   const params = new URLSearchParams({
     client_id: clientId,
@@ -140,11 +174,43 @@ export function buildGoogleOauthUrl(req: Request, userId: string) {
     response_type: 'code',
     access_type: 'offline',
     prompt: 'consent',
-    scope: GOOGLE_SCOPES.join(' '),
-    state: buildGoogleOauthState(userId),
+    scope: scopes.join(' '),
+    state,
   });
 
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+export function buildGoogleAppAuthUrl(req: Request) {
+  return buildGoogleOauthUrlForState(req, buildGoogleAppAuthState(), GOOGLE_APP_AUTH_SCOPES);
+}
+
+export function verifyGoogleOauthState(state: string) {
+  const parsed = verifyGoogleOauthStatePayload(state);
+  if (parsed.mode !== 'connect' || !parsed.userId) {
+    throw new Error('Invalid OAuth state');
+  }
+
+  return parsed.userId;
+}
+
+export function buildGoogleOauthUrl(req: Request, userId: string) {
+  return buildGoogleOauthUrlForState(req, buildGoogleOauthState(userId), GOOGLE_DATA_SCOPES);
+}
+
+export async function fetchGoogleUserInfo(accessToken: string) {
+  const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const data = await response.json() as GoogleUserInfo;
+  if (!response.ok || !data.email) {
+    throw new Error('Failed to read Google account profile.');
+  }
+
+  return data;
 }
 
 export async function exchangeGoogleCodeForTokens(req: Request, code: string) {

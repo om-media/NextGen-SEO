@@ -48,6 +48,7 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
 
   app.use('/api/auth/login', authRateLimit);
   app.use('/api/auth/register', authRateLimit);
+  app.use('/api/auth/google/start', authRateLimit);
 
   app.get('/api/health', (_req, res) => {
     res.json({
