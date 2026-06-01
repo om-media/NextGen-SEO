@@ -102,15 +102,21 @@ export function AppToolbar({
         <div className="flex w-full flex-wrap items-center gap-2 xl:justify-end">
           {(dataSource === "gsc" || dataSource === "blended") && (
             <>
-              <GscSyncStatusBadge dateRange={dateRange} refreshKey={syncRefreshKey + gscSyncVersion} siteUrl={currentSiteUrl} />
+              <GscSyncStatusBadge
+                dateRange={dateRange}
+                ga4PropertyId={ga4PropertyId}
+                refreshKey={syncRefreshKey + gscSyncVersion}
+                siteUrl={currentSiteUrl}
+              />
               <button
                 className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
                 disabled={syncActionState === "queueing"}
                 onClick={handleRefreshResults}
+                title="Queue missing GSC and GA4 warehouse data for the selected date range."
                 type="button"
               >
                 <RefreshCw className={`h-4 w-4 ${syncActionState === "queueing" ? "animate-spin" : ""}`} />
-                {syncActionState === "queueing" ? "Queueing sync" : "Refresh results"}
+                {syncActionState === "queueing" ? "Queueing sync" : "Sync range"}
               </button>
               {rawDataAvailable && onOpenRawData && (
                 <button
@@ -169,12 +175,26 @@ function getIsoDateRange(dateRange: DateRange) {
   };
 }
 
-function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: DateRange; refreshKey: number; siteUrl: string }) {
+const formatWholeNumber = (value: number) => new Intl.NumberFormat("en-US").format(value);
+
+function GscSyncStatusBadge({
+  dateRange,
+  ga4PropertyId,
+  refreshKey,
+  siteUrl,
+}: {
+  dateRange: DateRange;
+  ga4PropertyId?: string | null;
+  refreshKey: number;
+  siteUrl: string;
+}) {
   const [coverage, setCoverage] = useState<{
     activeJobCount: number;
     coveredDateCount: number;
     errorJobCount: number;
     expectedDateCount: number;
+    hasGa4Gaps: boolean;
+    hasGscGaps: boolean;
     lastCoveredDate: string | null;
     missingDateCount: number;
   } | null>(null);
@@ -192,7 +212,12 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
     setLoading(true);
 
     const request = range
-      ? authFetch(`/api/warehouse/coverage?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${range.startDate}&endDate=${range.endDate}`)
+      ? authFetch(`/api/warehouse/coverage?${new URLSearchParams({
+          endDate: range.endDate,
+          ...(ga4PropertyId ? { propertyId: ga4PropertyId } : {}),
+          siteUrl,
+          startDate: range.startDate,
+        }).toString()}`)
       : authFetch(`/api/warehouse/status?siteUrl=${encodeURIComponent(siteUrl)}`);
 
     request
@@ -209,11 +234,21 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
             activeJobCount = Number(status?.warehouseJobs?.queued || 0)
               + Number(status?.warehouseJobs?.running || 0)
               + Number(status?.warehouseJobs?.retrying || 0);
+            const gscMissingDateCount = Math.max(
+              Number(status?.gsc?.site?.missingDateCount || 0),
+              Number(status?.gsc?.query?.missingDateCount || 0),
+              Number(status?.gsc?.pageQuery?.missingDateCount || 0),
+            );
+            const ga4MissingDateCount = status?.ga4?.enabled
+              ? Number(status?.ga4?.pages?.missingDateCount || 0)
+              : 0;
             setCoverage({
               activeJobCount,
               coveredDateCount: status.gsc.site.coveredDateCount || 0,
               errorJobCount: Number(status?.warehouseJobs?.error || 0),
               expectedDateCount: status.gsc.site.expectedDateCount || 0,
+              hasGa4Gaps: ga4MissingDateCount > 0,
+              hasGscGaps: gscMissingDateCount > 0,
               lastCoveredDate: status.gsc.site.lastCoveredDate || null,
               missingDateCount: status.gsc.site.missingDateCount || 0,
             });
@@ -223,6 +258,8 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
               coveredDateCount: status.lastMetricDate ? 1 : 0,
               errorJobCount: 0,
               expectedDateCount: status.lastMetricDate ? 1 : 0,
+              hasGa4Gaps: false,
+              hasGscGaps: false,
               lastCoveredDate: status.lastMetricDate || null,
               missingDateCount: 0,
             });
@@ -251,28 +288,46 @@ function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: Dat
     return () => {
       cancelled = true;
     };
-  }, [dateRange, pollKey, refreshKey, siteUrl]);
+  }, [dateRange, ga4PropertyId, pollKey, refreshKey, siteUrl]);
 
   const lastMetricDate = coverage?.lastCoveredDate || null;
   const activeJobCount = coverage?.activeJobCount || 0;
   const errorJobCount = coverage?.errorJobCount || 0;
   const isPartial = Boolean(coverage && coverage.expectedDateCount > 0 && coverage.coveredDateCount < coverage.expectedDateCount);
+  const backfillSource = coverage?.hasGscGaps && coverage.hasGa4Gaps
+    ? "GSC/GA4"
+    : coverage?.hasGa4Gaps
+      ? "GA4"
+      : coverage?.hasGscGaps
+        ? "GSC"
+        : "Warehouse";
   let label = "Preparing data";
+  let statusTitle = "Checking stored reporting coverage for this date range.";
   if (loading) {
     label = "Checking coverage";
   } else if (activeJobCount > 0) {
-    label = `Syncing ${activeJobCount} day${activeJobCount === 1 ? "" : "s"}`;
+    label = `${backfillSource} backfill: ${formatWholeNumber(activeJobCount)} day${activeJobCount === 1 ? "" : "s"}`;
+    statusTitle = `Backfilling missing ${backfillSource} warehouse data for the selected date range. Charts keep using available stored rows while this runs.`;
   } else if (errorJobCount > 0) {
     label = `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`;
+    statusTitle = "Some warehouse sync jobs for this selected date range need attention.";
   } else if (lastMetricDate) {
     label = isPartial
       ? `Partial: ${coverage?.coveredDateCount}/${coverage?.expectedDateCount} days through ${format(parseISO(lastMetricDate), "MMM d")}`
       : `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`;
+    statusTitle = isPartial
+      ? "Stored warehouse data does not cover every day in the selected range yet."
+      : "Stored warehouse data covers the selected date range.";
   }
 
   return (
-    <div className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-muted-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-      {lastMetricDate ? (
+    <div
+      className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-muted-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)]"
+      title={statusTitle}
+    >
+      {activeJobCount > 0 ? (
+        <RefreshCw className="h-4 w-4 text-primary" />
+      ) : lastMetricDate ? (
         <CheckCircle2 className="h-4 w-4 text-primary" />
       ) : (
         <Clock3 className="h-4 w-4 text-amber-600" />
