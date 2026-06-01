@@ -4,7 +4,7 @@ import { requireAuth, requireMatchingParam } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
 import { getPlanCrawlLimits, getPlanPropertyLimit } from '../../shared/plans.js';
-import { getFreshBingQueryStats } from '../services/bingWarehouse.js';
+import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseSyncJob } from '../services/warehouseJobs.js';
 import { canAccessSite } from '../accessControl.js';
@@ -447,16 +447,51 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         return res.status(400).json({ error: 'Bing API key not configured' });
       }
 
-      const result = await getFreshBingQueryStats(db, {
+      const [rows, status] = await Promise.all([
+        listCachedBingQueryStats(db, req.authUser!.uid, siteUrl),
+        getBingCacheStatus(db, req.authUser!.uid, siteUrl),
+      ]);
+      res.json({
+        d: rows,
+        meta: {
+          cache: status,
+          fromCache: true,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/bing/stats/sync', authRequired, async (req: AuthedRequest, res) => {
+    const siteUrl = asTrimmedString(req.body?.siteUrl);
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+
+    try {
+      if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
+      const user = await db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [req.authUser!.uid]);
+      if (!user || !user.bingApiKey) {
+        return res.status(400).json({ error: 'Bing API key not configured' });
+      }
+
+      const result = await syncBingQueryStats(db, {
         apiKey: user.bingApiKey,
         ownerId: req.authUser!.uid,
         siteUrl,
       });
+
       res.json({
         d: result.rows,
         meta: {
-          cache: result.status,
-          fromCache: result.fromCache,
+          cache: {
+            isFresh: true,
+            latestFetchedAt: result.fetchedAt,
+            rowCount: result.rows.length,
+          },
+          fromCache: false,
         },
       });
     } catch (err: any) {

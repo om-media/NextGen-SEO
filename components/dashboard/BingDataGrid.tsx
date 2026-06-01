@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, MousePointerClick, Eye, Percent, ArrowUpRight, Download } from "lucide-react"
-import { BingApiService, BingQueryStat } from "@/src/services/bingService"
+import { ChevronLeft, ChevronRight, MousePointerClick, Eye, Percent, ArrowUpRight, Download, RefreshCw } from "lucide-react"
+import { BingApiService, BingQueryStat, type BingQueryStatsMeta } from "@/src/services/bingService"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -36,7 +36,9 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
 export function BingDataGrid({ siteUrl }: BingDataGridProps) {
   const { user, userProfile } = useAuth()
   const [data, setData] = useState<BingQueryStat[]>([])
+  const [cacheMeta, setCacheMeta] = useState<BingQueryStatsMeta | null>(null)
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
   // Pagination
@@ -51,8 +53,9 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
       setError(null)
       try {
         const bingService = new BingApiService()
-        const stats = await bingService.getQueryStats(siteUrl)
-        setData(stats)
+        const result = await bingService.getQueryStats(siteUrl)
+        setData(result.rows)
+        setCacheMeta(result.meta)
         setCurrentPage(1)
       } catch (err: any) {
         console.error("Error fetching Bing stats:", err)
@@ -64,6 +67,33 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
 
     fetchData()
   }, [user, siteUrl, userProfile?.bingConnected])
+
+  const handleRefreshBing = async () => {
+    if (!siteUrl) return
+
+    setSyncing(true)
+    setError(null)
+    try {
+      const bingService = new BingApiService()
+      const result = await bingService.syncQueryStats(siteUrl)
+      setData(result.rows)
+      setCacheMeta(result.meta)
+      setCurrentPage(1)
+    } catch (err: any) {
+      console.error("Error refreshing Bing stats:", err)
+      setError(err.message)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const cacheLabel = useMemo(() => {
+    const fetchedAt = cacheMeta?.cache?.latestFetchedAt
+    if (!fetchedAt) return "Bing cache has not been refreshed yet"
+    const date = new Date(fetchedAt)
+    if (Number.isNaN(date.getTime())) return `Cached ${fetchedAt}`
+    return `Cached ${date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`
+  }, [cacheMeta])
 
   const totals = useMemo(() => {
     if (!data.length) return { clicks: 0, impressions: 0, ctr: 0, position: 0 }
@@ -130,8 +160,15 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
   if (data.length === 0) {
     return (
       <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardContent className="flex items-center justify-center h-64 text-muted-foreground">
-          No data available for this property.
+        <CardContent className="flex h-64 flex-col items-center justify-center gap-4 text-center text-muted-foreground">
+          <div>
+            <div className="font-medium text-foreground">No cached Bing data for this property.</div>
+            <div className="mt-1 text-sm">{cacheLabel}</div>
+          </div>
+          <Button className="rounded-xl" onClick={handleRefreshBing} disabled={syncing}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Refreshing..." : "Refresh Bing data"}
+          </Button>
         </CardContent>
       </Card>
     )
@@ -164,13 +201,19 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
             <div>
               <CardTitle>Top Queries</CardTitle>
               <CardDescription>
-                Review Bing query performance and page through the dataset in smaller, readable batches.
+                Cached Bing query performance. {cacheLabel}.
               </CardDescription>
             </div>
-            <Button variant="outline" className="rounded-xl bg-background" onClick={exportRows} disabled={data.length === 0}>
-              <Download className="mr-2 h-4 w-4" />
-              Export CSV
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" className="rounded-xl bg-background" onClick={handleRefreshBing} disabled={syncing}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+                {syncing ? "Refreshing..." : "Refresh Bing data"}
+              </Button>
+              <Button variant="outline" className="rounded-xl bg-background" onClick={exportRows} disabled={data.length === 0}>
+                <Download className="mr-2 h-4 w-4" />
+                Export CSV
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
