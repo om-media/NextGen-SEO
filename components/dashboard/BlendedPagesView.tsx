@@ -898,7 +898,10 @@ export function BlendedPagesView({
                   <SelectItem value="crawl-errors">Crawl errors</SelectItem>
                   <SelectItem value="metadata-gaps">Metadata gaps</SelectItem>
                   <SelectItem value="indexability">Indexability issues</SelectItem>
-                  <SelectItem value="not-crawled">Not in crawl</SelectItem>
+                  <SelectItem value="canonical-mismatch">Canonical mismatch</SelectItem>
+                  <SelectItem value="missing-gsc">Missing GSC visibility</SelectItem>
+                  <SelectItem value="noindex">Noindex pages</SelectItem>
+                  <SelectItem value="not-crawled">Missing in crawl</SelectItem>
                 </SelectContent>
               </Select>
               <Button variant="secondary" className="h-11 rounded-xl bg-[#EEF3F0] text-[#0F172A]" disabled>

@@ -138,6 +138,9 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
       'crawl-errors',
       'metadata-gaps',
       'indexability',
+      'canonical-mismatch',
+      'missing-gsc',
+      'noindex',
       'not-crawled',
     ].includes(analyticsFilter) ? analyticsFilter : 'all';
     const normalizedTrafficFilter = ['all', 'with-ga4', 'without-ga4'].includes(trafficFilter) ? trafficFilter : 'all';
@@ -393,10 +396,12 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         row.crawl &&
         (!row.crawl.hasTitle || !row.crawl.hasMetaDescription || toFiniteNumber(row.crawl.h1Count) !== 1),
       );
-      const hasIndexabilityIssue = (row: any) => Boolean(
-        row.crawl?.noindex ||
-        (row.crawl?.canonicalUrl && row.crawl?.finalUrl && row.crawl.canonicalUrl !== row.crawl.finalUrl),
+      const hasCanonicalMismatch = (row: any) => Boolean(
+        row.crawl?.canonicalUrl &&
+        canonicalPageKey(row.crawl.canonicalUrl, siteUrl) !== row.pageKey,
       );
+      const hasNoindex = (row: any) => Boolean(row.crawl?.noindex);
+      const hasIndexabilityIssue = (row: any) => Boolean(hasNoindex(row) || hasCanonicalMismatch(row));
       const hasCrawlIssue = (row: any) => {
         const crawl = row.crawl;
         if (!crawl) return true;
@@ -606,6 +611,9 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           if (normalizedAnalyticsFilter === 'crawl-errors' && !hasCrawlError(row)) return false;
           if (normalizedAnalyticsFilter === 'metadata-gaps' && !hasMetadataGap(row)) return false;
           if (normalizedAnalyticsFilter === 'indexability' && !hasIndexabilityIssue(row)) return false;
+          if (normalizedAnalyticsFilter === 'canonical-mismatch' && !hasCanonicalMismatch(row)) return false;
+          if (normalizedAnalyticsFilter === 'missing-gsc' && row.gsc) return false;
+          if (normalizedAnalyticsFilter === 'noindex' && !hasNoindex(row)) return false;
           if (normalizedAnalyticsFilter === 'not-crawled' && row.crawl) return false;
           return true;
         })
