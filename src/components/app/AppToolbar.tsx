@@ -47,6 +47,32 @@ export function AppToolbar({
   const sectionCopy = getSectionCopy(activeMenu, dataSource);
   const showDataControls = activeMenu !== "Settings" && activeMenu !== "AI Content Auditor";
   const [syncRefreshKey, setSyncRefreshKey] = useState(0);
+  const [syncActionState, setSyncActionState] = useState<"idle" | "queueing">("idle");
+
+  const handleRefreshResults = async () => {
+    const range = getIsoDateRange(dateRange);
+    setSyncActionState("queueing");
+    try {
+      if (currentSiteUrl && range) {
+        await authFetch("/api/warehouse/jobs/missing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            endDate: range.endDate,
+            maxDates: 60,
+            siteUrl: currentSiteUrl,
+            startDate: range.startDate,
+          }),
+        });
+      }
+    } catch (error) {
+      console.warn("Failed to queue missing warehouse sync jobs", error);
+    } finally {
+      setSyncRefreshKey((key) => key + 1);
+      onGscSyncComplete?.();
+      setSyncActionState("idle");
+    }
+  };
 
   return (
     <div className="premium-panel relative overflow-hidden rounded-2xl border border-border px-5 py-4 sm:px-6">
@@ -74,17 +100,15 @@ export function AppToolbar({
         <div className="flex w-full flex-wrap items-center gap-2 xl:justify-end">
           {(dataSource === "gsc" || dataSource === "blended") && (
             <>
-              <GscSyncStatusBadge refreshKey={syncRefreshKey} siteUrl={currentSiteUrl} />
+              <GscSyncStatusBadge dateRange={dateRange} refreshKey={syncRefreshKey} siteUrl={currentSiteUrl} />
               <button
                 className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
-                onClick={() => {
-                  setSyncRefreshKey((key) => key + 1);
-                  onGscSyncComplete?.();
-                }}
+                disabled={syncActionState === "queueing"}
+                onClick={handleRefreshResults}
                 type="button"
               >
-                <RefreshCw className="h-4 w-4" />
-                Refresh results
+                <RefreshCw className={`h-4 w-4 ${syncActionState === "queueing" ? "animate-spin" : ""}`} />
+                {syncActionState === "queueing" ? "Queueing sync" : "Refresh results"}
               </button>
               {rawDataAvailable && onOpenRawData && (
                 <button
@@ -135,20 +159,38 @@ export function AppToolbar({
   );
 }
 
-function GscSyncStatusBadge({ refreshKey, siteUrl }: { refreshKey: number; siteUrl: string }) {
-  const [lastMetricDate, setLastMetricDate] = useState<string | null>(null);
+function getIsoDateRange(dateRange: DateRange) {
+  if (!dateRange.from || !dateRange.to) return null;
+  return {
+    endDate: format(dateRange.to, "yyyy-MM-dd"),
+    startDate: format(dateRange.from, "yyyy-MM-dd"),
+  };
+}
+
+function GscSyncStatusBadge({ dateRange, refreshKey, siteUrl }: { dateRange: DateRange; refreshKey: number; siteUrl: string }) {
+  const [coverage, setCoverage] = useState<{
+    coveredDateCount: number;
+    expectedDateCount: number;
+    lastCoveredDate: string | null;
+    missingDateCount: number;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!siteUrl) {
-      setLastMetricDate(null);
+      setCoverage(null);
       return;
     }
 
+    const range = getIsoDateRange(dateRange);
     let cancelled = false;
     setLoading(true);
 
-    authFetch(`/api/warehouse/status?siteUrl=${encodeURIComponent(siteUrl)}`)
+    const request = range
+      ? authFetch(`/api/warehouse/coverage?siteUrl=${encodeURIComponent(siteUrl)}&startDate=${range.startDate}&endDate=${range.endDate}`)
+      : authFetch(`/api/warehouse/status?siteUrl=${encodeURIComponent(siteUrl)}`);
+
+    request
       .then(async (response) => {
         if (!response.ok) {
           throw new Error("Failed to load sync status");
@@ -157,12 +199,26 @@ function GscSyncStatusBadge({ refreshKey, siteUrl }: { refreshKey: number; siteU
       })
       .then((status) => {
         if (!cancelled) {
-          setLastMetricDate(status.lastMetricDate || null);
+          if (range && status?.gsc?.site) {
+            setCoverage({
+              coveredDateCount: status.gsc.site.coveredDateCount || 0,
+              expectedDateCount: status.gsc.site.expectedDateCount || 0,
+              lastCoveredDate: status.gsc.site.lastCoveredDate || null,
+              missingDateCount: status.gsc.site.missingDateCount || 0,
+            });
+          } else {
+            setCoverage({
+              coveredDateCount: status.lastMetricDate ? 1 : 0,
+              expectedDateCount: status.lastMetricDate ? 1 : 0,
+              lastCoveredDate: status.lastMetricDate || null,
+              missingDateCount: 0,
+            });
+          }
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setLastMetricDate(null);
+          setCoverage(null);
         }
       })
       .finally(() => {
@@ -174,12 +230,16 @@ function GscSyncStatusBadge({ refreshKey, siteUrl }: { refreshKey: number; siteU
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, siteUrl]);
+  }, [dateRange, refreshKey, siteUrl]);
 
+  const lastMetricDate = coverage?.lastCoveredDate || null;
+  const isPartial = Boolean(coverage && coverage.expectedDateCount > 0 && coverage.coveredDateCount < coverage.expectedDateCount);
   const label = loading
-    ? "Checking analysis"
+    ? "Checking coverage"
     : lastMetricDate
-      ? `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`
+      ? isPartial
+        ? `Partial: ${coverage?.coveredDateCount}/${coverage?.expectedDateCount} days through ${format(parseISO(lastMetricDate), "MMM d")}`
+        : `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`
       : "Preparing data";
 
   return (

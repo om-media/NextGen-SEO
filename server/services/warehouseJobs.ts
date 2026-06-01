@@ -140,7 +140,20 @@ async function syncGa4Date(db: AppDatabase, job: WarehouseJob) {
     const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || job.targetDate;
     const pagePath = row.dimensionValues?.[1]?.value || '/';
     await db.run(
-      'INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      `INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
+         siteUrl=excluded.siteUrl,
+         pagePath=excluded.pagePath,
+         bounceRate=CASE
+           WHEN ga4_page_metrics.sessions + excluded.sessions > 0
+           THEN ((ga4_page_metrics.bounceRate * ga4_page_metrics.sessions) + (excluded.bounceRate * excluded.sessions)) * 1.0 / (ga4_page_metrics.sessions + excluded.sessions)
+           ELSE excluded.bounceRate
+         END,
+         sessions=ga4_page_metrics.sessions + excluded.sessions,
+         totalUsers=ga4_page_metrics.totalUsers + excluded.totalUsers,
+         pageViews=ga4_page_metrics.pageViews + excluded.pageViews,
+         eventCount=ga4_page_metrics.eventCount + excluded.eventCount`,
       [job.ownerId, job.propertyId, job.siteUrl, date, pagePath, canonicalPageKey(pagePath, job.siteUrl), toNumber(row.metricValues?.[0]?.value), toNumber(row.metricValues?.[1]?.value), toNumber(row.metricValues?.[2]?.value), toNumber(row.metricValues?.[3]?.value), toNumber(row.metricValues?.[4]?.value)],
     );
   }
