@@ -573,6 +573,22 @@ function ChangeBadge({ value, invert = false }: { value: number | null; invert?:
   );
 }
 
+function SourcePresenceBadge({
+  active,
+  activeLabel,
+  inactiveLabel,
+}: {
+  active: boolean;
+  activeLabel: string;
+  inactiveLabel: string;
+}) {
+  return (
+    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${active ? "bg-[#EAF4EC] text-[#0F3D2E]" : "bg-[#F8FAF9] text-[#647067]"}`}>
+      {active ? activeLabel : inactiveLabel}
+    </span>
+  );
+}
+
 function DetailBlock({ children, title }: { children: ReactNode; title: string }) {
   return (
     <section className="rounded-2xl border border-[#E6ECE8] bg-white p-4">
@@ -1310,13 +1326,23 @@ export function BlendedPagesView({
                           <tr key={row.pageKey || row.page} className="group border-t border-[#E6ECE8] hover:bg-[#F8FAF9]">
                             <td className="sticky left-0 z-10 border-r border-[#E6ECE8] bg-white px-4 py-4 group-hover:bg-[#F8FAF9]">
                               <div className="w-[328px]">
-                                <button
-                                  type="button"
-                                  className="block max-w-full truncate text-left font-semibold text-[#24443A] hover:text-[#0F3D2E] hover:underline"
-                                  onClick={() => setSelectedRow(row)}
-                                >
-                                  {getPageTitle(row.page)}
-                                </button>
+                                <div className="flex items-start gap-2">
+                                  <button
+                                    type="button"
+                                    className="block min-w-0 max-w-full truncate text-left font-semibold text-[#24443A] hover:text-[#0F3D2E] hover:underline"
+                                    onClick={() => setSelectedRow(row)}
+                                  >
+                                    {getPageTitle(row.page)}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="mt-[-2px] inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#E6ECE8] bg-white text-[#647067] shadow-sm transition-colors hover:border-[#C9D8D0] hover:text-[#0F3D2E]"
+                                    onClick={() => setSelectedRow(row)}
+                                    title="Review page sources"
+                                  >
+                                    <FileText className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                                 <div className="mt-1 truncate text-xs text-[#647067]">{getDisplayPath(row.page)}</div>
                               </div>
                             </td>
@@ -1460,10 +1486,15 @@ export function BlendedPagesView({
               <DialogHeader className="border-b border-[#E6ECE8] bg-white px-6 py-5">
                 <div className="flex flex-col gap-4 pr-8 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
-                    <DialogTitle className="text-xl">Page review</DialogTitle>
+                    <DialogTitle className="text-xl">Source review</DialogTitle>
                     <DialogDescription className="mt-2 break-all">
                       {selectedRow.crawl?.finalUrl || selectedRow.crawl?.url || selectedRow.page}
                     </DialogDescription>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <SourcePresenceBadge active={Boolean(selectedRow.gsc)} activeLabel="GSC matched" inactiveLabel="No GSC row" />
+                      <SourcePresenceBadge active={Boolean(selectedRow.ga4)} activeLabel="GA4 matched" inactiveLabel="No GA4 row" />
+                      <SourcePresenceBadge active={Boolean(selectedRow.crawl)} activeLabel="Crawl matched" inactiveLabel="No crawl row" />
+                    </div>
                   </div>
                   <a
                     href={selectedRow.crawl?.finalUrl || selectedRow.crawl?.url || selectedRow.page}
