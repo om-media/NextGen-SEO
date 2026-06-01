@@ -24,6 +24,17 @@ interface RankTrackerViewProps {
   siteUrl: string;
 }
 
+type RankTrackingStatus = {
+  autoCollectionEnabled: boolean;
+  collectionCadence: string;
+  totalKeywords: number;
+  freshCount: number;
+  staleCount: number;
+  neverCollectedCount: number;
+  latestUpdated: string | null;
+  today: string;
+};
+
 function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   if (rows.length === 0) return;
   const headers = Object.keys(rows[0]);
@@ -45,12 +56,22 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   window.URL.revokeObjectURL(url);
 }
 
+function formatRankDate(value: string | null | undefined) {
+  if (!value) return "Pending";
+  try {
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(`${value}T00:00:00Z`));
+  } catch {
+    return value;
+  }
+}
+
 export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
   const { userProfile } = useAuth()
   const [keywords, setKeywords] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [rankStatus, setRankStatus] = useState<RankTrackingStatus | null>(null)
   
   // New Keyword Form
   const [newKeywords, setNewKeywords] = useState("")
@@ -90,6 +111,17 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
     }
   }
 
+  const fetchRankStatus = async () => {
+    try {
+      const res = await authFetch(`/api/rank-tracking/status?siteUrl=${encodeURIComponent(siteUrl)}`)
+      if (res.ok) {
+        setRankStatus(await res.json())
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   const fetchHistory = async (id: string) => {
     setHistoryLoading(true)
     try {
@@ -114,6 +146,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
   useEffect(() => {
     if (siteUrl) {
       fetchKeywords()
+      fetchRankStatus()
     }
   }, [siteUrl])
 
@@ -144,6 +177,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
         // let the newTargetDomain stay sticky for convenience
         setAddDialogOpen(false)
         await fetchKeywords() // Pull the keywords locally instantly
+        await fetchRankStatus()
         
         // Trigger a fresh sync with live hints automatically.
         handleSync(true); // pass true to indicate it is an auto-sync and avoid blocking
@@ -161,7 +195,8 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
         setSelectedKeywordId(null)
         setHistoryData([])
       }
-      fetchKeywords()
+      await fetchKeywords()
+      await fetchRankStatus()
     } catch (e) {
       console.error(e)
     }
@@ -290,6 +325,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
       })
       if (res.ok) {
         await fetchKeywords()
+        await fetchRankStatus()
         if (selectedKeywordId) fetchHistory(selectedKeywordId)
       }
     } catch (e) {
@@ -323,7 +359,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
       location: keyword.location,
       device: keyword.device,
       targetDomain: keyword.targetDomain || "",
-      updatedAt: keyword.updatedAt || "",
+      updatedAt: keyword.lastUpdated || "",
     })));
   };
 
@@ -352,9 +388,9 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
             <Download className="w-4 h-4 mr-2" />
             Export CSV
           </Button>
-          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing || keywords.length === 0}>
-            <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing...' : 'Sync Ranks'}
+          <Button variant="outline" size="sm" onClick={handleSync} disabled={loading || syncing || keywords.length === 0}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Refreshing" : "Refresh"}
           </Button>
           
           <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
@@ -417,6 +453,30 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
         </div>
       </div>
 
+      {rankStatus && rankStatus.totalKeywords > 0 && (
+        <div className={`flex flex-col gap-3 rounded-2xl border p-4 text-sm sm:flex-row sm:items-center sm:justify-between ${
+          rankStatus.staleCount > 0
+            ? "border-amber-200 bg-amber-50 text-amber-950"
+            : "border-[#DCEBE2] bg-[#F2FAF5] text-[#0F3D2E]"
+        }`}>
+          <div>
+            <p className="font-medium">
+              Automatic daily rank collection is {rankStatus.autoCollectionEnabled ? "enabled" : "disabled"}.
+            </p>
+            <p className="mt-1 text-xs opacity-80">
+              {rankStatus.freshCount.toLocaleString()} of {rankStatus.totalKeywords.toLocaleString()} keywords have today's data
+              {rankStatus.latestUpdated ? `; latest stored date is ${formatRankDate(rankStatus.latestUpdated)}.` : "."}
+            </p>
+          </div>
+          {rankStatus.staleCount > 0 && (
+            <Button variant="outline" size="sm" onClick={handleSync} disabled={loading || syncing}>
+              <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+              Refresh stale ranks
+            </Button>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -473,6 +533,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
                       <TableHead>Keyword</TableHead>
                       <TableHead>Device/Loc</TableHead>
                       <TableHead className="text-center">Current Rank</TableHead>
+                      <TableHead>Updated</TableHead>
                       <TableHead className="hidden md:table-cell">URL</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -493,6 +554,9 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
                         </TableCell>
                         <TableCell className="text-center">
                           {renderRankBadge(kw.currentPosition)}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {formatRankDate(kw.lastUpdated)}
                         </TableCell>
                         <TableCell className="hidden md:table-cell max-w-[200px] truncate text-xs text-muted-foreground" title={kw.rankingUrl}>
                           {kw.rankingUrl === 'gsc_aggregated' ? 'GSC Data' : kw.rankingUrl === 'gsc_live_auth' ? 'GSC Live Auth' : kw.rankingUrl ? (() => { 
@@ -542,8 +606,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
                </div>
             ) : historyData.length === 0 ? (
                <div className="flex h-[300px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[#D9E5DE] bg-[#FBFCFB] text-muted-foreground">
-                 <p>No history recorded yet.</p>
-                 <Button variant="outline" size="sm" onClick={handleSync}>Sync Now</Button>
+                 <p>Rank history will appear after automatic collection runs.</p>
                </div>
             ) : (
                 <div className="h-[300px]">

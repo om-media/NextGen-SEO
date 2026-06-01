@@ -12,6 +12,10 @@ export async function attachFrontend(app: express.Express) {
     process.env.USE_VITE_MIDDLEWARE === 'true' ||
     (process.env.NODE_ENV !== 'production' && !hasBuiltClient);
 
+  if (process.env.NODE_ENV === 'production' && !hasBuiltClient) {
+    throw new Error('Production frontend build missing. Run npm run build before starting the server.');
+  }
+
   if (useViteMiddleware) {
     const vite = await createViteServer({
       configFile: false,
@@ -40,7 +44,11 @@ export async function attachFrontend(app: express.Express) {
     return;
   }
 
-  app.use(express.static(distPath));
+  app.use('/assets', express.static(path.join(distPath, 'assets'), {
+    immutable: process.env.NODE_ENV === 'production',
+    maxAge: process.env.NODE_ENV === 'production' ? '1y' : 0,
+  }));
+  app.use(express.static(distPath, { maxAge: 0 }));
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'API route not found' });
   });

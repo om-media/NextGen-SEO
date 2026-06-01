@@ -26,7 +26,6 @@ type GoogleOauthConfig = {
 function getSecretMaterial() {
   return process.env.GOOGLE_TOKEN_ENCRYPTION_KEY
     || process.env.GOOGLE_OAUTH_CLIENT_SECRET
-    || process.env.GEMINI_API_KEY
     || 'nextgen-seo-dev-secret';
 }
 

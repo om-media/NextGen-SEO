@@ -21,7 +21,6 @@ function classifyLlmSource(source: string): string {
   const s = String(source || "").toLowerCase()
   if (s.includes('chatgpt') || s.includes('openai')) return 'ChatGPT'
   if (s.includes('claude') || s.includes('anthropic')) return 'Claude'
-  if (s.includes('gemini') || s.includes('bard')) return 'Gemini'
   if (s.includes('perplexity')) return 'Perplexity'
   if (s.includes('copilot') || s.includes('bing.com/chat')) return 'Copilot'
   return source
@@ -64,7 +63,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     filter: {
       fieldName: "sessionSource",
       stringFilter: {
-        value: "chatgpt|openai|claude|anthropic|gemini|bard|perplexity|copilot|bing.com/chat",
+        value: "chatgpt|openai|claude|anthropic|perplexity|copilot|bing.com/chat",
         matchType: "PARTIAL_REGEXP"
       }
     }

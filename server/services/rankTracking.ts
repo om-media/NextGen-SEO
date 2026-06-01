@@ -9,6 +9,8 @@ type SyncRankTrackingOptions = {
   gscHints?: GscHintMap;
 };
 
+const RANK_TRACKING_SCHEDULER_MS = 60 * 60 * 1000;
+
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -171,7 +173,7 @@ export async function syncRankTrackingForSite(
 export function startRankTrackingScheduler(db: AppDatabase) {
   let isRunning = false;
 
-  setInterval(async () => {
+  const tick = async () => {
     if (isRunning) {
       return;
     }
@@ -200,5 +202,9 @@ export function startRankTrackingScheduler(db: AppDatabase) {
     } finally {
       isRunning = false;
     }
-  }, 24 * 60 * 60 * 1000);
+  };
+
+  const timer = setInterval(() => void tick(), RANK_TRACKING_SCHEDULER_MS);
+  setTimeout(() => void tick(), 20_000);
+  return () => clearInterval(timer);
 }

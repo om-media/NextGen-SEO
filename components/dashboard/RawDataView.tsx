@@ -10,7 +10,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchCrawlJobs, fetchCrawlLinks, fetchCrawlPages, type CrawlIssueFilter, type CrawlJob, type CrawlLinkRow, type CrawlPageRow } from "@/src/services/crawlService";
 import { fetchRawGa4PageRows, fetchRawGa4ReportRows, fetchRawGscRows, type RawGa4Kind, type RawGa4PageRow, type RawGa4ReportRow, type RawGscKind, type RawGscRow, type RawPage } from "@/src/services/rawDataService";
-import { DataCoveragePanel } from "@/components/dashboard/DataCoveragePanel";
 
 type RawDataViewProps = {
   dateRange: DateRange;
@@ -281,7 +280,6 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
 
   return (
     <div className="space-y-5">
-    <DataCoveragePanel dateRange={dateRange} ga4PropertyId={ga4PropertyId} siteUrl={siteUrl} />
     <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
       <CardHeader className="border-b border-border">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Check, Plus, ExternalLink } from "lucide-react";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { saveFilter } from "@/src/services/dbService";
-import { generateGscInsights } from "@/src/services/aiService";
+import { generateGscInsights, isAiProviderUnavailableError } from "@/src/services/aiService";
 import { DateRange } from "react-day-picker";
 import { toast } from "sonner";
 import { GscFilterToolbar } from "./GscFilterToolbar";
@@ -77,6 +77,7 @@ export function GscDataGrid({
   const [aiInsights, setAiInsights] = useState<string | null>(null);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [isAiProviderUnavailable, setIsAiProviderUnavailable] = useState(false);
 
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
   const [selectedQueryPage, setSelectedQueryPage] = useState<string | null>(null);
@@ -115,6 +116,7 @@ export function GscDataGrid({
   useEffect(() => {
     setAiInsights(null);
     setAiError(null);
+    setIsAiProviderUnavailable(false);
   }, [siteUrl, dimension, dateRange, searchTerm, intentFilter, minClicks, minImpressions, maxPosition, isQuestionOnly, minWords, sortColumn, sortDirection]);
 
   const gridFilters: GridFilters = {
@@ -185,10 +187,14 @@ export function GscDataGrid({
   const handleGenerateInsights = async () => {
     setIsGeneratingAi(true);
     setAiError(null);
+    setIsAiProviderUnavailable(false);
     try {
       const insights = await generateGscInsights(sortedData, dimension, searchTerm, intentFilter);
       setAiInsights(insights);
     } catch (err: any) {
+      if (isAiProviderUnavailableError(err)) {
+        setIsAiProviderUnavailable(true);
+      }
       setAiError(err.message);
     } finally {
       setIsGeneratingAi(false);
@@ -328,6 +334,7 @@ export function GscDataGrid({
           <GscGridHeader
             aiError={aiError}
             aiInsights={aiInsights}
+            isAiProviderUnavailable={isAiProviderUnavailable}
             descriptionOverride={descriptionOverride}
             dimension={dimension}
             isAiDialogOpen={isAiDialogOpen}

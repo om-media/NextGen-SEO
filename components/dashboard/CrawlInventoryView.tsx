@@ -41,30 +41,6 @@ const formatStatusLabel = (statusCode: number | null) => {
   return String(statusCode);
 };
 
-function SummaryCard({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: ReactNode;
-  label: string;
-  tone: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-          <p className="mt-3 text-3xl font-semibold tracking-[-0.03em] text-foreground">{value}</p>
-        </div>
-        <div className={`flex h-10 w-10 items-center justify-center rounded-full ${tone}`}>{icon}</div>
-      </div>
-    </div>
-  );
-}
-
 function DetailBlock({ children, title }: { children: ReactNode; title: string }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-4">
@@ -276,6 +252,51 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
     return Math.min(100, Math.round((job.crawledCount / job.discoveredCount) * 100));
   }, [job?.crawledCount, job?.discoveredCount]);
   const canCancelActiveJob = Boolean(job?.id && ["queued", "retrying", "running"].includes(job.status));
+  const issueTotal =
+    (summary?.errorPages || 0) +
+    (summary?.noindexPages || 0) +
+    (summary?.missingTitlePages || 0) +
+    (summary?.missingMetaPages || 0) +
+    (summary?.canonicalizedPages || 0) +
+    (summary?.orphanPages || 0);
+  const summaryMetrics = [
+    {
+      filter: "all" as CrawlIssueFilter,
+      icon: <Globe2 className="h-4 w-4" />,
+      label: "Pages",
+      tone: "bg-primary/10 text-primary",
+      value: formatNumber(summary?.totalPages || 0),
+    },
+    {
+      filter: "success" as CrawlIssueFilter,
+      icon: <CheckCircle2 className="h-4 w-4" />,
+      label: "200 OK",
+      tone: "bg-emerald-100 text-emerald-700",
+      value: formatNumber(summary?.successPages || 0),
+    },
+    {
+      filter: "issues" as CrawlIssueFilter,
+      icon: <ShieldAlert className="h-4 w-4" />,
+      label: "Issues",
+      tone: "bg-orange-100 text-orange-700",
+      value: formatNumber(issueTotal),
+    },
+    {
+      filter: "redirect" as CrawlIssueFilter,
+      icon: <RefreshCw className="h-4 w-4" />,
+      label: "Redirects",
+      tone: "bg-amber-100 text-amber-700",
+      value: formatNumber(summary?.redirectPages || 0),
+    },
+  ];
+  const issueChips = [
+    ["Errors", summary?.errorPages || 0, "error"],
+    ["Noindex", summary?.noindexPages || 0, "noindex"],
+    ["No title", summary?.missingTitlePages || 0, "missing_title"],
+    ["No meta", summary?.missingMetaPages || 0, "missing_meta"],
+    ["Canonicalized", summary?.canonicalizedPages || 0, "canonicalized"],
+    ["Orphans", summary?.orphanPages || 0, "orphan"],
+  ];
 
   useEffect(() => {
     setMaxDepth((current) => Math.min(current, crawlLimits.maxDepth));
@@ -529,7 +550,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
               <StatusPill job={job} />
             </div>
             <CardDescription className="max-w-3xl">
-              First-party crawl inventory for the current site. Seed from sitemap and internal links, then keep the raw URL rows inside the app.
+              Technical page analysis for the current site. The app starts collection automatically and keeps the latest crawl ready for review.
             </CardDescription>
           </div>
           <div className="flex flex-col gap-3 lg:items-end">
@@ -538,10 +559,6 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
               <div className="font-medium text-foreground">{siteUrl}</div>
             </div>
             <div className="flex flex-wrap gap-2 lg:justify-end">
-              <Button className="h-10 rounded-xl" disabled={starting || !siteUrl} onClick={() => handleStart()}>
-                {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                Refresh crawl
-              </Button>
               <Button
                 className="h-10 rounded-xl"
                 variant="outline"
@@ -552,19 +569,8 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
                 }}
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh view
+                Refresh results
               </Button>
-              {canCancelActiveJob && (
-                <Button
-                  className="h-10 rounded-xl"
-                  variant="outline"
-                  disabled={cancelling}
-                  onClick={handleCancel}
-                >
-                  {cancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertCircle className="mr-2 h-4 w-4" />}
-                  Cancel crawl
-                </Button>
-              )}
               <Button
                 className="h-10 rounded-xl"
                 variant="outline"
@@ -592,7 +598,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   <History className="h-3.5 w-3.5" />
-                  Crawl runs
+                  Analysis history
                 </div>
                 <Select
                   value={selectedJobId || "__latest__"}
@@ -614,52 +620,18 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
                   </SelectContent>
                 </Select>
                 <div className="text-xs text-muted-foreground">
-                  {jobsLoading ? "Refreshing crawl history..." : `${formatNumber(jobs.length)} crawl run${jobs.length === 1 ? "" : "s"} loaded`}
+                  {jobsLoading ? "Refreshing analysis history..." : `${formatNumber(jobs.length)} analysis run${jobs.length === 1 ? "" : "s"} loaded`}
                 </div>
               </div>
 
               <div className="border-t border-border pt-4">
-                <div className="mb-3 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Crawl options</div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="space-y-1.5 text-sm">
-                    <span className="text-muted-foreground">Max depth</span>
-                    <Input className="h-10 rounded-xl bg-card" min={0} max={crawlLimits.maxDepth} onChange={(event) => setMaxDepth(Math.max(0, Math.min(crawlLimits.maxDepth, Number(event.target.value) || 0)))} type="number" value={maxDepth} />
-                  </label>
-                  <label className="space-y-1.5 text-sm">
-                    <span className="text-muted-foreground">Max pages</span>
-                    <Input className="h-10 rounded-xl bg-card" min={1} max={crawlLimits.maxPages} onChange={(event) => setMaxPages(Math.max(1, Math.min(crawlLimits.maxPages, Number(event.target.value) || 1)))} type="number" value={maxPages} />
-                  </label>
-                </div>
-                <label className="mt-3 block space-y-1.5 text-sm">
-                  <span className="text-muted-foreground">User agent</span>
-                  <Input className="h-10 rounded-xl bg-card" onChange={(event) => setUserAgent(event.target.value)} value={userAgent} />
-                </label>
-                <label className="mt-3 block space-y-1.5 text-sm">
-                  <span className="text-muted-foreground">Rendering</span>
-                  <Select value={renderMode} onValueChange={(value) => setRenderMode(value as "html" | "javascript")}>
-                    <SelectTrigger className="h-10 rounded-xl border-border bg-card">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="html">HTML fetch</SelectItem>
-                      {crawlLimits.allowJavaScriptRendering && <SelectItem value="javascript">JavaScript render</SelectItem>}
-                    </SelectContent>
-                  </Select>
-                </label>
-                <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
-                  {!crawlLimits.allowJavaScriptRendering && (
-                    <div className="rounded-xl border border-border bg-muted/40 p-3 text-xs">
-                      JavaScript rendering and larger crawl limits are available on paid plans.
-                    </div>
-                  )}
-                  <label className="flex items-center gap-2">
-                    <input checked={respectRobots} onChange={(event) => setRespectRobots(event.target.checked)} type="checkbox" />
-                    Respect robots.txt disallow rules
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input checked={includeQueryStrings} onChange={(event) => setIncludeQueryStrings(event.target.checked)} type="checkbox" />
-                    Treat query-string URLs as unique pages
-                  </label>
+                <div className="mb-3 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Automation</div>
+                <div className="rounded-xl border border-border bg-card p-3 text-sm text-muted-foreground">
+                  {starting || canCancelActiveJob
+                    ? "The app is collecting crawl data in the background. Results update here as pages are processed."
+                    : job
+                      ? "The latest crawl is ready. New analysis runs are started automatically when a site is activated."
+                      : "The app will start the first crawl automatically for this site."}
                 </div>
               </div>
             </div>
@@ -717,16 +689,47 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
             </div>
           )}
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-9">
-            <SummaryCard icon={<CheckCircle2 className="h-4 w-4" />} label="Pages" tone="bg-primary/10 text-primary" value={formatNumber(summary?.totalPages || 0)} />
-            <SummaryCard icon={<CheckCircle2 className="h-4 w-4" />} label="200 OK" tone="bg-emerald-100 text-emerald-700" value={formatNumber(summary?.successPages || 0)} />
-            <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Redirects" tone="bg-amber-100 text-amber-700" value={formatNumber(summary?.redirectPages || 0)} />
-            <SummaryCard icon={<ShieldAlert className="h-4 w-4" />} label="Noindex" tone="bg-violet-100 text-violet-700" value={formatNumber(summary?.noindexPages || 0)} />
-            <SummaryCard icon={<Search className="h-4 w-4" />} label="Orphans" tone="bg-sky-100 text-sky-700" value={formatNumber(summary?.orphanPages || 0)} />
-            <SummaryCard icon={<AlertCircle className="h-4 w-4" />} label="No title" tone="bg-orange-100 text-orange-700" value={formatNumber(summary?.missingTitlePages || 0)} />
-            <SummaryCard icon={<AlertCircle className="h-4 w-4" />} label="No meta" tone="bg-orange-100 text-orange-700" value={formatNumber(summary?.missingMetaPages || 0)} />
-            <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Canonicalized" tone="bg-indigo-100 text-indigo-700" value={formatNumber(summary?.canonicalizedPages || 0)} />
-            <SummaryCard icon={<AlertCircle className="h-4 w-4" />} label="Errors" tone="bg-red-100 text-red-700" value={formatNumber(summary?.errorPages || 0)} />
+          <div className="rounded-2xl border border-border bg-background p-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              {summaryMetrics.map((metric) => (
+                <button
+                  key={metric.label}
+                  className={`rounded-xl border px-4 py-3 text-left transition-colors hover:bg-muted/60 ${
+                    issueFilter === metric.filter ? "border-primary bg-primary/5" : "border-border bg-card"
+                  }`}
+                  onClick={() => {
+                    setIssueFilter(metric.filter);
+                    setPageIndex(0);
+                  }}
+                  type="button"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{metric.label}</p>
+                      <p className="mt-2 text-2xl font-semibold tracking-[-0.02em] text-foreground">{metric.value}</p>
+                    </div>
+                    <div className={`flex h-9 w-9 items-center justify-center rounded-full ${metric.tone}`}>{metric.icon}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {issueChips.map(([label, value, filter]) => (
+                <button
+                  key={label}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted/60 ${
+                    issueFilter === filter ? "border-primary bg-primary/5 text-foreground" : "border-border bg-card text-muted-foreground"
+                  }`}
+                  onClick={() => {
+                    setIssueFilter(filter as CrawlIssueFilter);
+                    setPageIndex(0);
+                  }}
+                  type="button"
+                >
+                  {label}: <span className="text-foreground">{formatNumber(Number(value))}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {compare?.compareJob && (
@@ -774,6 +777,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All crawl rows</SelectItem>
+                  <SelectItem value="issues">All issues</SelectItem>
                   <SelectItem value="success">200 OK</SelectItem>
                   <SelectItem value="redirect">Redirects</SelectItem>
                   <SelectItem value="error">Errors</SelectItem>
@@ -821,7 +825,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
                   ) : displayedRows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={12} className="py-10 text-center text-muted-foreground">
-                        {job ? "No rows match the current crawl filters." : "Start a crawl to populate the inventory."}
+                        {job ? "No rows match the current crawl filters." : "Automatic crawl collection is being prepared for this site."}
                       </TableCell>
                     </TableRow>
                   ) : (

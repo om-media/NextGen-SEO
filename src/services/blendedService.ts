@@ -16,27 +16,36 @@ export type BlendedPageGa4Metrics = {
   totalUsers: number;
 };
 
+export type BlendedPageIssueInsight = {
+  label: string;
+  reasons: string[];
+  severity: "high" | "medium" | "low" | "none";
+};
+
 export type BlendedPageCrawlSummary = {
   canonicalUrl: string | null;
+  contentType: string | null;
   crawledAt: string | null;
+  depth: number;
   errorMessage: string | null;
   finalUrl: string | null;
   h1Count: number;
   h1Text: string | null;
+  h2Count: number;
+  hasMetaDescription: boolean;
+  hasTitle: boolean;
   inboundLinkCount: number;
+  internalLinkCount: number;
   metaDescription: string | null;
+  metaDescriptionLength: number;
   noindex: boolean;
   outgoingLinkCount: number;
+  responseTimeMs: number;
   statusCode: number | null;
   title: string | null;
+  titleLength: number;
   url: string;
-};
-
-export type BlendedPageIssueInsight = {
-  action: string;
-  label: string;
-  reasons: string[];
-  severity: "high" | "medium" | "low" | "none";
+  wordCount: number;
 };
 
 export type BlendedPagePerformanceRow = {
@@ -53,6 +62,10 @@ export type BlendedPagePerformanceResponse = {
     endDate: string;
     freshness: {
       bing: null;
+      crawl: {
+        completedAt: string | null;
+        rowCount: number;
+      };
       ga4: {
         earliestDate: string | null;
         latestDate: string | null;
@@ -72,6 +85,7 @@ export type BlendedPagePerformanceResponse = {
     siteUrl: string;
     sources: {
       bing: boolean;
+      crawl: boolean;
       ga4: boolean;
       gsc: boolean;
     };
@@ -83,20 +97,17 @@ export type BlendedPagePerformanceResponse = {
       sessions: number;
     }>;
     topOpportunities: BlendedPagePerformanceRow[];
-    topTechnicalRisks: BlendedPagePerformanceRow[];
     totals: {
       bounceRate: number;
-      clicks: number;
+      crawledPages: number;
       crawlIssuePages: number;
-      crawlMatchedPages: number;
+      clicks: number;
       ctr: number;
       eventCount: number;
       ga4Pages: number;
       gscPages: number;
       impressions: number;
       matchedPages: number;
-      metadataGapPages: number;
-      notCrawledPages: number;
       pageViews: number;
       position: number;
       queryCount: number;
@@ -115,11 +126,11 @@ export type BlendedPagePerformanceResponse = {
 };
 
 type FetchBlendedPagePerformanceParams = {
+  analyticsFilter?: string;
   endDate: string;
   ga4PropertyId?: string | null;
   limit?: number;
   offset?: number;
-  issueFilter?: string;
   search?: string;
   siteUrl: string;
   sortColumn?: string;
@@ -129,11 +140,11 @@ type FetchBlendedPagePerformanceParams = {
 };
 
 export async function fetchBlendedPagePerformance({
+  analyticsFilter,
   endDate,
   ga4PropertyId,
   limit = 500,
   offset = 0,
-  issueFilter,
   search,
   siteUrl,
   sortColumn,
@@ -147,7 +158,7 @@ export async function fetchBlendedPagePerformance({
     body: JSON.stringify({
       endDate,
       ga4PropertyId: ga4PropertyId || undefined,
-      issueFilter,
+      analyticsFilter,
       limit,
       offset,
       search,

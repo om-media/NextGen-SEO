@@ -11,6 +11,7 @@ type GscGridHeaderProps = {
   dimension: GridDimension;
   isAiDialogOpen: boolean;
   isGeneratingAi: boolean;
+  isAiProviderUnavailable: boolean;
   onAiDialogOpenChange: (open: boolean) => void;
   onExport: () => void;
   onGenerateInsights: () => Promise<void>;
@@ -26,6 +27,7 @@ export function GscGridHeader({
   dimension,
   isAiDialogOpen,
   isGeneratingAi,
+  isAiProviderUnavailable,
   onAiDialogOpenChange,
   onExport,
   onGenerateInsights,
@@ -51,6 +53,7 @@ export function GscGridHeader({
             error={aiError}
             insights={aiInsights}
             isGenerating={isGeneratingAi}
+            isProviderUnavailable={isAiProviderUnavailable}
             onGenerate={onGenerateInsights}
             onOpenChange={onAiDialogOpenChange}
             open={isAiDialogOpen}

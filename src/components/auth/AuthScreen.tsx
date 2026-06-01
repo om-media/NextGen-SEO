@@ -229,7 +229,7 @@ export function AuthScreen() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="reg-password">Password</Label>
-                    <Input id="reg-password" type="password" required value={password} onChange={e => setPassword(e.target.value)} />
+                    <Input id="reg-password" type="password" required minLength={10} value={password} onChange={e => setPassword(e.target.value)} />
                   </div>
                   {error && <p className="text-sm text-destructive">{error}</p>}
                 </CardContent>

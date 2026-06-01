@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import Markdown from "react-markdown";
-import { AlertCircle, Download, FileSearch, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { AlertCircle, Download, FileSearch, Info, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { generateContentAuditBrief } from "@/src/services/aiService";
+import { generateContentAuditBrief, isAiProviderUnavailableError } from "@/src/services/aiService";
 import { fetchCrawlPages, type CrawlPageRow } from "@/src/services/crawlService";
 import { GscApiService, type GscSearchAnalyticsRow } from "@/src/services/gscService";
 
@@ -139,6 +139,7 @@ export function AIContentAuditorView({ dateRange, siteUrl, useLiveData }: AICont
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [brief, setBrief] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [briefNotice, setBriefNotice] = useState<string | null>(null);
   const [focus, setFocus] = useState<AuditFocus>("all");
   const [loading, setLoading] = useState(false);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -195,6 +196,7 @@ export function AIContentAuditorView({ dateRange, siteUrl, useLiveData }: AICont
   const loadBrief = async () => {
     setBriefLoading(true);
     setError(null);
+    setBriefNotice(null);
     try {
       const payload = rows.slice(0, 40).map((row) => ({
         clicks: row.clicks,
@@ -209,6 +211,11 @@ export function AIContentAuditorView({ dateRange, siteUrl, useLiveData }: AICont
       }));
       setBrief(await generateContentAuditBrief(payload, siteUrl));
     } catch (err: any) {
+      if (isAiProviderUnavailableError(err)) {
+        setBrief("");
+        setBriefNotice(err.message);
+        return;
+      }
       setError(err.message || "Failed to generate AI brief");
     } finally {
       setBriefLoading(false);
@@ -253,6 +260,13 @@ export function AIContentAuditorView({ dateRange, siteUrl, useLiveData }: AICont
             <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               <AlertCircle className="mr-2 inline-block h-4 w-4" />
               {error}
+            </div>
+          )}
+
+          {briefNotice && (
+            <div className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{briefNotice}</span>
             </div>
           )}
 

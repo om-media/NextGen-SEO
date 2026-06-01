@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { WarehouseSync } from "@/components/dashboard/WarehouseSync";
 import { CheckCircle2, ExternalLink, Loader2, ShieldAlert } from "lucide-react";
 import type { UserProfile } from "../../contexts/AuthContext";
 import type { BillingConfig } from "../../services/billingService";
@@ -430,13 +429,10 @@ export function SettingsDialog({
 
               {selectedSite && dataSource === "gsc" && (
                 <div className="space-y-2 border-t border-border bg-card pt-4">
-                  <Label>Data Warehouse Sync</Label>
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-balance text-muted-foreground">
-                      Download historical Google Search Console data into your local warehouse for the currently selected site.
-                    </p>
-                    <WarehouseSync siteUrl={selectedSite} />
-                  </div>
+                  <Label>Automated analysis</Label>
+                  <p className="text-sm text-balance text-muted-foreground">
+                    Search Console, GA4, and crawl data are collected in the background for the current workspace site.
+                  </p>
                 </div>
               )}
             </TabsContent>

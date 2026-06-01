@@ -1,11 +1,13 @@
 import { useEffect, useRef } from "react";
-import { format, subDays } from "date-fns";
+import { addDays, format, subDays } from "date-fns";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { queueMissingCoverageSync } from "@/src/services/dataCoverageService";
 import type { DateRange } from "react-day-picker";
 
 const GSC_REPORTING_LAG_DAYS = 2;
 const MAX_BACKGROUND_AUTO_QUEUE_DAYS = 30;
+const HISTORICAL_BACKFILL_DAYS = 480;
+const HISTORICAL_QUEUE_CHUNK_DAYS = 120;
 
 function toIsoDate(date: Date) {
   return format(date, "yyyy-MM-dd");
@@ -22,6 +24,7 @@ export function GscWarehouseAutoSync({
 }) {
   const { userProfile } = useAuth();
   const queuedKeys = useRef(new Set<string>());
+  const historicalQueuedKeys = useRef(new Set<string>());
 
   useEffect(() => {
     if (!siteUrl || !userProfile?.googleConnected) {
@@ -56,10 +59,33 @@ export function GscWarehouseAutoSync({
         if (!cancelled) {
           onSyncComplete?.();
         }
+
+        const historicalKey = `${siteUrl}:${propertyId || "gsc"}:historical`;
+        if (historicalQueuedKeys.current.has(historicalKey)) {
+          return;
+        }
+        historicalQueuedKeys.current.add(historicalKey);
+
+        const oldestAvailableDate = subDays(latestAvailableDate, HISTORICAL_BACKFILL_DAYS - 1);
+        for (
+          let cursor = oldestAvailableDate;
+          cursor <= latestAvailableDate && !cancelled;
+          cursor = addDays(cursor, HISTORICAL_QUEUE_CHUNK_DAYS)
+        ) {
+          const chunkEnd = addDays(cursor, HISTORICAL_QUEUE_CHUNK_DAYS - 1);
+          await queueMissingCoverageSync({
+            endDate: toIsoDate(chunkEnd > latestAvailableDate ? latestAvailableDate : chunkEnd),
+            maxDates: HISTORICAL_QUEUE_CHUNK_DAYS,
+            propertyId,
+            siteUrl,
+            startDate: toIsoDate(cursor),
+          });
+        }
       } catch (err) {
         queuedKeys.current.delete(queueKey);
-        // This should never block the dashboard. The coverage panel and Sync Data
-        // dialog expose manual recovery when Google throttles or auth needs repair.
+        historicalQueuedKeys.current.delete(`${siteUrl}:${propertyId || "gsc"}:historical`);
+        // This should never block the dashboard. The visible reports still fall
+        // back to live fetches when Google throttles or auth needs repair.
         console.warn("Automatic warehouse gap-fill queue skipped:", err);
       }
     };

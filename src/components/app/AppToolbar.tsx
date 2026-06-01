@@ -1,10 +1,9 @@
 import { DatePicker } from "@/components/ui/date-picker";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { WarehouseSync } from "@/components/dashboard/WarehouseSync";
 import { authFetch } from "@/src/lib/authFetch";
 import { format, parseISO } from "date-fns";
-import { CheckCircle2, Clock3 } from "lucide-react";
+import { CheckCircle2, Clock3, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DateRange } from "react-day-picker";
 
@@ -75,16 +74,18 @@ export function AppToolbar({
         <div className="flex w-full flex-wrap items-center gap-2 xl:justify-end">
           {(dataSource === "gsc" || dataSource === "blended") && (
             <>
-              <div className="[&>button]:h-9 [&>button]:rounded-xl [&>button]:border-border [&>button]:shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-                <WarehouseSync
-                  siteUrl={currentSiteUrl}
-                  onSyncComplete={() => {
-                    setSyncRefreshKey((key) => key + 1);
-                    onGscSyncComplete?.();
-                  }}
-                />
-              </div>
               <GscSyncStatusBadge refreshKey={syncRefreshKey} siteUrl={currentSiteUrl} />
+              <button
+                className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
+                onClick={() => {
+                  setSyncRefreshKey((key) => key + 1);
+                  onGscSyncComplete?.();
+                }}
+                type="button"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Refresh results
+              </button>
               {rawDataAvailable && onOpenRawData && (
                 <button
                   className="h-9 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
@@ -176,10 +177,10 @@ function GscSyncStatusBadge({ refreshKey, siteUrl }: { refreshKey: number; siteU
   }, [refreshKey, siteUrl]);
 
   const label = loading
-    ? "Checking sync"
+    ? "Checking analysis"
     : lastMetricDate
-      ? `Synced through ${format(parseISO(lastMetricDate), "MMM d")}`
-      : "Not synced yet";
+      ? `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`
+      : "Preparing data";
 
   return (
     <div className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-muted-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
@@ -218,7 +219,7 @@ function getSectionCopy(activeMenu: string, dataSource: DataSource) {
   if (activeMenu === "LLM Traffic") {
     return {
       title: "Measure AI referral visibility",
-      description: "Track visits from ChatGPT, Perplexity, Gemini, Copilot, and other emerging answer engines.",
+      description: "Track visits from ChatGPT, Perplexity, Copilot, and other emerging answer engines.",
     };
   }
 

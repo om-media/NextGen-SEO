@@ -93,7 +93,7 @@ export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSite
           <div>
             <CardTitle>Workspace sites</CardTitle>
             <CardDescription className="mt-2 max-w-3xl">
-              Multi-site control surface for activated properties, warehouse coverage, and latest crawl inventory.
+              Activated properties and the latest automated analysis status for each workspace site.
             </CardDescription>
           </div>
           <Button variant="outline" className="rounded-xl" disabled={loading} onClick={load}>
@@ -122,9 +122,9 @@ export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSite
             <TableHeader>
               <TableRow>
                 <TableHead>Site</TableHead>
-                <TableHead>Coverage</TableHead>
-                <TableHead>GSC warehouse</TableHead>
-                <TableHead>Crawl inventory</TableHead>
+                <TableHead>Analysis</TableHead>
+                <TableHead>Search data</TableHead>
+                <TableHead>Technical scan</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -183,7 +183,7 @@ export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSite
                       {site.isUnlocked ? (
                         <>
                           <Button variant="outline" size="sm" onClick={() => onOpenSite(site.siteUrl, "Dashboard")}>Dashboard</Button>
-                          <Button variant="outline" size="sm" onClick={() => onOpenSite(site.siteUrl, "Crawl Inventory")}>Crawl</Button>
+                          <Button variant="outline" size="sm" onClick={() => onOpenSite(site.siteUrl, "Crawl Inventory")}>Technical</Button>
                           <Button variant="ghost" size="sm" onClick={() => onOpenSite(site.siteUrl, "Reconciliation")}>Match</Button>
                         </>
                       ) : (

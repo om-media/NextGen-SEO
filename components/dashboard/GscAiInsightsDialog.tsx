@@ -1,12 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Loader2, Sparkles } from "lucide-react";
+import { Info, Loader2, Sparkles } from "lucide-react";
 import Markdown from "react-markdown";
 
 type GscAiInsightsDialogProps = {
   description: string;
   insights: string | null;
   isGenerating: boolean;
+  isProviderUnavailable: boolean;
   onGenerate: () => Promise<void>;
   onOpenChange: (open: boolean) => void;
   open: boolean;
@@ -18,6 +19,7 @@ export function GscAiInsightsDialog({
   description,
   insights,
   isGenerating,
+  isProviderUnavailable,
   onGenerate,
   onOpenChange,
   open,
@@ -51,6 +53,11 @@ export function GscAiInsightsDialog({
             <div className="flex flex-col items-center justify-center py-8 space-y-4">
               <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
               <p className="text-sm text-muted-foreground">Analyzing data and generating insights...</p>
+            </div>
+          ) : error && isProviderUnavailable ? (
+            <div className="flex gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{error}</span>
             </div>
           ) : error ? (
             <div className="p-4 bg-destructive/10 text-destructive rounded-md text-sm">{error}</div>

@@ -144,6 +144,7 @@ export type StartCrawlParams = {
 
 export type CrawlIssueFilter =
   | "all"
+  | "issues"
   | "success"
   | "redirect"
   | "error"

@@ -483,11 +483,11 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
             variant="outline" 
             size="sm" 
             className="bg-background"
-            onClick={() => triggerBackgroundSync(data)}
-            disabled={!googleConnected || isAutoSyncing || (!data.some(r => !r.inspectionResult || (r.lastCrawl && r.lastInspectionTime && new Date(r.lastCrawl).getTime() > new Date(r.lastInspectionTime).getTime())))}
+            onClick={fetchData}
+            disabled={loading}
           >
-            {isAutoSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-            {googleConnected ? "Sync Outdated URLs" : "Reconnect to Sync"}
+            {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+            Refresh results
           </Button>
           <div className="flex items-center space-x-2">
             <Switch 

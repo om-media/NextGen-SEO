@@ -149,6 +149,19 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, siteUrl)
   );
 
+  CREATE TABLE IF NOT EXISTS bing_query_stats (
+    ownerId TEXT,
+    siteUrl TEXT,
+    query TEXT,
+    impressions INTEGER,
+    clicks INTEGER,
+    ctr REAL,
+    avgClickPosition REAL,
+    avgImpressionPosition REAL,
+    fetchedAt TEXT,
+    PRIMARY KEY (ownerId, siteUrl, query)
+  );
+
   CREATE TABLE IF NOT EXISTS tracked_keywords (
     id TEXT PRIMARY KEY,
     siteUrl TEXT,
@@ -322,6 +335,7 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_key ON ga4_page_metrics(ownerId, propertyId, date, pageKey);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_key_date ON ga4_page_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_path ON ga4_page_metrics(ownerId, propertyId, date, pagePath);
+  CREATE INDEX IF NOT EXISTS idx_bing_query_stats_owner_site_fetched ON bing_query_stats(ownerId, siteUrl, fetchedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_queue ON warehouse_jobs(status, nextRunAt, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site ON warehouse_jobs(ownerId, siteUrl, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_target_status ON warehouse_jobs(ownerId, siteUrl, targetDate, status);

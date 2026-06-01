@@ -161,6 +161,7 @@ export type StartCrawlInput = {
 
 export type CrawlIssueFilter =
   | 'all'
+  | 'issues'
   | 'success'
   | 'redirect'
   | 'error'
@@ -1255,6 +1256,26 @@ async function listCrawlPages(
     params.push(term, term, term);
   }
   switch (issue) {
+    case 'issues':
+      where.push(`(
+        p.statusCode IS NULL
+        OR p.statusCode >= 400
+        OR p.noindex = 1
+        OR p.title IS NULL
+        OR TRIM(p.title) = ''
+        OR p.metaDescription IS NULL
+        OR TRIM(p.metaDescription) = ''
+        OR (p.canonicalUrl IS NOT NULL AND p.canonicalUrl <> '' AND p.canonicalUrl <> p.normalizedUrl)
+        OR NOT EXISTS (
+          SELECT 1
+          FROM crawl_links issue_links
+          WHERE issue_links.ownerId = p.ownerId
+            AND issue_links.siteUrl = p.siteUrl
+            AND issue_links.jobId = p.jobId
+            AND issue_links.toUrl = p.normalizedUrl
+        )
+      )`);
+      break;
     case 'success':
       where.push('p.statusCode BETWEEN 200 AND 299');
       break;

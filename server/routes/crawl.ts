@@ -31,6 +31,7 @@ function resolveStartUrl(siteUrl: string, startUrl: string | null | undefined, a
 function parseCrawlIssueFilter(value: unknown): CrawlIssueFilter | null {
   const issue = String(value || '').trim();
   if (
+    issue === 'issues' ||
     issue === 'success' ||
     issue === 'redirect' ||
     issue === 'error' ||

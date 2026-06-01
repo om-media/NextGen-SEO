@@ -16,6 +16,47 @@ import { canAccessSite } from '../accessControl.js';
 export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
 
+  app.get('/api/rank-tracking/status', authRequired, async (req: AuthedRequest, res) => {
+    const siteUrl = asTrimmedString(req.query.siteUrl);
+    if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+
+    try {
+      if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
+      const today = new Date().toISOString().split('T')[0];
+      const rows = await db.all<{ id: string; lastUpdated: string | null }>(`
+        SELECT tk.id, MAX(kr.date) AS lastUpdated
+        FROM tracked_keywords tk
+        LEFT JOIN keyword_rankings kr ON kr.keywordId = tk.id
+        WHERE tk.ownerId = ? AND tk.siteUrl = ?
+        GROUP BY tk.id
+      `, [req.authUser!.uid, siteUrl]);
+
+      const freshCount = rows.filter((row) => row.lastUpdated === today).length;
+      const neverCollectedCount = rows.filter((row) => !row.lastUpdated).length;
+      const latestUpdated = rows
+        .map((row) => row.lastUpdated)
+        .filter((date): date is string => Boolean(date))
+        .sort()
+        .at(-1) || null;
+
+      res.json({
+        autoCollectionEnabled: true,
+        collectionCadence: 'daily',
+        totalKeywords: rows.length,
+        freshCount,
+        staleCount: rows.length - freshCount,
+        neverCollectedCount,
+        latestUpdated,
+        today,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/rank-tracking/keywords', authRequired, async (req: AuthedRequest, res) => {
     const siteUrl = asTrimmedString(req.query.siteUrl);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });

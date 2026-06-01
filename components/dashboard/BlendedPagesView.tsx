@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
-import { ArrowDown, ArrowUp, BarChart3, Download, Eye, Filter, FileText, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, Download, Filter, FileText, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -28,7 +27,11 @@ type SortColumn =
   | "queryCount"
   | "sessions"
   | "pageViews"
-  | "bounceRate";
+  | "bounceRate"
+  | "crawlStatus"
+  | "depth"
+  | "inlinks"
+  | "wordCount";
 
 type SortDirection = "asc" | "desc";
 
@@ -93,6 +96,10 @@ function getSortValue(row: BlendedPagePerformanceRow, column: SortColumn) {
   if (column === "queryCount") return row.gsc?.queryCount ?? 0;
   if (column === "sessions") return row.ga4?.sessions ?? 0;
   if (column === "pageViews") return row.ga4?.pageViews ?? 0;
+  if (column === "crawlStatus") return getCrawlStatus(row).label.toLowerCase();
+  if (column === "depth") return row.crawl?.depth ?? 0;
+  if (column === "inlinks") return row.crawl?.inboundLinkCount ?? 0;
+  if (column === "wordCount") return row.crawl?.wordCount ?? 0;
   return row.ga4?.bounceRate ?? 0;
 }
 
@@ -104,12 +111,6 @@ function getChange(current: number, previous: number) {
 function downloadCsv(rows: BlendedPagePerformanceRow[]) {
   const headers = [
     "Page",
-    "Crawl Status",
-    "Crawl Title",
-    "Crawl Meta Description",
-    "SEO Issue",
-    "Recommended Action",
-    "Issue Reasons",
     "GSC Clicks",
     "GSC Impressions",
     "GSC CTR",
@@ -117,6 +118,22 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
     "GA4 Sessions",
     "GA4 Page Views",
     "GA4 Bounce Rate",
+    "Crawl Status",
+    "HTTP Status",
+    "Indexability",
+    "Title",
+    "Title Length",
+    "Meta Description",
+    "Meta Description Length",
+    "H1",
+    "H1 Count",
+    "H2 Count",
+    "Depth",
+    "Inlinks",
+    "Internal Links",
+    "Outlinks",
+    "Word Count",
+    "Response Time Ms",
     "Opportunity / Status",
   ];
 
@@ -127,12 +144,6 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
 
   const body = rows.map((row) => [
     row.page,
-    getCrawlStatus(row).label,
-    row.crawl?.title || "",
-    row.crawl?.metaDescription || "",
-    row.issueInsight.label,
-    row.issueInsight.action,
-    row.issueInsight.reasons.join(" | "),
     row.gsc?.clicks ?? 0,
     row.gsc?.impressions ?? 0,
     row.gsc ? `${(row.gsc.ctr * 100).toFixed(2)}%` : "",
@@ -140,6 +151,22 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
     row.ga4?.sessions ?? "",
     row.ga4?.pageViews ?? "",
     row.ga4 ? `${(row.ga4.bounceRate * 100).toFixed(2)}%` : "",
+    getCrawlStatus(row).label,
+    row.crawl?.statusCode ?? "",
+    getIndexabilityStatus(row).label,
+    row.crawl?.title ?? "",
+    row.crawl?.titleLength ?? "",
+    row.crawl?.metaDescription ?? "",
+    row.crawl?.metaDescriptionLength ?? "",
+    row.crawl?.h1Text ?? "",
+    row.crawl?.h1Count ?? "",
+    row.crawl?.h2Count ?? "",
+    row.crawl?.depth ?? "",
+    row.crawl?.inboundLinkCount ?? "",
+    row.crawl?.internalLinkCount ?? "",
+    row.crawl?.outgoingLinkCount ?? "",
+    row.crawl?.wordCount ?? "",
+    row.crawl?.responseTimeMs ?? "",
     getOpportunityStatus(row).label,
   ]);
 
@@ -156,6 +183,18 @@ function downloadCsv(rows: BlendedPagePerformanceRow[]) {
 }
 
 function getOpportunityStatus(row: BlendedPagePerformanceRow) {
+  if (row.issueInsight.severity !== "none") {
+    return {
+      className:
+        row.issueInsight.severity === "high"
+          ? "bg-[#FEF2F2] text-[#B91C1C]"
+          : row.issueInsight.severity === "medium"
+            ? "bg-[#FFF2E8] text-[#C2410C]"
+            : "bg-[#F8FAF9] text-[#647067]",
+      label: row.issueInsight.label,
+    };
+  }
+
   const impressions = row.gsc?.impressions ?? 0;
   const clicks = row.gsc?.clicks ?? 0;
   const ctr = row.gsc?.ctr ?? 0;
@@ -197,45 +236,115 @@ function getOpportunityStatus(row: BlendedPagePerformanceRow) {
 }
 
 function getCrawlStatus(row: BlendedPagePerformanceRow) {
-  if (!row.crawl) {
+  const crawl = row.crawl;
+  if (!crawl) {
     return {
       className: "bg-[#F8FAF9] text-[#647067]",
+      detail: "No crawl row",
       label: "Not crawled",
     };
   }
 
-  if (row.crawl.errorMessage || (row.crawl.statusCode && row.crawl.statusCode >= 400)) {
+  const statusCode = crawl.statusCode ?? 0;
+  if (crawl.errorMessage || (statusCode > 0 && statusCode !== 200)) {
     return {
       className: "bg-[#FEF2F2] text-[#B91C1C]",
-      label: "Crawl issue",
+      detail: crawl.errorMessage || "Non-200 status",
+      label: statusCode ? `${statusCode}` : "Error",
     };
   }
 
-  if (row.crawl.noindex) {
+  if (crawl.noindex) {
+    return {
+      className: "bg-[#F4ECFF] text-[#6D28D9]",
+      detail: "Excluded by meta/robots",
+      label: "Noindex",
+    };
+  }
+
+  if (!crawl.hasTitle || !crawl.hasMetaDescription || crawl.h1Count !== 1) {
+    const missing = [
+      !crawl.hasTitle ? "title" : null,
+      !crawl.hasMetaDescription ? "meta" : null,
+      crawl.h1Count !== 1 ? "H1" : null,
+    ].filter(Boolean);
+    return {
+      className: "bg-[#FFF2E8] text-[#C2410C]",
+      detail: missing.join(", "),
+      label: "Metadata",
+    };
+  }
+
+  if (crawl.canonicalUrl && crawl.finalUrl && crawl.canonicalUrl !== crawl.finalUrl) {
+    return {
+      className: "bg-[#EAF2FF] text-[#2F7DF6]",
+      detail: "Canonical differs",
+      label: "Canonical",
+    };
+  }
+
+  return {
+    className: "bg-[#EAF4EC] text-[#0F3D2E]",
+    detail: `${formatNumber(crawl.inboundLinkCount)} inlinks`,
+    label: "OK",
+  };
+}
+
+function getIndexabilityStatus(row: BlendedPagePerformanceRow) {
+  const crawl = row.crawl;
+  if (!crawl) {
+    return {
+      className: "bg-[#F8FAF9] text-[#647067]",
+      label: "Unknown",
+    };
+  }
+
+  if (crawl.noindex) {
     return {
       className: "bg-[#F4ECFF] text-[#6D28D9]",
       label: "Noindex",
     };
   }
 
-  if (!row.crawl.title || !row.crawl.metaDescription) {
+  if (crawl.canonicalUrl && crawl.finalUrl && crawl.canonicalUrl !== crawl.finalUrl) {
     return {
-      className: "bg-[#FFF2E8] text-[#C2410C]",
-      label: "Metadata gap",
+      className: "bg-[#EAF2FF] text-[#2F7DF6]",
+      label: "Canonicalized",
     };
   }
 
   return {
     className: "bg-[#EAF4EC] text-[#0F3D2E]",
-    label: row.crawl.statusCode && row.crawl.statusCode >= 300 ? "Redirect" : row.crawl.statusCode ? `${row.crawl.statusCode} OK` : "Crawled",
+    label: "Indexable",
   };
 }
 
-function getSeverityClass(severity: BlendedPagePerformanceRow["issueInsight"]["severity"]) {
-  if (severity === "high") return "bg-[#FEF2F2] text-[#B91C1C]";
-  if (severity === "medium") return "bg-[#FFF2E8] text-[#C2410C]";
-  if (severity === "low") return "bg-[#F8FAF9] text-[#647067]";
-  return "bg-[#EAF4EC] text-[#0F3D2E]";
+function getLengthState(value: number, low: number, high: number) {
+  if (!value) {
+    return {
+      className: "text-[#B91C1C]",
+      label: "Missing",
+    };
+  }
+
+  if (value < low) {
+    return {
+      className: "text-[#C2410C]",
+      label: `${formatNumber(value)} short`,
+    };
+  }
+
+  if (value > high) {
+    return {
+      className: "text-[#C2410C]",
+      label: `${formatNumber(value)} long`,
+    };
+  }
+
+  return {
+    className: "text-[#0F3D2E]",
+    label: `${formatNumber(value)} ok`,
+  };
 }
 
 function MetricCard({
@@ -294,9 +403,8 @@ export function BlendedPagesView({
   const [page, setPage] = useState(1);
   const [pageInfo, setPageInfo] = useState<BlendedPagePerformanceResponse["page"] | null>(null);
   const [rows, setRows] = useState<BlendedPagePerformanceRow[]>([]);
-  const [issueFilter, setIssueFilter] = useState("all");
+  const [analyticsFilter, setAnalyticsFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCrawlRow, setSelectedCrawlRow] = useState<BlendedPagePerformanceRow | null>(null);
   const [sourceMeta, setSourceMeta] = useState<BlendedPagePerformanceResponse["meta"] | null>(null);
   const [sortColumn, setSortColumn] = useState<SortColumn>("clicks");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -315,7 +423,7 @@ export function BlendedPagesView({
     const primaryPromise = fetchBlendedPagePerformance({
       endDate: dateStrings.endDate,
       ga4PropertyId,
-      issueFilter,
+      analyticsFilter,
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE,
       search: searchTerm,
@@ -331,7 +439,7 @@ export function BlendedPagesView({
         ? fetchBlendedPagePerformance({
             endDate: compareDateStrings.endDate,
             ga4PropertyId,
-            issueFilter,
+            analyticsFilter,
             limit: PAGE_SIZE,
             offset: (page - 1) * PAGE_SIZE,
             search: searchTerm,
@@ -368,7 +476,7 @@ export function BlendedPagesView({
     dateStrings?.endDate,
     dateStrings?.startDate,
     ga4PropertyId,
-    issueFilter,
+    analyticsFilter,
     isCompareMode,
     page,
     searchTerm,
@@ -476,14 +584,6 @@ export function BlendedPagesView({
       .slice(0, 4);
   }, [rows, sourceMeta?.topOpportunities]);
 
-  const technicalRisks = useMemo(() => {
-    if (sourceMeta?.topTechnicalRisks) return sourceMeta.topTechnicalRisks;
-
-    return rows
-      .filter((row) => !row.crawl || row.crawl.errorMessage || (row.crawl.statusCode && row.crawl.statusCode >= 400) || row.crawl.noindex || !row.crawl.title || !row.crawl.metaDescription)
-      .slice(0, 4);
-  }, [rows, sourceMeta?.topTechnicalRisks]);
-
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
       setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
@@ -512,7 +612,7 @@ export function BlendedPagesView({
       const response = await fetchBlendedPagePerformance({
         endDate: dateStrings.endDate,
         ga4PropertyId,
-        issueFilter,
+        analyticsFilter,
         limit: batchSize,
         offset,
         search: searchTerm,
@@ -541,7 +641,7 @@ export function BlendedPagesView({
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 lg:grid-cols-5">
+      <div className="grid gap-4 lg:grid-cols-6">
         <MetricCard
           accentClass="bg-[#EAF4EC] text-[#0F3D2E]"
           icon={<FileText className="h-5 w-5" />}
@@ -560,8 +660,8 @@ export function BlendedPagesView({
           accentClass="bg-[#ECFEFF] text-[#0891B2]"
           icon={<BarChart3 className="h-5 w-5" />}
           label="GA4 sessions"
-          sublabel={hasGa4Rows ? "Matched by page path" : "Run Sync Data to populate"}
-          value={hasGa4Rows ? formatCompact(totals.sessions) : "Not synced"}
+          sublabel={hasGa4Rows ? "Matched by page path" : "Automatic GA4 collection in progress"}
+          value={hasGa4Rows ? formatCompact(totals.sessions) : "Collecting"}
         />
         <MetricCard
           accentClass="bg-[#FFF2E8] text-[#F97316]"
@@ -577,11 +677,18 @@ export function BlendedPagesView({
           sublabel="Summed across listed pages"
           value={formatCompact(totals.queryCount)}
         />
+        <MetricCard
+          accentClass="bg-[#FEF2F2] text-[#B91C1C]"
+          icon={<AlertTriangle className="h-5 w-5" />}
+          label="Crawl issues"
+          sublabel={`${formatNumber(sourceMeta?.totals.crawledPages ?? 0)} pages in latest crawl`}
+          value={formatCompact(sourceMeta?.totals.crawlIssuePages ?? 0)}
+        />
       </div>
 
       {!hasGa4Rows && ga4PropertyId && (
         <div className="rounded-2xl border border-[#D9E5DE] bg-[#F4FAF6] p-4 text-sm text-[#34483E]">
-          GA4 is connected, but page-level GA4 data has not been warehoused for this range yet. Click <strong>Sync Data</strong> to pull GA4 landing-page metrics into the local warehouse.
+          GA4 is connected, but page-level GA4 data has not been warehoused for this range yet. The app collects landing-page metrics automatically as the warehouse refreshes.
         </div>
       )}
 
@@ -594,13 +701,13 @@ export function BlendedPagesView({
       {sourceMeta && (
         <div className="flex flex-wrap gap-2 text-xs text-[#647067]">
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            GSC synced through {sourceMeta.freshness.gsc.latestDate || "not synced"} - {formatNumber(sourceMeta.freshness.gsc.rowCount)} rows
+            GSC refreshed through {sourceMeta.freshness.gsc.latestDate || "pending"} - {formatNumber(sourceMeta.freshness.gsc.rowCount)} rows
           </span>
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            GA4 synced through {sourceMeta.freshness.ga4.latestDate || "not synced"} - {formatNumber(sourceMeta.freshness.ga4.rowCount)} rows
+            GA4 refreshed through {sourceMeta.freshness.ga4.latestDate || "pending"} - {formatNumber(sourceMeta.freshness.ga4.rowCount)} rows
           </span>
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            Crawl matched {formatNumber(sourceMeta.totals.crawlMatchedPages)} pages - {formatNumber(sourceMeta.totals.crawlIssuePages + sourceMeta.totals.metadataGapPages)} issues
+            Crawl refreshed {sourceMeta.freshness.crawl.completedAt || "pending"} - {formatNumber(sourceMeta.freshness.crawl.rowCount)} rows
           </span>
         </div>
       )}
@@ -611,7 +718,7 @@ export function BlendedPagesView({
             <div>
               <h3 className="text-xl font-semibold tracking-[-0.02em] text-[#0F172A]">Top Pages ({filteredTotal})</h3>
               <p className="mt-1 text-sm text-[#647067]">
-                Blends Search Console visibility with GA4 engagement for matching page paths.
+                Blends Search Console visibility, GA4 engagement, and crawl inventory by canonical page path.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -655,18 +762,19 @@ export function BlendedPagesView({
                   <SelectItem value="without-ga4">Missing GA4 data</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={issueFilter} onValueChange={(value) => { setIssueFilter(value); setPage(1); }}>
+              <Select value={analyticsFilter} onValueChange={(value) => { setAnalyticsFilter(value); setPage(1); }}>
                 <SelectTrigger className="h-11 w-full rounded-xl border-[#E6ECE8] bg-white lg:w-[220px]">
-                  <SelectValue placeholder="SEO issue" />
+                  <SelectValue placeholder="Analytics focus" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All SEO states</SelectItem>
-                  <SelectItem value="crawl-issues">Crawl errors</SelectItem>
-                  <SelectItem value="metadata-gaps">Missing metadata</SelectItem>
-                  <SelectItem value="indexability">Indexability issues</SelectItem>
-                  <SelectItem value="not-crawled">Not in latest crawl</SelectItem>
+                  <SelectItem value="all">All analytics states</SelectItem>
                   <SelectItem value="low-ctr">Low CTR opportunities</SelectItem>
                   <SelectItem value="missing-ga4">Missing GA4 data</SelectItem>
+                  <SelectItem value="crawl-issues">Crawl issues</SelectItem>
+                  <SelectItem value="crawl-errors">Crawl errors</SelectItem>
+                  <SelectItem value="metadata-gaps">Metadata gaps</SelectItem>
+                  <SelectItem value="indexability">Indexability issues</SelectItem>
+                  <SelectItem value="not-crawled">Not in crawl</SelectItem>
                 </SelectContent>
               </Select>
               <Button variant="secondary" className="h-11 rounded-xl bg-[#EEF3F0] text-[#0F172A]" disabled>
@@ -677,7 +785,7 @@ export function BlendedPagesView({
 
             <div className="overflow-hidden rounded-2xl border border-[#E6ECE8]">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1600px] text-sm">
+                <table className="w-full min-w-[1900px] text-sm">
                   <thead className="bg-[#FBFCFB] text-xs font-semibold text-[#34483E]">
                     <tr>
                       <th className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-[#E6ECE8] bg-[#FBFCFB] px-4 py-3 text-left">
@@ -685,8 +793,6 @@ export function BlendedPagesView({
                           Page {sortIndicator("page")}
                         </button>
                       </th>
-                      <th className="px-4 py-3 text-left">Crawl</th>
-                      <th className="px-4 py-3 text-left">Next action</th>
                       <th className="px-4 py-3 text-right">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("clicks")}>
                           GSC Clicks {sortIndicator("clicks")}
@@ -722,19 +828,39 @@ export function BlendedPagesView({
                           GA4 Bounce Rate {sortIndicator("bounceRate")}
                         </button>
                       </th>
+                      <th className="px-4 py-3 text-right">Crawl</th>
+                      <th className="px-4 py-3 text-right">Indexability</th>
+                      <th className="px-4 py-3 text-right">Title</th>
+                      <th className="px-4 py-3 text-right">Meta</th>
+                      <th className="px-4 py-3 text-right">H1</th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("depth")}>
+                          Depth {sortIndicator("depth")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("inlinks")}>
+                          Inlinks {sortIndicator("inlinks")}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3 text-right">
+                        <button className="inline-flex items-center gap-1" onClick={() => handleSort("wordCount")}>
+                          Words {sortIndicator("wordCount")}
+                        </button>
+                      </th>
                       <th className="px-4 py-3 text-right">Opportunity / Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={11} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={17} className="px-4 py-16 text-center text-[#647067]">
                           Loading blended page data...
                         </td>
                       </tr>
                     ) : paginatedRows.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={17} className="px-4 py-16 text-center text-[#647067]">
                           No page rows match this view.
                         </td>
                       </tr>
@@ -743,8 +869,11 @@ export function BlendedPagesView({
                         const compareRow = compareByPageKey.get(row.pageKey);
                         const clickChange = getChange(row.gsc?.clicks ?? 0, compareRow?.gsc?.clicks ?? 0);
                         const sessionChange = getChange(row.ga4?.sessions ?? 0, compareRow?.ga4?.sessions ?? 0);
-                        const crawlStatus = getCrawlStatus(row);
                         const opportunityStatus = getOpportunityStatus(row);
+                        const crawlStatus = getCrawlStatus(row);
+                        const indexabilityStatus = getIndexabilityStatus(row);
+                        const titleState = getLengthState(row.crawl?.titleLength ?? 0, 30, 65);
+                        const metaState = getLengthState(row.crawl?.metaDescriptionLength ?? 0, 70, 170);
 
                         return (
                           <tr key={row.pageKey || row.page} className="group border-t border-[#E6ECE8] hover:bg-[#F8FAF9]">
@@ -753,29 +882,6 @@ export function BlendedPagesView({
                                 <div className="truncate font-semibold text-[#24443A]">{getPageTitle(row.page)}</div>
                                 <div className="mt-1 truncate text-xs text-[#647067]">{getDisplayPath(row.page)}</div>
                               </div>
-                            </td>
-                            <td className="px-4 py-4">
-                              <button
-                                className="inline-flex items-center gap-2 rounded-full border border-[#E6ECE8] bg-white px-2.5 py-1 text-xs font-semibold text-[#24443A] hover:bg-[#F8FAF9] disabled:cursor-not-allowed disabled:opacity-60"
-                                disabled={!row.crawl}
-                                onClick={() => row.crawl && setSelectedCrawlRow(row)}
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                                <span className={`rounded-full px-2 py-0.5 ${crawlStatus.className}`}>{crawlStatus.label}</span>
-                              </button>
-                            </td>
-                            <td className="px-4 py-4">
-                              <button
-                                className="max-w-[260px] text-left"
-                                onClick={() => row.crawl && setSelectedCrawlRow(row)}
-                              >
-                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getSeverityClass(row.issueInsight.severity)}`}>
-                                  {row.issueInsight.label}
-                                </span>
-                                <div className="mt-1 truncate text-xs text-[#647067]" title={row.issueInsight.action}>
-                                  {row.issueInsight.action}
-                                </div>
-                              </button>
                             </td>
                             <td className="px-4 py-4 text-right">
                               <div className="font-medium text-[#0F172A]">{formatNumber(row.gsc?.clicks ?? 0)}</div>
@@ -790,6 +896,43 @@ export function BlendedPagesView({
                             </td>
                             <td className="px-4 py-4 text-right">{row.ga4 ? formatNumber(row.ga4.pageViews) : "-"}</td>
                             <td className="px-4 py-4 text-right">{row.ga4 ? formatPercent(row.ga4.bounceRate) : "-"}</td>
+                            <td className="px-4 py-4 text-right">
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${crawlStatus.className}`}>
+                                {crawlStatus.label}
+                              </span>
+                              <div className="mt-1 text-xs text-[#647067]">{crawlStatus.detail}</div>
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${indexabilityStatus.className}`}>
+                                {indexabilityStatus.label}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <div className={`text-xs font-semibold ${titleState.className}`}>{titleState.label}</div>
+                              <div className="mt-1 max-w-[140px] truncate text-xs text-[#647067]" title={row.crawl?.title || ""}>
+                                {row.crawl?.title || "-"}
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <div className={`text-xs font-semibold ${metaState.className}`}>{metaState.label}</div>
+                              <div className="mt-1 max-w-[150px] truncate text-xs text-[#647067]" title={row.crawl?.metaDescription || ""}>
+                                {row.crawl?.metaDescription || "-"}
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <div className={row.crawl?.h1Count === 1 ? "text-xs font-semibold text-[#0F3D2E]" : "text-xs font-semibold text-[#C2410C]"}>
+                                {row.crawl ? `${formatNumber(row.crawl.h1Count)} H1` : "-"}
+                              </div>
+                              <div className="mt-1 max-w-[120px] truncate text-xs text-[#647067]" title={row.crawl?.h1Text || ""}>
+                                {row.crawl?.h1Text || "-"}
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 text-right">{row.crawl ? formatNumber(row.crawl.depth) : "-"}</td>
+                            <td className="px-4 py-4 text-right">
+                              <div>{row.crawl ? formatNumber(row.crawl.inboundLinkCount) : "-"}</div>
+                              <div className="mt-1 text-xs text-[#647067]">{row.crawl ? `${formatNumber(row.crawl.outgoingLinkCount)} out` : ""}</div>
+                            </td>
+                            <td className="px-4 py-4 text-right">{row.crawl ? formatNumber(row.crawl.wordCount) : "-"}</td>
                             <td className="px-4 py-4 text-right">
                               <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${opportunityStatus.className}`}>
                                 {opportunityStatus.label}
@@ -844,47 +987,6 @@ export function BlendedPagesView({
           <section className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Technical Risks</h3>
-                <p className="mt-1 text-sm text-[#647067]">Prioritized from crawl plus search demand.</p>
-              </div>
-            </div>
-            <div className="mt-5 space-y-3">
-              {technicalRisks.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-[#E6ECE8] p-4 text-sm text-[#647067]">
-                  No crawl-linked technical risks in this view.
-                </div>
-              ) : (
-                technicalRisks.map((row) => {
-                  const crawlStatus = getCrawlStatus(row);
-                  return (
-                    <button
-                      key={row.pageKey}
-                      className="w-full rounded-xl border border-[#E6ECE8] p-4 text-left hover:bg-[#F8FAF9] disabled:cursor-not-allowed disabled:opacity-70"
-                      disabled={!row.crawl}
-                      onClick={() => row.crawl && setSelectedCrawlRow(row)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-[#0F172A]">{getPageTitle(row.page)}</div>
-                          <p className="mt-1 text-xs leading-5 text-[#647067]">
-                            {formatCompact(row.gsc?.impressions ?? 0)} impressions, {row.ga4 ? `${formatCompact(row.ga4.sessions)} sessions` : "GA4 not matched"}.
-                          </p>
-                          <p className="mt-2 text-xs font-medium leading-5 text-[#24443A]">{row.issueInsight.action}</p>
-                        </div>
-                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${getSeverityClass(row.issueInsight.severity)}`}>
-                          {row.issueInsight.label || crawlStatus.label}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-[0_16px_42px_rgba(15,61,46,0.055)]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
                 <h3 className="text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Top Opportunities</h3>
                 <p className="mt-1 text-sm text-[#647067]">High impressions, low CTR pages.</p>
               </div>
@@ -909,69 +1011,6 @@ export function BlendedPagesView({
         </aside>
       </div>
 
-      <Dialog open={Boolean(selectedCrawlRow)} onOpenChange={(open) => !open && setSelectedCrawlRow(null)}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Crawl source review</DialogTitle>
-            <DialogDescription className="break-all">
-              {selectedCrawlRow?.crawl?.url || selectedCrawlRow?.page || "Review crawl signals for this blended page."}
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedCrawlRow?.crawl && (
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4 md:col-span-2">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Review decision</div>
-                    <div className="mt-2 text-lg font-semibold text-[#0F172A]">{selectedCrawlRow.issueInsight.label}</div>
-                    <p className="mt-1 text-sm leading-6 text-[#34483E]">{selectedCrawlRow.issueInsight.action}</p>
-                  </div>
-                  <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${getSeverityClass(selectedCrawlRow.issueInsight.severity)}`}>
-                    {selectedCrawlRow.issueInsight.severity}
-                  </span>
-                </div>
-                <ul className="mt-3 space-y-1 text-sm text-[#647067]">
-                  {selectedCrawlRow.issueInsight.reasons.map((reason) => (
-                    <li key={reason}>{reason}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Technical status</div>
-                <dl className="mt-3 space-y-2 text-sm">
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Status</dt><dd className="text-right font-medium">{selectedCrawlRow.crawl.statusCode || "No response"}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Noindex</dt><dd className="text-right font-medium">{selectedCrawlRow.crawl.noindex ? "Yes" : "No"}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Canonical</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.canonicalUrl || "Not set"}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Final URL</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.finalUrl || "Same as requested"}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Error</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.errorMessage || "None"}</dd></div>
-                </dl>
-              </div>
-
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">On-page signals</div>
-                <dl className="mt-3 space-y-2 text-sm">
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Title</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.title || "Missing"}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Meta description</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.metaDescription || "Missing"}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">H1</dt><dd className="min-w-0 break-words text-right font-medium">{selectedCrawlRow.crawl.h1Text || "Missing"}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">H1 count</dt><dd className="text-right font-medium">{formatNumber(selectedCrawlRow.crawl.h1Count)}</dd></div>
-                </dl>
-              </div>
-
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-4 md:col-span-2">
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Blended evidence</div>
-                <dl className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">GSC clicks</dt><dd className="font-medium">{formatNumber(selectedCrawlRow.gsc?.clicks ?? 0)}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">GSC impressions</dt><dd className="font-medium">{formatNumber(selectedCrawlRow.gsc?.impressions ?? 0)}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">GA4 sessions</dt><dd className="font-medium">{selectedCrawlRow.ga4 ? formatNumber(selectedCrawlRow.ga4.sessions) : "Not matched"}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-[#647067]">Links</dt><dd className="font-medium">{formatNumber(selectedCrawlRow.crawl.inboundLinkCount)} in / {formatNumber(selectedCrawlRow.crawl.outgoingLinkCount)} out</dd></div>
-                </dl>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

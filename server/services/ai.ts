@@ -1,20 +1,10 @@
-import { GoogleGenAI } from '@google/genai';
-
 type GscInsightRow = Record<string, unknown>;
 
-let aiClient: GoogleGenAI | null = null;
-
-function getAiClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('AI insights are unavailable until GEMINI_API_KEY is configured.');
+export class AiProviderNotConfiguredError extends Error {
+  constructor() {
+    super('AI insights are temporarily unavailable while the LLM provider is being configured.');
+    this.name = 'AiProviderNotConfiguredError';
   }
-
-  if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey });
-  }
-
-  return aiClient;
 }
 
 export async function generateGscInsights(
@@ -24,7 +14,7 @@ export async function generateGscInsights(
   intentFilter: string,
 ) {
   const topData = data.slice(0, 50);
-  const prompt = `
+  void `
 You are an expert SEO analyst. I am providing you with Google Search Console data for a website.
 The data is grouped by: ${dimension}.
 ${searchTerm ? `The user has filtered the data to only include queries containing: "${searchTerm}".` : ''}
@@ -42,18 +32,12 @@ Format your response in Markdown. Include:
 Keep it professional, insightful, and directly related to the provided data. Do not use generic SEO advice if it doesn't apply to the data.
   `;
 
-  const ai = getAiClient();
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: prompt,
-  });
-
-  return response.text || '';
+  throw new AiProviderNotConfiguredError();
 }
 
 export async function generateContentAuditBrief(data: GscInsightRow[], siteUrl: string) {
   const topData = data.slice(0, 40);
-  const prompt = `
+  void `
 You are an expert SEO content strategist. I am providing a prioritized content audit for ${siteUrl}.
 Each row includes crawl quality signals and, when available, Google Search Console page performance.
 
@@ -69,11 +53,5 @@ Write a concise markdown brief for a content team. Include:
 Avoid generic advice. Tie every recommendation to the provided rows.
   `;
 
-  const ai = getAiClient();
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: prompt,
-  });
-
-  return response.text || '';
+  throw new AiProviderNotConfiguredError();
 }

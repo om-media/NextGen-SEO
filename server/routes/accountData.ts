@@ -4,6 +4,7 @@ import { requireAuth, requireMatchingParam } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
 import { getPlanCrawlLimits, getPlanPropertyLimit } from '../../shared/plans.js';
+import { getFreshBingQueryStats } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseSyncJob } from '../services/warehouseJobs.js';
 import { canAccessSite } from '../accessControl.js';
@@ -27,7 +28,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     next.setUTCDate(next.getUTCDate() + days);
     return next;
   };
-  const recentStableReportingDates = (days = 30) => {
+  const recentStableReportingDates = (days = 480) => {
     const end = addDays(new Date(), -2);
     const start = addDays(end, -(days - 1));
     const dates: string[] = [];
@@ -446,9 +447,18 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         return res.status(400).json({ error: 'Bing API key not configured' });
       }
 
-      const response = await fetch(`https://ssl.bing.com/webmaster/api.svc/json/GetQueryStats?siteUrl=${encodeURIComponent(siteUrl)}&apikey=${user.bingApiKey}`);
-      const data = await response.json();
-      res.json(data);
+      const result = await getFreshBingQueryStats(db, {
+        apiKey: user.bingApiKey,
+        ownerId: req.authUser!.uid,
+        siteUrl,
+      });
+      res.json({
+        d: result.rows,
+        meta: {
+          cache: result.status,
+          fromCache: result.fromCache,
+        },
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

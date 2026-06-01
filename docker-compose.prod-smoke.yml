@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gsc_plus
+      POSTGRES_USER: gsc_plus
+      POSTGRES_PASSWORD: gsc_plus_smoke_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gsc_plus -d gsc_plus"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - postgres-smoke-data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_BASE_URL: https://example.com
+      GOOGLE_OAUTH_REDIRECT_URI: https://example.com/api/google/oauth/callback
+      GOOGLE_OAUTH_STATE_SECRET: smoke_state_secret_32_chars_minimum
+      GOOGLE_TOKEN_ENCRYPTION_KEY: smoke_token_secret_32_chars_minimum
+      GOOGLE_OAUTH_CLIENT_ID: smoke-client-id
+      GOOGLE_OAUTH_CLIENT_SECRET: smoke-client-secret
+      DATABASE_URL: postgresql://gsc_plus:gsc_plus_smoke_password@postgres:5432/gsc_plus
+      POSTGRES_SSL: "false"
+    ports:
+      - "3010:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  postgres-smoke-data:

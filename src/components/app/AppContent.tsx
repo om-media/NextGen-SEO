@@ -1,31 +1,32 @@
+import { lazy, Suspense } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Overview } from "@/components/dashboard/Overview";
-import { AnnotationsSettings } from "@/components/dashboard/AnnotationsSettings";
-import { BlendedPagesView } from "@/components/dashboard/BlendedPagesView";
-import { GscDataGrid } from "@/components/dashboard/GscDataGrid";
-import { QueryCountView } from "@/components/dashboard/QueryCountView";
-import { Ga4DataGrid } from "@/components/dashboard/Ga4DataGrid";
-import { Ga4Overview } from "@/components/dashboard/Ga4Overview";
-import { Ga4LlmTraffic } from "@/components/dashboard/Ga4LlmTraffic";
-import { Ga4Demographics } from "@/components/dashboard/Ga4Demographics";
-import { BingDataGrid } from "@/components/dashboard/BingDataGrid";
-import { CrawlInventoryView } from "@/components/dashboard/CrawlInventoryView";
-import { LogAnalyzerView } from "@/components/dashboard/LogAnalyzerView";
-import { PageIndexingView } from "@/components/dashboard/PageIndexingView";
-import { RawDataView } from "@/components/dashboard/RawDataView";
-import { ReconciliationView } from "@/components/dashboard/ReconciliationView";
-import { WorkspaceSitesView } from "@/components/dashboard/WorkspaceSitesView";
-import { DataCoveragePanel } from "@/components/dashboard/DataCoveragePanel";
-import { AIContentAuditorView } from "@/components/dashboard/AIContentAuditorView";
-import { RankTrackerView } from "../dashboard/RankTrackerView";
 import type { DateRange } from "react-day-picker";
 import type { Annotation } from "../../services/annotationsService";
 import type { BingSite } from "../../services/bingService";
 import type { GscSite } from "../../services/gscService";
 import type { UserProfile } from "../../contexts/AuthContext";
 import { canUseRawExports, canUseReconciliation, isMultiSitePlan } from "@/shared/plans";
+
+const Overview = lazy(() => import("@/components/dashboard/Overview").then((module) => ({ default: module.Overview })));
+const AnnotationsSettings = lazy(() => import("@/components/dashboard/AnnotationsSettings").then((module) => ({ default: module.AnnotationsSettings })));
+const BlendedPagesView = lazy(() => import("@/components/dashboard/BlendedPagesView").then((module) => ({ default: module.BlendedPagesView })));
+const GscDataGrid = lazy(() => import("@/components/dashboard/GscDataGrid").then((module) => ({ default: module.GscDataGrid })));
+const QueryCountView = lazy(() => import("@/components/dashboard/QueryCountView").then((module) => ({ default: module.QueryCountView })));
+const Ga4DataGrid = lazy(() => import("@/components/dashboard/Ga4DataGrid").then((module) => ({ default: module.Ga4DataGrid })));
+const Ga4Overview = lazy(() => import("@/components/dashboard/Ga4Overview").then((module) => ({ default: module.Ga4Overview })));
+const Ga4LlmTraffic = lazy(() => import("@/components/dashboard/Ga4LlmTraffic").then((module) => ({ default: module.Ga4LlmTraffic })));
+const Ga4Demographics = lazy(() => import("@/components/dashboard/Ga4Demographics").then((module) => ({ default: module.Ga4Demographics })));
+const BingDataGrid = lazy(() => import("@/components/dashboard/BingDataGrid").then((module) => ({ default: module.BingDataGrid })));
+const CrawlInventoryView = lazy(() => import("@/components/dashboard/CrawlInventoryView").then((module) => ({ default: module.CrawlInventoryView })));
+const LogAnalyzerView = lazy(() => import("@/components/dashboard/LogAnalyzerView").then((module) => ({ default: module.LogAnalyzerView })));
+const PageIndexingView = lazy(() => import("@/components/dashboard/PageIndexingView").then((module) => ({ default: module.PageIndexingView })));
+const RawDataView = lazy(() => import("@/components/dashboard/RawDataView").then((module) => ({ default: module.RawDataView })));
+const ReconciliationView = lazy(() => import("@/components/dashboard/ReconciliationView").then((module) => ({ default: module.ReconciliationView })));
+const WorkspaceSitesView = lazy(() => import("@/components/dashboard/WorkspaceSitesView").then((module) => ({ default: module.WorkspaceSitesView })));
+const AIContentAuditorView = lazy(() => import("@/components/dashboard/AIContentAuditorView").then((module) => ({ default: module.AIContentAuditorView })));
+const RankTrackerView = lazy(() => import("../dashboard/RankTrackerView").then((module) => ({ default: module.RankTrackerView })));
 
 type DataSource = "gsc" | "bing" | "ga4" | "blended";
 type Ga4Dimension = "country" | "city" | "region" | "deviceCategory" | "browser" | "operatingSystem";
@@ -108,6 +109,7 @@ export function AppContent({
   const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-muted-foreground shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-primary data-active:bg-transparent data-active:text-primary data-active:shadow-none";
 
   return (
+    <Suspense fallback={<div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">Loading view...</div>}>
     <>
       {selectedSite && !apiError && dataSource === "gsc" && sites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
         <Tabs
@@ -142,11 +144,6 @@ export function AppContent({
                 />
               }
             />
-            <DataCoveragePanel
-              dateRange={dateRange}
-              ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
-              siteUrl={selectedSite}
-            />
             <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} hideTrackerButton={true} />
           </TabsContent>
           <TabsContent value="queries" className="space-y-4">
@@ -180,11 +177,6 @@ export function AppContent({
             compareDateRange={compareDateRange}
             ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
           />
-          <DataCoveragePanel
-            dateRange={dateRange}
-            ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
-            siteUrl={selectedSite}
-          />
         </div>
       )}
 
@@ -213,13 +205,6 @@ export function AppContent({
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
             <Ga4Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} annotations={visibleAnnotations} />
-            {rawWorkspaceSite && (
-              <DataCoveragePanel
-                dateRange={dateRange}
-                ga4PropertyId={selectedSite}
-                siteUrl={rawWorkspaceSite}
-              />
-            )}
             <Ga4DataGrid siteUrl={selectedSite} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
           </TabsContent>
           <TabsContent value="events" className="space-y-4">
@@ -339,7 +324,7 @@ export function AppContent({
             },
             {
               title: "Integrations",
-              description: "Reconnect Google data, add Bing API keys, and sync warehouse data.",
+              description: "Reconnect Google data and add Bing API keys when extra sources need attention.",
               action: "Open integrations",
               tab: "integrations" as const,
             },
@@ -363,5 +348,6 @@ export function AppContent({
         ) : null
       )}
     </>
+    </Suspense>
   );
 }

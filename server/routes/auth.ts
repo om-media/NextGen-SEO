@@ -68,8 +68,12 @@ function isValidEmail(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 3 && value.includes('@');
 }
 
-function isValidPassword(value: unknown): value is string {
+function isPasswordLoginShape(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 6;
+}
+
+function isAcceptableRegistrationPassword(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 10;
 }
 
 export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
@@ -99,8 +103,8 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'Enter a valid email address.', code: 'INVALID_EMAIL' });
     }
-    if (!isValidPassword(password)) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.', code: 'WEAK_PASSWORD' });
+    if (!isAcceptableRegistrationPassword(password)) {
+      return res.status(400).json({ error: 'Password must be at least 10 characters.', code: 'WEAK_PASSWORD' });
     }
 
     try {
@@ -170,7 +174,7 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'Enter a valid email address.', code: 'INVALID_EMAIL' });
     }
-    if (!isValidPassword(password)) {
+    if (!isPasswordLoginShape(password)) {
       return res.status(400).json({ error: 'Password must be at least 6 characters.', code: 'WEAK_PASSWORD' });
     }
 

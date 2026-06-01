@@ -1,6 +1,5 @@
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/layout/AppSidebar"
-import { WarehouseSync } from "@/components/dashboard/WarehouseSync"
 import { Button } from "@/components/ui/button"
 import { AuthProvider, useAuth } from "./contexts/AuthContext"
 import { BarChart3 } from "lucide-react"
@@ -19,6 +18,7 @@ import { Input } from "@/components/ui/input"
 import { AnnotationsService, Annotation } from "./services/annotationsService"
 import { GlobalSyncPoller } from "./components/dashboard/GlobalSyncPoller"
 import { GscWarehouseAutoSync } from "./components/dashboard/GscWarehouseAutoSync"
+import { CrawlAutoStarter } from "./components/dashboard/CrawlAutoStarter"
 
 import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
@@ -838,6 +838,7 @@ function MainApp() {
     <SidebarProvider>
       <GlobalSyncPoller siteUrl={selectedSite} />
       <GscWarehouseAutoSync dateRange={dateRange} onSyncComplete={() => setGscSyncVersion((version) => version + 1)} siteUrl={selectedSite} />
+      <CrawlAutoStarter siteUrl={selectedSite} />
       <div className="app-shell-bg flex min-h-screen w-full">
         <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />
         <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">

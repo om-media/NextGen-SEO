@@ -109,7 +109,7 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
     const {
       endDate,
       ga4PropertyId,
-      issueFilter,
+      analyticsFilter,
       limit,
       offset,
       search,
@@ -130,15 +130,16 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
     const rowLimit = Number.isFinite(Number(limit)) ? Math.min(Math.max(Number(limit), 1), 5000) : 500;
     const rowOffset = Number.isFinite(Number(offset)) ? Math.max(Number(offset), 0) : 0;
     const normalizedSearch = isNonEmptyString(search) ? search.trim().toLowerCase() : '';
-    const normalizedIssueFilter = [
+    const normalizedAnalyticsFilter = [
       'all',
+      'low-ctr',
+      'missing-ga4',
       'crawl-issues',
+      'crawl-errors',
       'metadata-gaps',
       'indexability',
       'not-crawled',
-      'low-ctr',
-      'missing-ga4',
-    ].includes(issueFilter) ? issueFilter : 'all';
+    ].includes(analyticsFilter) ? analyticsFilter : 'all';
     const normalizedTrafficFilter = ['all', 'with-ga4', 'without-ga4'].includes(trafficFilter) ? trafficFilter : 'all';
     const normalizedSortColumn = [
       'page',
@@ -149,6 +150,10 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
       'sessions',
       'pageViews',
       'bounceRate',
+      'crawlStatus',
+      'depth',
+      'inlinks',
+      'wordCount',
     ].includes(sortColumn) ? sortColumn : 'clicks';
     const normalizedSortDirection = sortDirection === 'asc' ? 'asc' : 'desc';
 
@@ -295,136 +300,123 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
       }
 
       const latestCrawlJob = await db.get<any>(`
-        SELECT id
+        SELECT id, completedAt, updatedAt, crawledCount
         FROM crawl_jobs
         WHERE ownerId = ? AND siteUrl = ? AND status = 'completed'
-          AND EXISTS (
-            SELECT 1
-            FROM crawl_pages
-            WHERE crawl_pages.ownerId = crawl_jobs.ownerId
-              AND crawl_pages.siteUrl = crawl_jobs.siteUrl
-              AND crawl_pages.jobId = crawl_jobs.id
-          )
         ORDER BY COALESCE(completedAt, updatedAt, startedAt) DESC
         LIMIT 1
       `, [ownerId, siteUrl]);
 
+      let crawlRows: any[] = [];
       if (latestCrawlJob?.id) {
-        const crawlRows = await db.all<any>(`
+        crawlRows = await db.all<any>(`
           SELECT
             url,
             pageKey,
             finalUrl,
             statusCode,
+            contentType,
             title,
             metaDescription,
             canonicalUrl,
             h1Text,
             h1Count,
+            h2Count,
+            wordCount,
+            depth,
+            crawledAt,
+            responseTimeMs,
             noindex,
             inboundLinkCount,
             internalLinkCount,
             outgoingLinkCount,
-            crawledAt,
             errorMessage
           FROM crawl_pages
           WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
         `, [ownerId, siteUrl, latestCrawlJob.id]);
 
         for (const row of crawlRows) {
-          const pageKey = canonicalPageKey(readField(row, 'pageKey') || readField(row, 'url'), siteUrl);
-          const existing = rowsByKey.get(pageKey);
-          if (!existing) continue;
+          const url = String(readField(row, 'url') || '');
+          const pageKey = canonicalPageKey(readField(row, 'pageKey') || url, siteUrl);
+          if (!pageKey) continue;
+
+          const existing = rowsByKey.get(pageKey) || {
+            page: url || pageKey,
+            pageKey,
+            gsc: null,
+            ga4: null,
+            crawl: null,
+          };
 
           existing.crawl = {
             canonicalUrl: readField(row, 'canonicalUrl') || null,
+            contentType: readField(row, 'contentType') || null,
             crawledAt: readField(row, 'crawledAt') || null,
+            depth: toFiniteNumber(readField(row, 'depth')),
             errorMessage: readField(row, 'errorMessage') || null,
             finalUrl: readField(row, 'finalUrl') || null,
             h1Count: toFiniteNumber(readField(row, 'h1Count')),
             h1Text: readField(row, 'h1Text') || null,
-            inboundLinkCount: toFiniteNumber(readField(row, 'inboundLinkCount') ?? readField(row, 'internalLinkCount')),
+            h2Count: toFiniteNumber(readField(row, 'h2Count')),
+            hasMetaDescription: isNonEmptyString(readField(row, 'metaDescription')),
+            hasTitle: isNonEmptyString(readField(row, 'title')),
+            inboundLinkCount: toFiniteNumber(readField(row, 'inboundLinkCount')),
+            internalLinkCount: toFiniteNumber(readField(row, 'internalLinkCount')),
             metaDescription: readField(row, 'metaDescription') || null,
+            metaDescriptionLength: String(readField(row, 'metaDescription') || '').length,
             noindex: Boolean(toFiniteNumber(readField(row, 'noindex'))),
             outgoingLinkCount: toFiniteNumber(readField(row, 'outgoingLinkCount')),
-            statusCode: readField(row, 'statusCode') == null ? null : toFiniteNumber(readField(row, 'statusCode')),
+            responseTimeMs: toFiniteNumber(readField(row, 'responseTimeMs')),
+            statusCode: readField(row, 'statusCode') === null || readField(row, 'statusCode') === undefined
+              ? null
+              : toFiniteNumber(readField(row, 'statusCode')),
             title: readField(row, 'title') || null,
-            url: readField(row, 'url') || existing.page,
+            titleLength: String(readField(row, 'title') || '').length,
+            url,
+            wordCount: toFiniteNumber(readField(row, 'wordCount')),
           };
+
+          if (!existing.page || existing.page === pageKey) existing.page = url || pageKey;
+          rowsByKey.set(pageKey, existing);
         }
       }
 
       const rows = Array.from(rowsByKey.values()).map(({ weightedPosition, ...row }) => row);
-      const hasCrawlIssue = (row: any) => Boolean(row.crawl?.errorMessage || toFiniteNumber(row.crawl?.statusCode) >= 400);
-      const hasMetadataGap = (row: any) => Boolean(row.crawl && (!row.crawl.title || !row.crawl.metaDescription || !row.crawl.h1Text));
-      const hasIndexabilityIssue = (row: any) => Boolean(row.crawl?.noindex || (row.crawl?.canonicalUrl && row.crawl?.finalUrl && row.crawl.canonicalUrl !== row.crawl.finalUrl));
       const isLowCtrOpportunity = (row: any) => toFiniteNumber(row.gsc?.impressions) >= 500 && toFiniteNumber(row.gsc?.ctr) < 0.02;
+      const hasCrawlError = (row: any) => {
+        const crawl = row.crawl;
+        if (!crawl) return false;
+        const statusCode = toFiniteNumber(crawl.statusCode);
+        return Boolean(crawl.errorMessage || (statusCode > 0 && statusCode !== 200));
+      };
+      const hasMetadataGap = (row: any) => Boolean(
+        row.crawl &&
+        (!row.crawl.hasTitle || !row.crawl.hasMetaDescription || toFiniteNumber(row.crawl.h1Count) !== 1),
+      );
+      const hasIndexabilityIssue = (row: any) => Boolean(
+        row.crawl?.noindex ||
+        (row.crawl?.canonicalUrl && row.crawl?.finalUrl && row.crawl.canonicalUrl !== row.crawl.finalUrl),
+      );
+      const hasCrawlIssue = (row: any) => {
+        const crawl = row.crawl;
+        if (!crawl) return true;
+        return Boolean(
+          hasCrawlError(row) ||
+          hasMetadataGap(row) ||
+          hasIndexabilityIssue(row),
+        );
+      };
       const getIssueInsight = (row: any) => {
         const reasons: string[] = [];
-        const statusCode = toFiniteNumber(row.crawl?.statusCode);
         const impressions = toFiniteNumber(row.gsc?.impressions);
         const ctr = toFiniteNumber(row.gsc?.ctr);
+        const clicks = toFiniteNumber(row.gsc?.clicks);
         const sessions = toFiniteNumber(row.ga4?.sessions);
         const bounceRate = toFiniteNumber(row.ga4?.bounceRate);
-
-        if (!row.crawl) {
-          reasons.push('Page has GSC or GA4 data but was not found in the latest completed app crawl.');
-          return {
-            action: 'Run a broader crawl or check whether this URL is orphaned, blocked, redirected, or only discoverable from XML data.',
-            label: 'Not in crawl',
-            reasons,
-            severity: 'medium',
-          };
-        }
-
-        if (row.crawl.errorMessage || statusCode >= 400) {
-          if (statusCode >= 400) reasons.push(`Crawler received HTTP ${statusCode}.`);
-          if (row.crawl.errorMessage) reasons.push(row.crawl.errorMessage);
-          return {
-            action: 'Fix the fetch error first, then re-crawl before reviewing content or traffic performance.',
-            label: 'Fix crawl error',
-            reasons,
-            severity: 'high',
-          };
-        }
-
-        if (row.crawl.noindex) {
-          reasons.push('The crawler found a noindex directive.');
-          if (impressions > 0) reasons.push('The page still has search visibility in GSC.');
-          return {
-            action: 'Confirm whether this page should be indexable; remove noindex if it is expected to rank.',
-            label: 'Review noindex',
-            reasons,
-            severity: impressions > 0 ? 'high' : 'medium',
-          };
-        }
-
-        if (row.crawl.canonicalUrl && row.crawl.finalUrl && row.crawl.canonicalUrl !== row.crawl.finalUrl) {
-          reasons.push('Canonical URL differs from the fetched final URL.');
-          return {
-            action: 'Verify the canonical target and consolidate signals if this page should be the ranking URL.',
-            label: 'Check canonical',
-            reasons,
-            severity: 'medium',
-          };
-        }
-
-        if (!row.crawl.title || !row.crawl.metaDescription || !row.crawl.h1Text) {
-          if (!row.crawl.title) reasons.push('Missing title tag.');
-          if (!row.crawl.metaDescription) reasons.push('Missing meta description.');
-          if (!row.crawl.h1Text) reasons.push('Missing H1 text.');
-          return {
-            action: 'Fill the missing on-page elements, prioritizing pages with impressions or sessions.',
-            label: 'Complete metadata',
-            reasons,
-            severity: impressions >= 100 || sessions >= 20 ? 'high' : 'medium',
-          };
-        }
 
         if (impressions >= 500 && ctr < 0.02) {
           reasons.push(`High impressions with ${(ctr * 100).toFixed(1)}% CTR.`);
           return {
-            action: 'Rewrite the title/meta offer around the winning query intent and compare after the next data refresh.',
             label: 'Improve CTR',
             reasons,
             severity: 'medium',
@@ -434,17 +426,15 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         if (row.gsc && !row.ga4) {
           reasons.push('Page has GSC visibility but no matched GA4 landing-page data.');
           return {
-            action: 'Check GA4 landing-page collection and path normalization for this URL.',
             label: 'Check GA4 match',
             reasons,
             severity: 'low',
           };
         }
 
-        if (toFiniteNumber(row.gsc?.clicks) >= 20 && sessions >= 20 && bounceRate >= 0.7) {
+        if (clicks >= 20 && sessions >= 20 && bounceRate >= 0.7) {
           reasons.push(`Traffic is reaching the page, but bounce rate is ${(bounceRate * 100).toFixed(1)}%.`);
           return {
-            action: 'Review intent match, above-the-fold content, and internal next steps for this page.',
             label: 'Improve engagement',
             reasons,
             severity: 'medium',
@@ -452,9 +442,8 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         }
 
         return {
-          action: 'No immediate blended SEO issue detected from crawl, GSC, and GA4 signals.',
           label: 'Monitor',
-          reasons: ['Crawl, search visibility, and engagement signals do not currently trigger a priority rule.'],
+          reasons: ['Search visibility and engagement signals do not currently trigger a blended status rule.'],
           severity: 'none',
         };
       };
@@ -472,27 +461,23 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           acc.pageViews += toFiniteNumber(row.ga4?.pageViews);
           acc.eventCount += toFiniteNumber(row.ga4?.eventCount);
           acc.weightedBounce += toFiniteNumber(row.ga4?.bounceRate) * toFiniteNumber(row.ga4?.sessions);
-          if (row.crawl) acc.crawlMatchedPages += 1;
-          if (!row.crawl) acc.notCrawledPages += 1;
-          if (hasCrawlIssue(row)) acc.crawlIssuePages += 1;
-          if (hasMetadataGap(row)) acc.metadataGapPages += 1;
           if (row.gsc) acc.gscPages += 1;
           if (row.ga4) acc.ga4Pages += 1;
           if (row.gsc && row.ga4) acc.matchedPages += 1;
+          if (row.crawl) acc.crawledPages += 1;
+          if (hasCrawlIssue(row)) acc.crawlIssuePages += 1;
           return acc;
         },
         {
           clicks: 0,
+          crawledPages: 0,
           crawlIssuePages: 0,
-          crawlMatchedPages: 0,
           ctr: 0,
           eventCount: 0,
           ga4Pages: 0,
           gscPages: 0,
           impressions: 0,
           matchedPages: 0,
-          metadataGapPages: 0,
-          notCrawledPages: 0,
           pageViews: 0,
           position: 0,
           queryCount: 0,
@@ -518,12 +503,13 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           }
           if (normalizedTrafficFilter === 'with-ga4' && !row.ga4) return false;
           if (normalizedTrafficFilter === 'without-ga4' && row.ga4) return false;
-          if (normalizedIssueFilter === 'crawl-issues' && !hasCrawlIssue(row)) return false;
-          if (normalizedIssueFilter === 'metadata-gaps' && !hasMetadataGap(row)) return false;
-          if (normalizedIssueFilter === 'indexability' && !hasIndexabilityIssue(row)) return false;
-          if (normalizedIssueFilter === 'not-crawled' && row.crawl) return false;
-          if (normalizedIssueFilter === 'low-ctr' && !isLowCtrOpportunity(row)) return false;
-          if (normalizedIssueFilter === 'missing-ga4' && row.ga4) return false;
+          if (normalizedAnalyticsFilter === 'low-ctr' && !isLowCtrOpportunity(row)) return false;
+          if (normalizedAnalyticsFilter === 'missing-ga4' && row.ga4) return false;
+          if (normalizedAnalyticsFilter === 'crawl-issues' && !hasCrawlIssue(row)) return false;
+          if (normalizedAnalyticsFilter === 'crawl-errors' && !hasCrawlError(row)) return false;
+          if (normalizedAnalyticsFilter === 'metadata-gaps' && !hasMetadataGap(row)) return false;
+          if (normalizedAnalyticsFilter === 'indexability' && !hasIndexabilityIssue(row)) return false;
+          if (normalizedAnalyticsFilter === 'not-crawled' && row.crawl) return false;
           return true;
         })
         .sort((a, b) => {
@@ -535,6 +521,10 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
             if (normalizedSortColumn === 'queryCount') return toFiniteNumber(row.gsc?.queryCount);
             if (normalizedSortColumn === 'sessions') return toFiniteNumber(row.ga4?.sessions);
             if (normalizedSortColumn === 'pageViews') return toFiniteNumber(row.ga4?.pageViews);
+            if (normalizedSortColumn === 'crawlStatus') return hasCrawlIssue(row) ? 1 : 0;
+            if (normalizedSortColumn === 'depth') return toFiniteNumber(row.crawl?.depth);
+            if (normalizedSortColumn === 'inlinks') return toFiniteNumber(row.crawl?.inboundLinkCount);
+            if (normalizedSortColumn === 'wordCount') return toFiniteNumber(row.crawl?.wordCount);
             return toFiniteNumber(row.ga4?.bounceRate);
           };
           const aValue = readSortValue(a);
@@ -563,20 +553,6 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         .sort((a, b) => toFiniteNumber(b.gsc?.impressions) - toFiniteNumber(a.gsc?.impressions))
         .slice(0, 4);
 
-      const topTechnicalRisks = rows
-        .filter((row) => hasCrawlIssue(row) || hasMetadataGap(row) || hasIndexabilityIssue(row) || !row.crawl)
-        .sort((a, b) => {
-          const score = (row: any) =>
-            (hasCrawlIssue(row) ? 1000000 : 0) +
-            (hasIndexabilityIssue(row) ? 750000 : 0) +
-            (hasMetadataGap(row) ? 500000 : 0) +
-            (!row.crawl ? 250000 : 0) +
-            toFiniteNumber(row.gsc?.impressions) +
-            toFiniteNumber(row.ga4?.sessions);
-          return score(b) - score(a);
-        })
-        .slice(0, 4);
-
       res.json({
         page: {
           filteredTotal: filteredRows.length,
@@ -591,23 +567,22 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           siteUrl,
           sources: {
             bing: false,
+            crawl: crawlRows.length > 0,
             ga4: Boolean(ga4PropertyId && toFiniteNumber(readField(ga4Freshness, 'rowCount')) > 0),
             gsc: true,
           },
           startDate,
           totals: {
             bounceRate,
-            clicks: totals.clicks,
+            crawledPages: totals.crawledPages,
             crawlIssuePages: totals.crawlIssuePages,
-            crawlMatchedPages: totals.crawlMatchedPages,
+            clicks: totals.clicks,
             ctr: totals.ctr,
             eventCount: totals.eventCount,
             ga4Pages: totals.ga4Pages,
             gscPages: totals.gscPages,
             impressions: totals.impressions,
             matchedPages: totals.matchedPages,
-            metadataGapPages: totals.metadataGapPages,
-            notCrawledPages: totals.notCrawledPages,
             pageViews: totals.pageViews,
             position: totals.position,
             queryCount: totals.queryCount,
@@ -617,7 +592,6 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           },
           topFolders,
           topOpportunities,
-          topTechnicalRisks,
           freshness: {
             gsc: {
               earliestDate: readField(gscFreshness, 'earliestDate') || null,
@@ -632,6 +606,10 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
               earliestDate: readField(ga4Freshness, 'earliestDate') || null,
               latestDate: readField(ga4Freshness, 'latestDate') || null,
               rowCount: toFiniteNumber(readField(ga4Freshness, 'rowCount')),
+            },
+            crawl: {
+              completedAt: readField(latestCrawlJob, 'completedAt') || readField(latestCrawlJob, 'updatedAt') || null,
+              rowCount: crawlRows.length,
             },
             bing: null,
           },

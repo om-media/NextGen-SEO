@@ -14,6 +14,8 @@ import { registerRankTrackingRoutes } from './routes/rankTracking.js';
 import { registerReconciliationRoutes } from './routes/reconciliation.js';
 import { registerWarehouseRoutes } from './routes/warehouse.js';
 import { registerWorkspaceCrudRoutes } from './routes/workspaceCrud.js';
+import { authRateLimit, securityHeaders } from './middleware/security.js';
+import { startBingDailyScheduler } from './services/bingWarehouse.js';
 import { startCrawlQueueWorker } from './services/crawl.js';
 import { startRankTrackingScheduler } from './services/rankTracking.js';
 import { startWarehouseDailyScheduler, startWarehouseJobWorker } from './services/warehouseJobs.js';
@@ -30,12 +32,45 @@ type BuildAppOptions = {
   upload: multer.Multer;
   syncJobs: Map<string, SyncJobState>;
   getSyncJobKey: (ownerId: string, siteUrl: string) => string;
+  startWorkers?: boolean;
 };
 
-export function buildApp({ db, upload, syncJobs, getSyncJobKey }: BuildAppOptions) {
+export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = true }: BuildAppOptions) {
   const app = express();
 
+  if (process.env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+  }
+
+  app.use(securityHeaders);
   app.use(express.json({ limit: '50mb' }));
+  app.disable('x-powered-by');
+
+  app.use('/api/auth/login', authRateLimit);
+  app.use('/api/auth/register', authRateLimit);
+
+  app.get('/api/health', (_req, res) => {
+    res.json({
+      ok: true,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  app.get('/api/ready', async (_req, res) => {
+    try {
+      await db.get('SELECT 1 AS ok');
+      res.json({
+        ok: true,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      res.status(503).json({
+        ok: false,
+        error: 'Database unavailable',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
 
   registerLocalAuthRoutes(app, db);
   registerAccountDataRoutes(app, db);
@@ -51,10 +86,20 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey }: BuildAppOption
   registerRankTrackingRoutes(app, db);
   registerIndexingRoutes(app, db, syncJobs, getSyncJobKey);
 
-  startCrawlQueueWorker(db);
-  startWarehouseJobWorker(db);
-  startWarehouseDailyScheduler(db);
-  startRankTrackingScheduler(db);
+  if (startWorkers) {
+    const stopWorkers = [
+      startCrawlQueueWorker(db),
+      startBingDailyScheduler(db),
+      startWarehouseJobWorker(db),
+      startWarehouseDailyScheduler(db),
+      startRankTrackingScheduler(db),
+    ];
+    app.locals.stopBackgroundWorkers = () => {
+      for (const stop of stopWorkers) {
+        stop?.();
+      }
+    };
+  }
 
   return app;
 }

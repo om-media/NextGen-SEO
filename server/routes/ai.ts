@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
-import { generateContentAuditBrief, generateGscInsights } from '../services/ai.js';
+import { AiProviderNotConfiguredError, generateContentAuditBrief, generateGscInsights } from '../services/ai.js';
 import { isNonEmptyString } from '../validation.js';
 
 type InsightRow = Record<string, unknown>;
@@ -35,7 +35,7 @@ export function registerAiRoutes(app: Express, db: AppDatabase) {
       );
       res.json({ insights });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to generate AI insights' });
+      res.status(err instanceof AiProviderNotConfiguredError ? 503 : 500).json({ error: err.message || 'Failed to generate AI insights' });
     }
   });
 
@@ -53,7 +53,7 @@ export function registerAiRoutes(app: Express, db: AppDatabase) {
       const brief = await generateContentAuditBrief(data, siteUrl);
       res.json({ brief });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to generate content audit brief' });
+      res.status(err instanceof AiProviderNotConfiguredError ? 503 : 500).json({ error: err.message || 'Failed to generate content audit brief' });
     }
   });
 }
