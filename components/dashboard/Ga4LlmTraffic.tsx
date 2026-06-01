@@ -83,7 +83,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           endDate,
-          maxDates: 60,
+          maxDates: 720,
           propertyId,
           siteUrl: workspaceSiteUrl,
           startDate,
@@ -203,6 +203,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   }
 
   const activeJobCount = Number(coverage?.activeJobCount || 0)
+  const activeDateCount = Number(coverage?.activeDateCount || activeJobCount)
   const missingDateCount = Number(coverage?.missingDateCount || 0)
   const errorJobCount = Number(coverage?.errorJobCount || 0)
   const coveredDateCount = Number(coverage?.coveredDateCount || 0)
@@ -214,7 +215,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   const statusText = error
     ? "Could not refresh LLM report"
     : activeJobCount > 0
-      ? `Backfilling ${activeJobCount} day${activeJobCount === 1 ? "" : "s"}`
+      ? `Backfilling ${activeDateCount} day${activeDateCount === 1 ? "" : "s"}`
       : missingDateCount > 0
         ? `Queueing ${missingDateCount} missing day${missingDateCount === 1 ? "" : "s"}`
         : refreshing

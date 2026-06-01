@@ -13,7 +13,7 @@ import {
 import { canonicalPageKey } from '../reporting/url.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
 import { canUseRawExports } from '../../shared/plans.js';
-import { listWarehouseJobs, queueWarehouseSyncJob } from '../services/warehouseJobs.js';
+import { LLM_RANGE_JOB_DAYS, listWarehouseJobs, queueWarehouseLlmRangeJob, queueWarehouseSyncJob } from '../services/warehouseJobs.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { getBingCacheStatus } from '../services/bingWarehouse.js';
 
@@ -64,6 +64,50 @@ const latestStableReportingDate = () => {
 
 const minIsoDate = (a: string, b: string) => (a <= b ? a : b);
 const maxIsoDate = (a: string, b: string) => (a >= b ? a : b);
+
+const jobDateRange = (job: { targetDate?: string | null; targetStartDate?: string | null }) => {
+  const endDate = typeof job.targetDate === 'string' && isIsoDateString(job.targetDate) ? job.targetDate : null;
+  if (!endDate) return null;
+  const startDate = typeof job.targetStartDate === 'string' && isIsoDateString(job.targetStartDate)
+    ? job.targetStartDate
+    : endDate;
+  return { endDate, startDate };
+};
+
+const jobDatesWithin = (
+  job: { targetDate?: string | null; targetStartDate?: string | null },
+  startDate: string,
+  endDate: string,
+) => {
+  const range = jobDateRange(job);
+  if (!range) return [];
+  const effectiveStart = maxIsoDate(range.startDate, startDate);
+  const effectiveEnd = minIsoDate(range.endDate, endDate);
+  return effectiveStart <= effectiveEnd ? eachIsoDate(effectiveStart, effectiveEnd) : [];
+};
+
+const addJobDatesToSet = (
+  target: Set<string>,
+  jobs: Array<{ targetDate?: string | null; targetStartDate?: string | null }>,
+  startDate: string,
+  endDate: string,
+) => {
+  for (const job of jobs) {
+    for (const date of jobDatesWithin(job, startDate, endDate)) target.add(date);
+  }
+};
+
+const chunkAscendingDates = (dates: string[], maxDays: number) => {
+  const chunks: Array<{ endDate: string; startDate: string }> = [];
+  const sortedDates = [...dates].sort();
+  for (let index = 0; index < sortedDates.length; index += maxDays) {
+    const chunk = sortedDates.slice(index, index + maxDays);
+    const startDate = chunk[0];
+    const endDate = chunk[chunk.length - 1];
+    if (startDate && endDate) chunks.push({ endDate, startDate });
+  }
+  return chunks;
+};
 
 const coverageFromRows = (
   expectedDates: string[],
@@ -317,7 +361,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const latestAvailableDate = latestStableReportingDate();
       const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
       const expectedDates = eachIsoDate(startDate, effectiveEndDate);
-      const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), 120) : 60;
+      const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), 720) : 365;
       const [rowDates, jobRows] = await Promise.all([
         db.all<{ date: string }>(`
           SELECT date
@@ -325,38 +369,48 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
           GROUP BY date
         `, [ownerId, propertyId, startDate, effectiveEndDate]),
-        db.all<{ targetDate: string }>(`
-          SELECT targetDate
+        db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
+          SELECT jobType, status, targetStartDate, targetDate
           FROM warehouse_jobs
-          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
-            AND targetDate >= ? AND targetDate <= ?
+          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType IN ('ga4-llm-sync', 'ga4-llm-range-sync')
+            AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
             AND status IN ('queued', 'retrying', 'running', 'completed')
-          GROUP BY targetDate
         `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
       ]);
-      const coveredDates = new Set([...rowDates.map((row) => row.date), ...jobRows.map((row) => row.targetDate)]);
-      const datesToQueue = expectedDates
-        .filter((date) => !coveredDates.has(date))
-        .sort((a, b) => b.localeCompare(a))
-        .slice(0, queueLimit);
+      const coveredDates = new Set(rowDates.map((row) => row.date));
+      addJobDatesToSet(coveredDates, jobRows.filter((row) => row.status === 'completed'), startDate, effectiveEndDate);
+      addJobDatesToSet(coveredDates, jobRows.filter((row) => row.jobType === 'ga4-llm-range-sync' && ['queued', 'retrying', 'running'].includes(row.status)), startDate, effectiveEndDate);
+      const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
+      const datesToQueue = missingDates.slice(Math.max(missingDates.length - queueLimit, 0));
+      const chunksToQueue = chunkAscendingDates(datesToQueue, LLM_RANGE_JOB_DAYS);
 
       const jobs = [];
-      for (const targetDate of datesToQueue) {
-        const job = await queueWarehouseSyncJob(db, {
-          jobType: 'ga4-llm-sync',
+      for (const chunk of chunksToQueue) {
+        const job = await queueWarehouseLlmRangeJob(db, {
+          endDate: chunk.endDate,
           ownerId,
           propertyId,
           siteUrl,
-          targetDate,
+          startDate: chunk.startDate,
         });
         jobs.push(job);
       }
+      const supersededAt = new Date().toISOString();
+      await db.run(
+        `UPDATE warehouse_jobs
+         SET status = 'superseded', lockedAt = NULL, completedAt = ?, updatedAt = ?, lastError = NULL
+         WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
+           AND status IN ('queued', 'retrying')
+           AND targetDate >= ? AND targetDate <= ?`,
+        [supersededAt, supersededAt, ownerId, siteUrl, propertyId, startDate, effectiveEndDate],
+      );
 
       return res.json({
         jobs,
         latestAvailableDate,
         queued: jobs.length,
-        remainingMissingDates: Math.max(expectedDates.filter((date) => !coveredDates.has(date)).length - jobs.length, 0),
+        queuedDates: datesToQueue.length,
+        remainingMissingDates: Math.max(missingDates.length - datesToQueue.length, 0),
         skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
       });
     } catch (err: any) {
@@ -382,7 +436,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const latestAvailableDate = latestStableReportingDate();
       const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
       const expectedDates = eachIsoDate(startDate, effectiveEndDate);
-      const [dailyRows, sourceRows, landingPageRows, coveredRows, jobRows, completedJobDateRows] = await Promise.all([
+      const [dailyRows, sourceRows, landingPageRows, coveredRows, llmJobRows] = await Promise.all([
         db.all<any>(`
           SELECT
             date,
@@ -425,29 +479,20 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
           GROUP BY date
         `, [ownerId, propertyId, startDate, effectiveEndDate]),
-        db.all<any>(`
-          SELECT status, COUNT(*) AS jobCount
+        db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
+          SELECT jobType, status, targetStartDate, targetDate
           FROM warehouse_jobs
-          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
-            AND targetDate >= ? AND targetDate <= ?
-          GROUP BY status
-        `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
-        db.all<{ targetDate: string }>(`
-          SELECT targetDate
-          FROM warehouse_jobs
-          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
-            AND targetDate >= ? AND targetDate <= ? AND status = 'completed'
-          GROUP BY targetDate
+          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType IN ('ga4-llm-sync', 'ga4-llm-range-sync')
+            AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
         `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
       ]);
-      const activeJobCount = ['queued', 'retrying', 'running'].reduce(
-        (sum, status) => sum + toCoverageNumber(jobRows.find((row) => row.status === status)?.jobCount),
-        0,
-      );
-      const coveredDates = new Set([
-        ...coveredRows.map((row) => row.date),
-        ...completedJobDateRows.map((row) => row.targetDate),
-      ]);
+      const activeJobs = llmJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
+      const completedJobs = llmJobRows.filter((row) => row.status === 'completed');
+      const activeJobCount = activeJobs.length;
+      const activeDates = new Set<string>();
+      addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
+      const coveredDates = new Set(coveredRows.map((row) => row.date));
+      addJobDatesToSet(coveredDates, completedJobs, startDate, effectiveEndDate);
       const coveredDateCount = coveredDates.size;
       const totals = sourceRows.reduce((acc, row) => {
         const sessions = toFiniteNumber(readField(row, 'sessions'));
@@ -468,8 +513,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       return res.json({
         coverage: {
           activeJobCount,
+          activeDateCount: activeDates.size,
           coveredDateCount: Math.min(coveredDateCount, expectedDates.length),
-          errorJobCount: toCoverageNumber(jobRows.find((row) => row.status === 'error')?.jobCount),
+          errorJobCount: llmJobRows.filter((row) => row.status === 'error').length,
           expectedDateCount: expectedDates.length,
           latestAvailableDate,
           missingDateCount: Math.max(expectedDates.length - coveredDateCount, 0),

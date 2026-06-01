@@ -216,6 +216,7 @@ const commonSchemaSql = `
     propertyId TEXT,
     jobType TEXT,
     status TEXT,
+    targetStartDate TEXT,
     targetDate TEXT,
     attemptCount INTEGER DEFAULT 0,
     maxAttempts INTEGER DEFAULT 3,
@@ -358,6 +359,7 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_queue ON warehouse_jobs(status, nextRunAt, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site ON warehouse_jobs(ownerId, siteUrl, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_target_status ON warehouse_jobs(ownerId, siteUrl, targetDate, status);
+  CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_range_status ON warehouse_jobs(ownerId, siteUrl, targetStartDate, targetDate, status);
   CREATE INDEX IF NOT EXISTS idx_crawl_jobs_owner_site_status ON crawl_jobs(ownerId, siteUrl, status, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_crawl_jobs_queue ON crawl_jobs(status, nextRunAt, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_job ON crawl_pages(ownerId, siteUrl, jobId);
@@ -394,6 +396,7 @@ const camelCaseColumns: Record<string, string> = {
   earliestsyncdate: 'earliestSyncDate',
   lastupdated: 'lastUpdated',
   jobtype: 'jobType',
+  targetstartdate: 'targetStartDate',
   targetdate: 'targetDate',
   rowssynced: 'rowsSynced',
   keywordid: 'keywordId',
@@ -727,6 +730,7 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN pageKey TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN ownerId TEXT',
+    'ALTER TABLE warehouse_jobs ADD COLUMN targetStartDate TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN ownerId TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN attemptCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN maxAttempts INTEGER DEFAULT 3',
@@ -774,6 +778,7 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS pageKey TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS targetStartDate TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS attemptCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS maxAttempts INTEGER DEFAULT 3',

@@ -19,6 +19,7 @@ type WarehouseJob = {
   siteUrl: string;
   startedAt: string | null;
   status: string;
+  targetStartDate: string | null;
   targetDate: string;
   updatedAt: string | null;
 };
@@ -39,6 +40,7 @@ const GSC_MAX_PAGES_PER_DATASET = 200;
 const GA4_ROW_LIMIT = 100_000;
 const GA4_MAX_PAGES_PER_DATASET = 100;
 const LLM_SOURCE_REGEXP = 'chatgpt|openai|claude|anthropic|perplexity|copilot|bing.com/chat';
+export const LLM_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_LLM_RANGE_JOB_DAYS, 120, 14, 365);
 const nowIso = () => new Date().toISOString();
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const addDays = (value: Date, days: number) => {
@@ -193,6 +195,10 @@ async function syncGa4Date(db: AppDatabase, job: WarehouseJob) {
 }
 
 async function syncGa4LlmDate(db: AppDatabase, job: WarehouseJob) {
+  return syncGa4LlmRange(db, job, job.targetDate, job.targetDate);
+}
+
+async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
   if (!job.propertyId) return 0;
   const rows = [];
   let offset = 0;
@@ -205,7 +211,7 @@ async function syncGa4LlmDate(db: AppDatabase, job: WarehouseJob) {
       {
         method: 'POST',
         body: JSON.stringify({
-          dateRanges: [{ startDate: job.targetDate, endDate: job.targetDate }],
+          dateRanges: [{ startDate, endDate }],
           dimensionFilter: {
             filter: {
               fieldName: 'sessionSource',
@@ -230,38 +236,40 @@ async function syncGa4LlmDate(db: AppDatabase, job: WarehouseJob) {
     offset += GA4_ROW_LIMIT;
   }
 
-  await db.run('DELETE FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ? AND date = ?', [job.ownerId, job.propertyId, job.targetDate]);
-  for (const row of rows) {
-    const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || job.targetDate;
-    const pagePath = row.dimensionValues?.[1]?.value || '/';
-    const source = row.dimensionValues?.[2]?.value || '(not set)';
-    await db.run(
-      `INSERT INTO ga4_llm_referral_metrics (ownerId, propertyId, siteUrl, date, source, sourceClass, pagePath, pageKey, sessions, engagedSessions, keyEvents, averageSessionDuration)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(ownerId, propertyId, date, source, pageKey) DO UPDATE SET
-         siteUrl=excluded.siteUrl,
-         sourceClass=excluded.sourceClass,
-         pagePath=excluded.pagePath,
-         sessions=excluded.sessions,
-         engagedSessions=excluded.engagedSessions,
-         keyEvents=excluded.keyEvents,
-         averageSessionDuration=excluded.averageSessionDuration`,
-      [
-        job.ownerId,
-        job.propertyId,
-        job.siteUrl,
-        date,
-        source,
-        classifyLlmSource(source),
-        pagePath,
-        canonicalPageKey(pagePath, job.siteUrl),
-        toNumber(row.metricValues?.[0]?.value),
-        toNumber(row.metricValues?.[1]?.value),
-        toNumber(row.metricValues?.[2]?.value),
-        toNumber(row.metricValues?.[3]?.value),
-      ],
-    );
-  }
+  await db.transaction(async () => {
+    await db.run('DELETE FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, startDate, endDate]);
+    for (const row of rows) {
+      const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
+      const pagePath = row.dimensionValues?.[1]?.value || '/';
+      const source = row.dimensionValues?.[2]?.value || '(not set)';
+      await db.run(
+        `INSERT INTO ga4_llm_referral_metrics (ownerId, propertyId, siteUrl, date, source, sourceClass, pagePath, pageKey, sessions, engagedSessions, keyEvents, averageSessionDuration)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ownerId, propertyId, date, source, pageKey) DO UPDATE SET
+           siteUrl=excluded.siteUrl,
+           sourceClass=excluded.sourceClass,
+           pagePath=excluded.pagePath,
+           sessions=excluded.sessions,
+           engagedSessions=excluded.engagedSessions,
+           keyEvents=excluded.keyEvents,
+           averageSessionDuration=excluded.averageSessionDuration`,
+        [
+          job.ownerId,
+          job.propertyId,
+          job.siteUrl,
+          date,
+          source,
+          classifyLlmSource(source),
+          pagePath,
+          canonicalPageKey(pagePath, job.siteUrl),
+          toNumber(row.metricValues?.[0]?.value),
+          toNumber(row.metricValues?.[1]?.value),
+          toNumber(row.metricValues?.[2]?.value),
+          toNumber(row.metricValues?.[3]?.value),
+        ],
+      );
+    }
+  })();
   return rows.length;
 }
 
@@ -273,7 +281,11 @@ async function updateJob(db: AppDatabase, id: string, fields: Partial<WarehouseJ
 
 async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
   let rowsSynced = 0;
-  if (job.jobType === 'ga4-llm-sync') {
+  const jobStartDate = job.targetStartDate || job.targetDate;
+  const jobEndDate = job.targetDate;
+  if (job.jobType === 'ga4-llm-range-sync') {
+    rowsSynced = await syncGa4LlmRange(db, job, jobStartDate, jobEndDate);
+  } else if (job.jobType === 'ga4-llm-sync') {
     rowsSynced = await syncGa4LlmDate(db, job);
   } else {
     rowsSynced = (await syncGscDate(db, job)) + (await syncGa4Date(db, job));
@@ -291,7 +303,7 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
        earliestSyncDate=CASE WHEN warehouse_sync_status.earliestSyncDate IS NULL OR excluded.earliestSyncDate < warehouse_sync_status.earliestSyncDate THEN excluded.earliestSyncDate ELSE warehouse_sync_status.earliestSyncDate END,
        status=excluded.status,
        lastUpdated=excluded.lastUpdated`,
-    [job.ownerId, job.siteUrl, job.targetDate, job.targetDate, 'synced', nowIso()],
+    [job.ownerId, job.siteUrl, jobEndDate, jobStartDate, 'synced', nowIso()],
   );
   await updateJob(db, job.id, { completedAt: nowIso(), lastError: null, lockedAt: null, rowsSynced, status: 'completed' });
 }
@@ -324,17 +336,77 @@ async function failOrRetry(db: AppDatabase, job: WarehouseJob, error: unknown) {
   });
 }
 
-export async function queueWarehouseSyncJob(db: AppDatabase, input: { jobType?: string; ownerId: string; propertyId?: string | null; siteUrl: string; targetDate: string }) {
+export async function queueWarehouseSyncJob(db: AppDatabase, input: { jobType?: string; ownerId: string; propertyId?: string | null; siteUrl: string; targetDate: string; targetStartDate?: string | null }) {
   const jobType = input.jobType || 'daily-sync';
   const propertyId = input.propertyId || null;
+  const targetStartDate = input.targetStartDate || input.targetDate;
   const existing = propertyId
-    ? await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(propertyId, '') = ? AND jobType = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, propertyId, jobType])
-    : await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND jobType = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, jobType]);
+    ? await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND COALESCE(propertyId, '') = ? AND jobType = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, propertyId, jobType])
+    : await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND jobType = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, jobType]);
   if (existing) return existing;
   const id = crypto.randomUUID();
   const queuedAt = nowIso();
-  await db.run('INSERT INTO warehouse_jobs (id, ownerId, siteUrl, propertyId, jobType, status, targetDate, attemptCount, maxAttempts, lockedAt, nextRunAt, startedAt, updatedAt, completedAt, lastError, rowsSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, input.ownerId, input.siteUrl, propertyId, jobType, 'queued', input.targetDate, 0, DEFAULT_MAX_ATTEMPTS, null, queuedAt, null, queuedAt, null, null, 0]);
+  await db.run('INSERT INTO warehouse_jobs (id, ownerId, siteUrl, propertyId, jobType, status, targetStartDate, targetDate, attemptCount, maxAttempts, lockedAt, nextRunAt, startedAt, updatedAt, completedAt, lastError, rowsSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, input.ownerId, input.siteUrl, propertyId, jobType, 'queued', targetStartDate, input.targetDate, 0, DEFAULT_MAX_ATTEMPTS, null, queuedAt, null, queuedAt, null, null, 0]);
   return db.get<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE id = ?', [id]);
+}
+
+function chunkDescendingDates(dates: string[], maxDays: number) {
+  const chunks: Array<{ endDate: string; startDate: string }> = [];
+  for (let index = 0; index < dates.length; index += maxDays) {
+    const chunk = dates.slice(index, index + maxDays);
+    const sorted = [...chunk].sort();
+    const startDate = sorted[0];
+    const endDate = sorted[sorted.length - 1];
+    if (startDate && endDate) chunks.push({ endDate, startDate });
+  }
+  return chunks;
+}
+
+async function supersedeLegacyLlmDailyJobs(db: AppDatabase) {
+  const legacyRows = await db.all<{ ownerId: string; propertyId: string | null; siteUrl: string; targetDate: string }>(`
+    SELECT DISTINCT ownerId, siteUrl, propertyId, targetDate
+    FROM warehouse_jobs
+    WHERE jobType = 'ga4-llm-sync'
+      AND status IN ('queued', 'retrying')
+      AND targetDate IS NOT NULL
+    ORDER BY ownerId, siteUrl, propertyId, targetDate DESC
+    LIMIT 5000
+  `);
+  if (legacyRows.length === 0) return;
+
+  const datesByScope = new Map<string, { ownerId: string; propertyId: string; siteUrl: string; targetDates: string[] }>();
+  for (const row of legacyRows) {
+    if (!row.ownerId || !row.siteUrl || !row.propertyId || !row.targetDate) continue;
+    const key = JSON.stringify([row.ownerId, row.siteUrl, row.propertyId]);
+    const existing = datesByScope.get(key) || {
+      ownerId: row.ownerId,
+      propertyId: row.propertyId,
+      siteUrl: row.siteUrl,
+      targetDates: [],
+    };
+    existing.targetDates.push(row.targetDate);
+    datesByScope.set(key, existing);
+  }
+
+  const supersededAt = nowIso();
+  for (const scope of datesByScope.values()) {
+    for (const chunk of chunkDescendingDates(scope.targetDates, LLM_RANGE_JOB_DAYS)) {
+      await queueWarehouseLlmRangeJob(db, {
+        endDate: chunk.endDate,
+        ownerId: scope.ownerId,
+        propertyId: scope.propertyId,
+        siteUrl: scope.siteUrl,
+        startDate: chunk.startDate,
+      });
+    }
+    await db.run(
+      `UPDATE warehouse_jobs
+       SET status = 'superseded', lockedAt = NULL, completedAt = ?, updatedAt = ?, lastError = NULL
+       WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
+         AND status IN ('queued', 'retrying')`,
+      [supersededAt, supersededAt, scope.ownerId, scope.siteUrl, scope.propertyId],
+    );
+  }
 }
 
 export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId?: string | null; siteUrl: string }) {
@@ -353,17 +425,29 @@ export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?
 
 export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
   const jobs = [];
-  for (const targetDate of recentStableWarehouseDates(input.days)) {
+  for (const chunk of chunkDescendingDates(recentStableWarehouseDates(input.days), LLM_RANGE_JOB_DAYS)) {
     const job = await queueWarehouseSyncJob(db, {
-      jobType: 'ga4-llm-sync',
+      jobType: 'ga4-llm-range-sync',
       ownerId: input.ownerId,
       propertyId: input.propertyId,
       siteUrl: input.siteUrl,
-      targetDate,
+      targetDate: chunk.endDate,
+      targetStartDate: chunk.startDate,
     });
     jobs.push(job);
   }
   return jobs;
+}
+
+export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
+  return queueWarehouseSyncJob(db, {
+    jobType: 'ga4-llm-range-sync',
+    ownerId: input.ownerId,
+    propertyId: input.propertyId,
+    siteUrl: input.siteUrl,
+    targetDate: input.endDate,
+    targetStartDate: input.startDate,
+  });
 }
 
 export async function listWarehouseJobs(db: AppDatabase, ownerId: string, siteUrl: string, limit = 20) {
@@ -378,6 +462,7 @@ export function startWarehouseJobWorker(db: AppDatabase) {
     running = true;
     try {
       await recoverJobs(db);
+      await supersedeLegacyLlmDailyJobs(db);
       for (let i = 0; i < JOBS_PER_TICK; i += 1) {
         const job = await claimJob(db);
         if (!job) break;
