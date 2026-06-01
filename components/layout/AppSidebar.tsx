@@ -54,6 +54,10 @@ export function AppSidebar({ selectedSite, activeMenu = "Dashboard", onMenuSelec
   const propertyLimitLabel = getPlanPropertyLimitLabel(userProfile?.tier)
   const planDisplayName = getPlanDisplayName(userProfile?.tier)
   const savedFilterCount = savedFilters.length
+  const isPaidPlan = userProfile?.tier === "pro" || userProfile?.tier === "enterprise"
+  const activeSiteCount = userProfile
+    ? Math.max(userProfile.unlockedSites.length, userProfile.activatedSiteUrl ? 1 : 0)
+    : 0
 
   return (
     <Sidebar className="w-[240px] border-r border-border bg-background">
@@ -137,27 +141,29 @@ export function AppSidebar({ selectedSite, activeMenu = "Dashboard", onMenuSelec
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="gap-4 p-4">
-        <div className="rounded-2xl bg-secondary p-4 text-secondary-foreground shadow-[0_12px_28px_rgba(124,58,237,0.08)]">
-          <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-xl bg-card/70 text-amber-500 shadow-sm">
-            <Crown className="h-4 w-4" />
+        {!isPaidPlan && (
+          <div className="rounded-2xl bg-secondary p-4 text-secondary-foreground shadow-[0_12px_28px_rgba(124,58,237,0.08)]">
+            <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-xl bg-card/70 text-amber-500 shadow-sm">
+              <Crown className="h-4 w-4" />
+            </div>
+            <div className="text-sm font-semibold text-primary">Upgrade to Pro</div>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">Unlock advanced insights, historical data, and AI recommendations.</p>
+            <button className="mt-4 inline-flex h-9 items-center gap-2 rounded-xl bg-card px-3 text-xs font-semibold text-primary shadow-sm transition hover:-translate-y-0.5">
+              Upgrade Now
+              <span aria-hidden="true">-&gt;</span>
+            </button>
           </div>
-          <div className="text-sm font-semibold text-primary">Upgrade to Pro</div>
-          <p className="mt-2 text-xs leading-5 text-muted-foreground">Unlock advanced insights, historical data, and AI recommendations.</p>
-          <button className="mt-4 inline-flex h-9 items-center gap-2 rounded-xl bg-card px-3 text-xs font-semibold text-primary shadow-sm transition hover:-translate-y-0.5">
-            Upgrade Now
-            <span aria-hidden="true">-&gt;</span>
-          </button>
-        </div>
+        )}
         {userProfile && (
           <div className="flex flex-col justify-center space-y-3 rounded-2xl border border-border bg-card p-4 shadow-[0_10px_24px_rgba(15,61,46,0.05)]">
             <div className="mb-1 flex items-center justify-between text-xs font-medium text-muted-foreground">
               <span className="uppercase tracking-wider">{planDisplayName} Plan</span>
-              <span>{userProfile.unlockedSites.length} / {propertyLimit === null ? "Unlimited" : propertyLimitLabel} Sites</span>
+              <span>{activeSiteCount} / {propertyLimit === null ? "Unlimited" : propertyLimitLabel} Sites</span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full bg-primary transition-[width] duration-500"
-                style={{ width: propertyLimit === null ? "100%" : `${Math.min(100, Math.max(0, (userProfile.unlockedSites.length / propertyLimit) * 100))}%` }}
+                style={{ width: propertyLimit === null ? "100%" : `${Math.min(100, Math.max(0, (activeSiteCount / propertyLimit) * 100))}%` }}
               />
             </div>
             <button className="w-fit text-xs font-medium text-primary">View Plan Details</button>

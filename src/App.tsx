@@ -56,7 +56,7 @@ function MainApp() {
   const [selectedGa4Property, setSelectedGa4Property] = useState<string>(() => {
     return localStorage.getItem('selected_ga4_property_cache') || "";
   })
-  const [initializedGa4Selection, setInitializedGa4Selection] = useState(false)
+  const [initializedSelectionsForUser, setInitializedSelectionsForUser] = useState<string | null>(null)
   const [fetchingSites, setFetchingSites] = useState(false)
   const [isConnectingGoogleData, setIsConnectingGoogleData] = useState(false)
   const [isDisconnectingGoogleData, setIsDisconnectingGoogleData] = useState(false)
@@ -174,13 +174,26 @@ function MainApp() {
   }, [isOnboarding, selectedSite, userProfile]);
 
   useEffect(() => {
-    if (!userProfile || initializedGa4Selection) {
+    const userKey = user?.uid || null;
+    if (!userKey) {
+      setInitializedSelectionsForUser(null);
       return;
     }
 
+    if (!userProfile || initializedSelectionsForUser === userKey) {
+      return;
+    }
+
+    setSelectedSite(userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "");
     setSelectedGa4Property(userProfile.activatedGa4PropertyId || "");
-    setInitializedGa4Selection(true);
-  }, [initializedGa4Selection, userProfile]);
+    setInitializedSelectionsForUser(userKey);
+  }, [
+    initializedSelectionsForUser,
+    user?.uid,
+    userProfile?.activatedGa4PropertyId,
+    userProfile?.activatedSiteUrl,
+    userProfile?.unlockedSites,
+  ]);
 
   useEffect(() => {
     if (!user) {
@@ -872,7 +885,7 @@ function MainApp() {
                 dataSource={dataSource}
                 dateRange={dateRange}
                 firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
-                ga4PropertyId={selectedGa4Property || userProfile?.activatedGa4PropertyId || null}
+                ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
                 gscSyncVersion={gscSyncVersion}
                 isCompareMode={isCompareMode}
                 onCompareFromDateChange={handleCompareFromDateChange}
