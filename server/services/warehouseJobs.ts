@@ -34,7 +34,7 @@ const positiveIntegerEnv = (value: string | undefined, fallback: number, min: nu
   return Math.min(Math.max(Math.floor(parsed), min), max);
 };
 const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 4, 1, 12);
-const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, 480, 1, 720);
+const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, 720, 1, 720);
 const GSC_ROW_LIMIT = 25_000;
 const GSC_MAX_PAGES_PER_DATASET = 200;
 const GA4_ROW_LIMIT = 100_000;
@@ -405,16 +405,6 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
     rowsSynced = await syncGa4LlmDate(db, job);
   } else {
     rowsSynced = (await syncGscDate(db, job)) + (await syncGa4Date(db, job));
-    try {
-      rowsSynced += await syncGa4DimensionRange(db, job, job.targetDate, job.targetDate);
-    } catch (error) {
-      console.warn('[warehouse] Optional GA4 dimension enrichment failed during daily sync:', error);
-    }
-    try {
-      rowsSynced += await syncGa4LlmDate(db, job);
-    } catch (error) {
-      console.warn('[warehouse] Optional GA4 LLM enrichment failed during daily sync:', error);
-    }
   }
   await db.run(
     `INSERT INTO warehouse_sync_status (ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, lastUpdated)
@@ -575,6 +565,33 @@ export async function queueWarehouseGa4DimensionBackfillJobs(db: AppDatabase, in
   return jobs;
 }
 
+export async function queueWarehouseBootstrapJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId?: string | null; siteUrl: string }) {
+  const core = await queueWarehouseBackfillJobs(db, input);
+  const ga4Dimensions = input.propertyId
+    ? await queueWarehouseGa4DimensionBackfillJobs(db, {
+      days: input.days,
+      ownerId: input.ownerId,
+      propertyId: input.propertyId,
+      siteUrl: input.siteUrl,
+    })
+    : [];
+  const llm = input.propertyId
+    ? await queueWarehouseLlmBackfillJobs(db, {
+      days: input.days,
+      ownerId: input.ownerId,
+      propertyId: input.propertyId,
+      siteUrl: input.siteUrl,
+    })
+    : [];
+
+  return {
+    core,
+    ga4Dimensions,
+    llm,
+    totalQueued: core.length + ga4Dimensions.length + llm.length,
+  };
+}
+
 export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
     jobType: 'ga4-llm-range-sync',
@@ -676,12 +693,29 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
         }
 
         for (const siteUrl of sites) {
+          const propertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId : null;
           await queueWarehouseSyncJob(db, {
             ownerId: user.id,
-            propertyId: typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId : null,
+            propertyId,
             siteUrl,
             targetDate,
           });
+          if (propertyId) {
+            await queueWarehouseGa4DimensionRangeJob(db, {
+              endDate: targetDate,
+              ownerId: user.id,
+              propertyId,
+              siteUrl,
+              startDate: targetDate,
+            });
+            await queueWarehouseLlmRangeJob(db, {
+              endDate: targetDate,
+              ownerId: user.id,
+              propertyId,
+              siteUrl,
+              startDate: targetDate,
+            });
+          }
         }
       }
     } catch (error) {

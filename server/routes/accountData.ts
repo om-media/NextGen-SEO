@@ -6,7 +6,7 @@ import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptySt
 import { getPlanCrawlLimits, getPlanPropertyLimit } from '../../shared/plans.js';
 import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
-import { queueWarehouseBackfillJobs, queueWarehouseGa4DimensionBackfillJobs, queueWarehouseLlmBackfillJobs } from '../services/warehouseJobs.js';
+import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import { canAccessSite } from '../accessControl.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
@@ -65,11 +65,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       if (!user?.gscRefreshToken) return;
 
       const activePropertyId = propertyId || user.activatedGa4PropertyId || null;
-      await queueWarehouseBackfillJobs(db, { ownerId, propertyId: activePropertyId, siteUrl });
-      if (activePropertyId) {
-        await queueWarehouseGa4DimensionBackfillJobs(db, { ownerId, propertyId: activePropertyId, siteUrl });
-        await queueWarehouseLlmBackfillJobs(db, { ownerId, propertyId: activePropertyId, siteUrl });
-      }
+      await queueWarehouseBootstrapJobs(db, { ownerId, propertyId: activePropertyId, siteUrl });
     } catch (err) {
       console.warn('Failed to queue initial warehouse sync', { ownerId, siteUrl, err });
     }

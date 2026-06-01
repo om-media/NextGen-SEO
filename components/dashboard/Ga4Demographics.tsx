@@ -23,6 +23,7 @@ const DIMENSIONS = [
 
 type WarehouseCoverage = {
   activeDateCount?: number;
+  activeJobCount?: number;
   coveredDateCount?: number;
   expectedDateCount?: number;
   missingDateCount?: number;
@@ -91,9 +92,9 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
   useEffect(() => {
     if (!coverage || loading) return;
     const hasWarehouseWork =
+      Number(coverage.activeJobCount || 0) > 0 ||
       Number(coverage.activeDateCount || 0) > 0 ||
-      Number(coverage.queuedDateCount || 0) > 0 ||
-      Number(coverage.missingDateCount || 0) > Number(coverage.activeDateCount || 0);
+      Number(coverage.queuedDateCount || 0) > 0;
     if (!hasWarehouseWork) return;
 
     const timeout = window.setTimeout(() => setPollKey((value) => value + 1), 10000);
@@ -124,9 +125,9 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
     coverage &&
     Number(coverage.expectedDateCount || 0) > 0 &&
     (
+      Number(coverage.activeJobCount || 0) > 0 ||
       Number(coverage.activeDateCount || 0) > 0 ||
-      Number(coverage.queuedDateCount || 0) > 0 ||
-      Number(coverage.missingDateCount || 0) > 0
+      Number(coverage.queuedDateCount || 0) > 0
     );
 
   return (
@@ -136,7 +137,7 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
           <div className="flex items-center gap-3">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
             <span className="font-medium text-foreground">
-              Backfilling {Math.max(Number(coverage.activeDateCount || 0), Number(coverage.queuedDateCount || 0), Number(coverage.missingDateCount || 0)).toLocaleString()} days
+              Backfilling {Math.max(Number(coverage.activeDateCount || 0), Number(coverage.queuedDateCount || 0), Number(coverage.activeJobCount || 0)).toLocaleString()} days
             </span>
             <span>
               {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days stored

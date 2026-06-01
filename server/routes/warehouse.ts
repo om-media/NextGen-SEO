@@ -14,10 +14,9 @@ import { canonicalPageKey } from '../reporting/url.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
 import { canUseRawExports } from '../../shared/plans.js';
 import {
-  GA4_DIMENSION_RANGE_JOB_DAYS,
   LLM_RANGE_JOB_DAYS,
   listWarehouseJobs,
-  queueWarehouseGa4DimensionRangeJob,
+  queueWarehouseBootstrapJobs,
   queueWarehouseLlmRangeJob,
   queueWarehouseSyncJob,
 } from '../services/warehouseJobs.js';
@@ -357,36 +356,19 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     addJobDatesToSet(coveredDates, completedJobs, startDate, effectiveEndDate);
     addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
 
-    const queuedOrCoveredDates = new Set([...coveredDates, ...activeDates]);
     const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
-    const unqueuedMissingDates = expectedDates.filter((date) => !queuedOrCoveredDates.has(date));
-    const datesToQueue = unqueuedMissingDates.slice(Math.max(unqueuedMissingDates.length - 720, 0));
-    const chunksToQueue = chunkAscendingDates(datesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS);
-
-    const queuedJobs = [];
-    for (const chunk of chunksToQueue) {
-      const job = await queueWarehouseGa4DimensionRangeJob(db, {
-        endDate: chunk.endDate,
-        ownerId,
-        propertyId,
-        siteUrl,
-        startDate: chunk.startDate,
-      });
-      queuedJobs.push(job);
-      for (const date of eachIsoDate(chunk.startDate, chunk.endDate)) activeDates.add(date);
-    }
 
     return {
       activeDateCount: activeDates.size,
-      activeJobCount: activeJobs.length + queuedJobs.length,
+      activeJobCount: activeJobs.length,
       coveredDateCount: Math.min(coveredDates.size, expectedDates.length),
       dimension: warehouseDimension,
       errorJobCount: jobRows.filter((row) => row.status === 'error').length,
       expectedDateCount: expectedDates.length,
       latestAvailableDate,
       missingDateCount: missingDates.length,
-      queued: queuedJobs.length,
-      queuedDateCount: datesToQueue.length,
+      queued: 0,
+      queuedDateCount: 0,
       skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
     };
   };
@@ -1188,6 +1170,45 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/warehouse/bootstrap', authRequired, async (req: AuthedRequest, res) => {
+    const ownerId = req.authUser!.uid;
+    const { siteUrl, propertyId, days } = req.body || {};
+    if (!isNonEmptyString(siteUrl)) {
+      return res.status(400).json({ error: 'Invalid warehouse bootstrap payload' });
+    }
+
+    try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+      if (isNonEmptyString(propertyId) && !(await canAccessGa4Property(db, ownerId, propertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
+      const user = await db.get<any>('SELECT gscRefreshToken FROM users WHERE id = ?', [ownerId]);
+      if (!user?.gscRefreshToken) {
+        return res.status(409).json({ error: 'Connect Google data before queueing warehouse bootstrap.' });
+      }
+
+      const boundedDays = Number.isFinite(Number(days)) ? Math.min(Math.max(Number(days), 1), 720) : undefined;
+      const result = await queueWarehouseBootstrapJobs(db, {
+        days: boundedDays,
+        ownerId,
+        propertyId: isNonEmptyString(propertyId) ? propertyId : null,
+        siteUrl,
+      });
+
+      return res.json({
+        coreJobs: result.core.length,
+        ga4DimensionJobs: result.ga4Dimensions.length,
+        llmJobs: result.llm.length,
+        totalJobs: result.totalQueued,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to queue warehouse bootstrap' });
     }
   });
 

@@ -77,23 +77,6 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     let isMounted = true
     let pollTimer: number | null = null
 
-    const queueMissing = async (startDate: string, endDate: string) => {
-      const response = await authFetch("/api/warehouse/ga4/llm/missing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endDate,
-          maxDates: 720,
-          propertyId,
-          siteUrl: workspaceSiteUrl,
-          startDate,
-        }),
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(payload?.error || "Failed to queue LLM referral warehouse sync")
-      return payload
-    }
-
     const fetchReport = async (startDate: string, endDate: string) => {
       const response = await authFetch("/api/warehouse/ga4/llm/report", {
         method: "POST",
@@ -120,14 +103,12 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
       try {
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
-        await queueMissing(startDate, endDate)
         const primaryReport = await fetchReport(startDate, endDate)
         let compareReport = null
 
         if (isCompareMode && compareDateRange.from && compareDateRange.to) {
           const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
           const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
-          await queueMissing(compareStartDate, compareEndDate)
           compareReport = await fetchReport(compareStartDate, compareEndDate)
         }
 
@@ -136,8 +117,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
           setCompareData(isCompareMode ? compareReport : null)
           setCoverage(primaryReport.coverage || null)
           const activeJobs = Number(primaryReport.coverage?.activeJobCount || 0)
-          const missingDates = Number(primaryReport.coverage?.missingDateCount || 0)
-          if (activeJobs > 0 || missingDates > 0) {
+          if (activeJobs > 0) {
             pollTimer = window.setTimeout(() => {
               if (isMounted) setPollKey((key) => key + 1)
             }, 10_000)
@@ -208,7 +188,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   const errorJobCount = Number(coverage?.errorJobCount || 0)
   const coveredDateCount = Number(coverage?.coveredDateCount || 0)
   const expectedDateCount = Number(coverage?.expectedDateCount || 0)
-  const isWarehouseUpdating = refreshing || activeJobCount > 0 || missingDateCount > 0
+  const isWarehouseUpdating = refreshing || activeJobCount > 0
   const coverageText = expectedDateCount > 0
     ? `${coveredDateCount}/${expectedDateCount} days stored`
     : "Checking warehouse coverage"
@@ -217,14 +197,14 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
     : activeJobCount > 0
       ? `Backfilling ${activeDateCount} day${activeDateCount === 1 ? "" : "s"}`
       : missingDateCount > 0
-        ? `Queueing ${missingDateCount} missing day${missingDateCount === 1 ? "" : "s"}`
+        ? `${missingDateCount} day${missingDateCount === 1 ? "" : "s"} not stored yet`
         : refreshing
           ? "Refreshing stored report"
           : errorJobCount > 0
             ? `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`
             : "Warehouse report ready"
 
-  if (coverage && (activeJobCount > 0 || missingDateCount > 0) && !data?.source?.rows?.length) {
+  if (coverage && activeJobCount > 0 && !data?.source?.rows?.length) {
     return (
       <Card className="rounded-2xl border border-dashed border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
         <CardContent className="flex min-h-[240px] flex-col items-center justify-center px-6 text-center">
