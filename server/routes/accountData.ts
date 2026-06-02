@@ -85,11 +85,14 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       );
       if (!user) return;
 
-      const unlockedSites = new Set(uniqueSites(parseStoredSites(user.unlockedSites)));
       const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
-      const accessibleSites = uniqueSites(knownSites).filter((siteUrl) => (
-        user.tier === 'enterprise' || unlockedSites.has(siteUrl) || siteUrl === activeSiteUrl
-      ));
+      const accessibleSites: string[] = [];
+
+      for (const siteUrl of uniqueSites(knownSites)) {
+        if (await canAccessSite(db, ownerId, siteUrl)) {
+          accessibleSites.push(siteUrl);
+        }
+      }
 
       for (const siteUrl of accessibleSites) {
         await queueInitialCrawlIfNeeded(ownerId, siteUrl, user.tier);
@@ -251,7 +254,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     try {
       const user = await db.get<any>('SELECT tier, unlockedSites FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
-      if (user.tier !== 'enterprise' && !uniqueSites(parseStoredSites(user.unlockedSites)).includes(activatedSiteUrl)) {
+      if (!(await canAccessSite(db, req.params.id, activatedSiteUrl))) {
         return res.status(403).json({ error: 'Activate this site before making it the workspace default.' });
       }
       await db.run('UPDATE users SET activatedSiteUrl = ? WHERE id = ?', [activatedSiteUrl, req.params.id]);
@@ -273,15 +276,17 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT activatedSiteUrl, unlockedSites FROM users WHERE id = ?', [req.params.id]);
+      const user = await db.get<any>('SELECT activatedSiteUrl, knownSites, tier, unlockedSites FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
 
       await db.run('UPDATE users SET activatedGa4PropertyId = ?, activatedGa4DisplayName = ? WHERE id = ?', [activatedGa4PropertyId, activatedGa4DisplayName || null, req.params.id]);
       const sitesToBackfill = uniqueSites([
         ...parseStoredSites(user.unlockedSites),
+        ...(user.tier === 'enterprise' ? parseStoredSites(user.knownSites) : []),
         ...(isNonEmptyString(user.activatedSiteUrl) ? [user.activatedSiteUrl] : []),
       ]);
       for (const siteUrl of sitesToBackfill) {
+        if (!(await canAccessSite(db, req.params.id, siteUrl))) continue;
         await queueInitialWarehouseSyncIfPossible(req.params.id, siteUrl, activatedGa4PropertyId);
       }
       res.json({
@@ -373,7 +378,15 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     const { knownSites } = req.body;
     if (!isStringArray(knownSites)) return res.status(400).json({ error: 'Invalid knownSites' });
     try {
-      const normalizedKnownSites = uniqueSites(knownSites);
+      const user = await db.get<any>('SELECT activatedSiteUrl, knownSites, unlockedSites FROM users WHERE id = ?', [req.params.id]);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      const existingAllowedSites = new Set(uniqueSites([
+        ...parseStoredSites(user.knownSites),
+        ...parseStoredSites(user.unlockedSites),
+        ...(isNonEmptyString(user.activatedSiteUrl) ? [user.activatedSiteUrl] : []),
+      ]));
+      const normalizedKnownSites = uniqueSites(knownSites).filter((siteUrl) => existingAllowedSites.has(siteUrl));
       await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(normalizedKnownSites), req.params.id]);
       void queueKnownSiteDataIfPossible(req.params.id, normalizedKnownSites);
       res.json({ success: true, knownSites: normalizedKnownSites });
