@@ -21,6 +21,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
 
+COPY --from=build /app/package-lock.json /tmp/build-package-lock.json
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -46,7 +48,7 @@ RUN apt-get update \
     libxfixes3 \
     libxkbcommon0 \
     libxrandr2 \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* /tmp/build-package-lock.json
 
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/package-lock.json ./package-lock.json
