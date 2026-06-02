@@ -75,7 +75,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
         'SELECT activatedGa4PropertyId, activatedSiteUrl, knownSites, tier, unlockedSites FROM users WHERE id = ?',
         [ownerId],
       );
-      const activatedSiteUrl = isNonEmptyString(user?.activatedSiteUrl) ? user.activatedSiteUrl : null;
+      const activatedSiteUrl = isNonEmptyString(user?.activatedSiteUrl) ? user.activatedSiteUrl.trim() : null;
       const sitesToBackfill = uniqueSites([
         ...parseStringArray(user?.unlockedSites),
         ...(activatedSiteUrl ? [activatedSiteUrl] : []),
@@ -83,7 +83,8 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       ]);
       for (const siteUrl of sitesToBackfill) {
         if (!(await canAccessSite(db, ownerId, siteUrl))) continue;
-        const propertyId = user?.activatedGa4PropertyId || null;
+        const activePropertyId = isNonEmptyString(user?.activatedGa4PropertyId) ? user.activatedGa4PropertyId.trim() : '';
+        const propertyId = siteUrl === activatedSiteUrl && activePropertyId ? activePropertyId : null;
         await queueWarehouseBootstrapJobs(db, {
           ownerId,
           propertyId,

@@ -58,13 +58,14 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
 
   const queueInitialWarehouseSyncIfPossible = async (ownerId: string, siteUrl: string, propertyId?: string | null) => {
     try {
-      const user = await db.get<{ activatedGa4PropertyId?: string | null; gscRefreshToken?: string | null }>(
-        'SELECT activatedGa4PropertyId, gscRefreshToken FROM users WHERE id = ?',
+      const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null; gscRefreshToken?: string | null }>(
+        'SELECT activatedGa4PropertyId, activatedSiteUrl, gscRefreshToken FROM users WHERE id = ?',
         [ownerId],
       );
       if (!user?.gscRefreshToken) return;
 
-      const activePropertyId = propertyId || user.activatedGa4PropertyId || null;
+      const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
+      const activePropertyId = siteUrl === activeSiteUrl ? propertyId || user.activatedGa4PropertyId || null : null;
       await queueWarehouseBootstrapJobs(db, { ownerId, propertyId: activePropertyId, siteUrl });
     } catch (err) {
       console.warn('Failed to queue initial warehouse sync', { ownerId, siteUrl, err });
@@ -280,14 +281,19 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       if (!user) return res.status(404).json({ error: 'User not found' });
 
       await db.run('UPDATE users SET activatedGa4PropertyId = ?, activatedGa4DisplayName = ? WHERE id = ?', [activatedGa4PropertyId, activatedGa4DisplayName || null, req.params.id]);
+      const activeSiteUrl = isNonEmptyString(user.activatedSiteUrl) ? user.activatedSiteUrl.trim() : '';
       const sitesToBackfill = uniqueSites([
         ...parseStoredSites(user.unlockedSites),
         ...(user.tier === 'enterprise' ? parseStoredSites(user.knownSites) : []),
-        ...(isNonEmptyString(user.activatedSiteUrl) ? [user.activatedSiteUrl] : []),
+        ...(activeSiteUrl ? [activeSiteUrl] : []),
       ]);
       for (const siteUrl of sitesToBackfill) {
         if (!(await canAccessSite(db, req.params.id, siteUrl))) continue;
-        await queueInitialWarehouseSyncIfPossible(req.params.id, siteUrl, activatedGa4PropertyId);
+        await queueInitialWarehouseSyncIfPossible(
+          req.params.id,
+          siteUrl,
+          siteUrl === activeSiteUrl ? activatedGa4PropertyId : null,
+        );
       }
       res.json({
         success: true,

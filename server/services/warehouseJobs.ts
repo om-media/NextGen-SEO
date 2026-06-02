@@ -25,16 +25,16 @@ type WarehouseJob = {
   updatedAt: string | null;
 };
 
-const POLL_MS = 10_000;
-const DAILY_SCHEDULER_MS = 60 * 60 * 1000;
-const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_MAX_ATTEMPTS = 3;
 const positiveIntegerEnv = (value: string | undefined, fallback: number, min: number, max: number) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.floor(parsed), min), max);
 };
-const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 4, 1, 12);
+const POLL_MS = positiveIntegerEnv(process.env.WAREHOUSE_WORKER_POLL_MS, 5_000, 1_000, 60_000);
+const DAILY_SCHEDULER_MS = 60 * 60 * 1000;
+const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_MAX_ATTEMPTS = 3;
+const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 8, 1, 24);
 const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, 720, 1, 720);
 export const CORE_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_CORE_RANGE_JOB_DAYS, 120, 7, 365);
 const GSC_ROW_LIMIT = 25_000;
@@ -235,28 +235,30 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
     offset += GA4_ROW_LIMIT;
   }
 
-  await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, startDate, endDate]);
-  for (const row of rows) {
-    const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
-    const pagePath = row.dimensionValues?.[1]?.value || '/';
-    await db.run(
-      `INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
-         siteUrl=excluded.siteUrl,
-         pagePath=excluded.pagePath,
-         bounceRate=CASE
-           WHEN ga4_page_metrics.sessions + excluded.sessions > 0
-           THEN ((ga4_page_metrics.bounceRate * ga4_page_metrics.sessions) + (excluded.bounceRate * excluded.sessions)) * 1.0 / (ga4_page_metrics.sessions + excluded.sessions)
-           ELSE excluded.bounceRate
-         END,
-         sessions=ga4_page_metrics.sessions + excluded.sessions,
-         totalUsers=ga4_page_metrics.totalUsers + excluded.totalUsers,
-         pageViews=ga4_page_metrics.pageViews + excluded.pageViews,
-         eventCount=ga4_page_metrics.eventCount + excluded.eventCount`,
-      [job.ownerId, job.propertyId, job.siteUrl, date, pagePath, canonicalPageKey(pagePath, job.siteUrl), toNumber(row.metricValues?.[0]?.value), toNumber(row.metricValues?.[1]?.value), toNumber(row.metricValues?.[2]?.value), toNumber(row.metricValues?.[3]?.value), toNumber(row.metricValues?.[4]?.value)],
-    );
-  }
+  await db.transaction(async () => {
+    await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, startDate, endDate]);
+    for (const row of rows) {
+      const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
+      const pagePath = row.dimensionValues?.[1]?.value || '/';
+      await db.run(
+        `INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
+           siteUrl=excluded.siteUrl,
+           pagePath=excluded.pagePath,
+           bounceRate=CASE
+             WHEN ga4_page_metrics.sessions + excluded.sessions > 0
+             THEN ((ga4_page_metrics.bounceRate * ga4_page_metrics.sessions) + (excluded.bounceRate * excluded.sessions)) * 1.0 / (ga4_page_metrics.sessions + excluded.sessions)
+             ELSE excluded.bounceRate
+           END,
+           sessions=ga4_page_metrics.sessions + excluded.sessions,
+           totalUsers=ga4_page_metrics.totalUsers + excluded.totalUsers,
+           pageViews=ga4_page_metrics.pageViews + excluded.pageViews,
+           eventCount=ga4_page_metrics.eventCount + excluded.eventCount`,
+        [job.ownerId, job.propertyId, job.siteUrl, date, pagePath, canonicalPageKey(pagePath, job.siteUrl), toNumber(row.metricValues?.[0]?.value), toNumber(row.metricValues?.[1]?.value), toNumber(row.metricValues?.[2]?.value), toNumber(row.metricValues?.[3]?.value), toNumber(row.metricValues?.[4]?.value)],
+      );
+    }
+  })();
   return rows.length;
 }
 
@@ -428,20 +430,33 @@ async function updateJob(db: AppDatabase, id: string, fields: Partial<WarehouseJ
   await db.run(`UPDATE warehouse_jobs SET ${entries.map(([key]) => `${key} = ?`).join(', ')}, updatedAt = ? WHERE id = ?`, [...entries.map(([, value]) => value), nowIso(), id]);
 }
 
+async function resolveActiveGa4PropertyForSite(db: AppDatabase, job: WarehouseJob) {
+  if (!job.propertyId) return null;
+  const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null }>(
+    'SELECT activatedGa4PropertyId, activatedSiteUrl FROM users WHERE id = ?',
+    [job.ownerId],
+  );
+  const activeSiteUrl = typeof user?.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
+  const activePropertyId = typeof user?.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
+  return activeSiteUrl === job.siteUrl && activePropertyId === job.propertyId ? job.propertyId : null;
+}
+
 async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
   let rowsSynced = 0;
   const jobStartDate = job.targetStartDate || job.targetDate;
   const jobEndDate = job.targetDate;
+  const propertyId = await resolveActiveGa4PropertyForSite(db, job);
+  const scopedJob = propertyId === job.propertyId ? job : { ...job, propertyId };
   if (job.jobType === 'ga4-llm-range-sync') {
-    rowsSynced = await syncGa4LlmRange(db, job, jobStartDate, jobEndDate);
+    rowsSynced = propertyId ? await syncGa4LlmRange(db, scopedJob, jobStartDate, jobEndDate) : 0;
   } else if (job.jobType === 'ga4-dimension-range-sync') {
-    rowsSynced = await syncGa4DimensionRange(db, job, jobStartDate, jobEndDate);
+    rowsSynced = propertyId ? await syncGa4DimensionRange(db, scopedJob, jobStartDate, jobEndDate) : 0;
   } else if (job.jobType === 'ga4-llm-sync') {
-    rowsSynced = await syncGa4LlmDate(db, job);
+    rowsSynced = propertyId ? await syncGa4LlmDate(db, scopedJob) : 0;
   } else if (job.jobType === 'core-range-sync') {
-    rowsSynced = (await syncGscRange(db, job, jobStartDate, jobEndDate)) + (await syncGa4PageRange(db, job, jobStartDate, jobEndDate));
+    rowsSynced = (await syncGscRange(db, job, jobStartDate, jobEndDate)) + (propertyId ? await syncGa4PageRange(db, scopedJob, jobStartDate, jobEndDate) : 0);
   } else {
-    rowsSynced = (await syncGscDate(db, job)) + (await syncGa4Date(db, job));
+    rowsSynced = (await syncGscDate(db, job)) + (propertyId ? await syncGa4Date(db, scopedJob) : 0);
   }
   await db.run(
     `INSERT INTO warehouse_sync_status (ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, lastUpdated)
@@ -655,8 +670,8 @@ async function supersedeLegacyLlmDailyJobs(db: AppDatabase) {
 }
 
 async function supersedeLegacyCoreDailyJobs(db: AppDatabase) {
-  const legacyRows = await db.all<{ activatedGa4PropertyId: string | null; ownerId: string; propertyId: string | null; siteUrl: string; targetDate: string }>(`
-    SELECT j.ownerId, j.siteUrl, j.propertyId, j.targetDate, u.activatedGa4PropertyId
+  const legacyRows = await db.all<{ activatedGa4PropertyId: string | null; activatedSiteUrl: string | null; ownerId: string; propertyId: string | null; siteUrl: string; targetDate: string }>(`
+    SELECT j.ownerId, j.siteUrl, j.propertyId, j.targetDate, u.activatedGa4PropertyId, u.activatedSiteUrl
     FROM warehouse_jobs j
     LEFT JOIN users u ON u.id = j.ownerId
     WHERE j.jobType = 'daily-sync'
@@ -670,15 +685,21 @@ async function supersedeLegacyCoreDailyJobs(db: AppDatabase) {
   const scopes = new Map<string, { ownerId: string; propertyId: string | null; siteUrl: string; targetDates: Set<string> }>();
   for (const row of legacyRows) {
     if (!row.ownerId || !row.siteUrl || !row.targetDate) continue;
+    const activeSiteUrl = typeof row.activatedSiteUrl === 'string' ? row.activatedSiteUrl.trim() : '';
+    const activePropertyId = typeof row.activatedGa4PropertyId === 'string' ? row.activatedGa4PropertyId.trim() : '';
+    const rowPropertyId = typeof row.propertyId === 'string' ? row.propertyId.trim() : '';
+    const propertyIdForSite = row.siteUrl === activeSiteUrl
+      ? (rowPropertyId === activePropertyId ? rowPropertyId : activePropertyId || null)
+      : null;
     const key = JSON.stringify([row.ownerId, row.siteUrl]);
     const existing = scopes.get(key) || {
       ownerId: row.ownerId,
-      propertyId: row.propertyId || row.activatedGa4PropertyId || null,
+      propertyId: propertyIdForSite,
       siteUrl: row.siteUrl,
       targetDates: new Set<string>(),
     };
-    if (!existing.propertyId && (row.propertyId || row.activatedGa4PropertyId)) {
-      existing.propertyId = row.propertyId || row.activatedGa4PropertyId || null;
+    if (!existing.propertyId && propertyIdForSite) {
+      existing.propertyId = propertyIdForSite;
     }
     existing.targetDates.add(row.targetDate);
     scopes.set(key, existing);
@@ -882,8 +903,9 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
 
       for (const user of users) {
         const sites = new Set<string>();
-        if (typeof user.activatedSiteUrl === 'string' && user.activatedSiteUrl.trim()) {
-          sites.add(user.activatedSiteUrl.trim());
+        const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
+        if (activeSiteUrl) {
+          sites.add(activeSiteUrl);
         }
         if (isMultiSitePlan(user.tier)) {
           for (const site of parseStringArray(user.unlockedSites)) {
@@ -900,7 +922,8 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
           if (!(await canAccessSite(db, user.id, siteUrl))) {
             continue;
           }
-          const propertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId : null;
+          const activePropertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
+          const propertyId = siteUrl === activeSiteUrl && activePropertyId ? activePropertyId : null;
           await queueWarehouseSyncJob(db, {
             ownerId: user.id,
             propertyId,
