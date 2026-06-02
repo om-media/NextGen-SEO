@@ -54,6 +54,16 @@ function combineSyncResults(results: WarehouseSyncResult[], metrics?: Record<str
   };
 }
 
+const prepareWarehouseStatement = (db: AppDatabase, sql: string) => (db.dialect === 'sqlite' ? db.prepare(sql) : null);
+
+async function runWarehouseStatement(db: AppDatabase, statement: any, sql: string, params: unknown[]) {
+  if (statement) {
+    statement.run(params);
+    return;
+  }
+  await db.run(sql, params);
+}
+
 const positiveIntegerEnv = (value: string | undefined, fallback: number, min: number, max: number) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -193,6 +203,14 @@ async function fetchGscRows(db: AppDatabase, ownerId: string, siteUrl: string, d
 }
 
 async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
+  const insertSiteSql = 'INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?)';
+  const insertQuerySql = 'INSERT INTO gsc_query_metrics (ownerId, siteUrl, date, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+  const insertPageQuerySql = 'INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, pageKey, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+  const insertCountrySql = 'INSERT INTO gsc_country_metrics (ownerId, siteUrl, date, country, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+  const insertSite = prepareWarehouseStatement(db, insertSiteSql);
+  const insertQuery = prepareWarehouseStatement(db, insertQuerySql);
+  const insertPageQuery = prepareWarehouseStatement(db, insertPageQuerySql);
+  const insertCountry = prepareWarehouseStatement(db, insertCountrySql);
   const apiStartedAt = Date.now();
   const [siteRows, queryRows, pageQueryRows, countryRows] = await Promise.all([
     fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date']),
@@ -220,27 +238,33 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
       await db.run('DELETE FROM gsc_country_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
 
       for (const row of dateSiteRows) {
-        await db.run('INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?)', [job.ownerId, job.siteUrl, date, toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
+        await runWarehouseStatement(db, insertSite, insertSiteSql, [job.ownerId, job.siteUrl, date, toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
       }
       for (const row of dateQueryRows) {
-        await db.run('INSERT INTO gsc_query_metrics (ownerId, siteUrl, date, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [job.ownerId, job.siteUrl, date, row.keys?.[1] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
+        await runWarehouseStatement(db, insertQuery, insertQuerySql, [job.ownerId, job.siteUrl, date, row.keys?.[1] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
       }
       for (const row of datePageQueryRows) {
         const page = row.keys?.[1] || '';
-        await db.run(
-          'INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, pageKey, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        await runWarehouseStatement(
+          db,
+          insertPageQuery,
+          insertPageQuerySql,
           [job.ownerId, job.siteUrl, date, page, canonicalPageKey(page, job.siteUrl), row.keys?.[2] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)],
         );
       }
       if (dateCountryRows.length === 0) {
-        await db.run(
-          'INSERT INTO gsc_country_metrics (ownerId, siteUrl, date, country, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        await runWarehouseStatement(
+          db,
+          insertCountry,
+          insertCountrySql,
           [job.ownerId, job.siteUrl, date, '', 0, 0, 0, 0],
         );
       } else {
         for (const row of dateCountryRows) {
-          await db.run(
-            'INSERT INTO gsc_country_metrics (ownerId, siteUrl, date, country, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          await runWarehouseStatement(
+            db,
+            insertCountry,
+            insertCountrySql,
             [job.ownerId, job.siteUrl, date, row.keys?.[1] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)],
           );
         }
@@ -270,6 +294,21 @@ async function syncGscDate(db: AppDatabase, job: WarehouseJob) {
 
 async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
   if (!job.propertyId) return emptySyncResult({ source: 'ga4-pages' });
+  const insertPageSql = `INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
+           siteUrl=excluded.siteUrl,
+           pagePath=excluded.pagePath,
+           bounceRate=CASE
+             WHEN ga4_page_metrics.sessions + excluded.sessions > 0
+             THEN ((ga4_page_metrics.bounceRate * ga4_page_metrics.sessions) + (excluded.bounceRate * excluded.sessions)) * 1.0 / (ga4_page_metrics.sessions + excluded.sessions)
+             ELSE excluded.bounceRate
+           END,
+           sessions=ga4_page_metrics.sessions + excluded.sessions,
+           totalUsers=ga4_page_metrics.totalUsers + excluded.totalUsers,
+           pageViews=ga4_page_metrics.pageViews + excluded.pageViews,
+           eventCount=ga4_page_metrics.eventCount + excluded.eventCount`;
+  const insertPage = prepareWarehouseStatement(db, insertPageSql);
   const rows = [];
   let offset = 0;
 
@@ -305,21 +344,10 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
     for (const row of rows) {
       const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
       const pagePath = row.dimensionValues?.[1]?.value || '/';
-      await db.run(
-        `INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
-           siteUrl=excluded.siteUrl,
-           pagePath=excluded.pagePath,
-           bounceRate=CASE
-             WHEN ga4_page_metrics.sessions + excluded.sessions > 0
-             THEN ((ga4_page_metrics.bounceRate * ga4_page_metrics.sessions) + (excluded.bounceRate * excluded.sessions)) * 1.0 / (ga4_page_metrics.sessions + excluded.sessions)
-             ELSE excluded.bounceRate
-           END,
-           sessions=ga4_page_metrics.sessions + excluded.sessions,
-           totalUsers=ga4_page_metrics.totalUsers + excluded.totalUsers,
-           pageViews=ga4_page_metrics.pageViews + excluded.pageViews,
-           eventCount=ga4_page_metrics.eventCount + excluded.eventCount`,
+      await runWarehouseStatement(
+        db,
+        insertPage,
+        insertPageSql,
         [job.ownerId, job.propertyId, job.siteUrl, date, pagePath, canonicalPageKey(pagePath, job.siteUrl), toNumber(row.metricValues?.[0]?.value), toNumber(row.metricValues?.[1]?.value), toNumber(row.metricValues?.[2]?.value), toNumber(row.metricValues?.[3]?.value), toNumber(row.metricValues?.[4]?.value)],
       );
     }
@@ -344,6 +372,16 @@ async function syncGa4LlmDate(db: AppDatabase, job: WarehouseJob) {
 
 async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
   if (!job.propertyId) return emptySyncResult({ source: 'ga4-dimensions' });
+  const insertDimensionSql = `INSERT INTO ga4_dimension_metrics (ownerId, propertyId, siteUrl, date, dimension, dimensionValue, sessions, totalUsers, pageViews, bounceRate, eventCount)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(ownerId, propertyId, date, dimension, dimensionValue) DO UPDATE SET
+             siteUrl=excluded.siteUrl,
+             sessions=excluded.sessions,
+             totalUsers=excluded.totalUsers,
+             pageViews=excluded.pageViews,
+             bounceRate=excluded.bounceRate,
+             eventCount=excluded.eventCount`;
+  const insertDimension = prepareWarehouseStatement(db, insertDimensionSql);
   let apiMs = 0;
   let rowsSynced = 0;
   const rowsByDimension: Record<string, number> = {};
@@ -396,16 +434,10 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
           return index === -1 ? 0 : toNumber(row.metricValues?.[index]?.value);
         };
 
-        await db.run(
-          `INSERT INTO ga4_dimension_metrics (ownerId, propertyId, siteUrl, date, dimension, dimensionValue, sessions, totalUsers, pageViews, bounceRate, eventCount)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(ownerId, propertyId, date, dimension, dimensionValue) DO UPDATE SET
-             siteUrl=excluded.siteUrl,
-             sessions=excluded.sessions,
-             totalUsers=excluded.totalUsers,
-             pageViews=excluded.pageViews,
-             bounceRate=excluded.bounceRate,
-             eventCount=excluded.eventCount`,
+        await runWarehouseStatement(
+          db,
+          insertDimension,
+          insertDimensionSql,
           [
             job.ownerId,
             job.propertyId,
@@ -445,6 +477,17 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
 
 async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
   if (!job.propertyId) return emptySyncResult({ source: 'ga4-llm' });
+  const insertLlmSql = `INSERT INTO ga4_llm_referral_metrics (ownerId, propertyId, siteUrl, date, source, sourceClass, pagePath, pageKey, sessions, engagedSessions, keyEvents, averageSessionDuration)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ownerId, propertyId, date, source, pageKey) DO UPDATE SET
+           siteUrl=excluded.siteUrl,
+           sourceClass=excluded.sourceClass,
+           pagePath=excluded.pagePath,
+           sessions=excluded.sessions,
+           engagedSessions=excluded.engagedSessions,
+           keyEvents=excluded.keyEvents,
+           averageSessionDuration=excluded.averageSessionDuration`;
+  const insertLlm = prepareWarehouseStatement(db, insertLlmSql);
   const rows = [];
   let offset = 0;
 
@@ -490,17 +533,10 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
       const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
       const pagePath = row.dimensionValues?.[1]?.value || '/';
       const source = row.dimensionValues?.[2]?.value || '(not set)';
-      await db.run(
-        `INSERT INTO ga4_llm_referral_metrics (ownerId, propertyId, siteUrl, date, source, sourceClass, pagePath, pageKey, sessions, engagedSessions, keyEvents, averageSessionDuration)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(ownerId, propertyId, date, source, pageKey) DO UPDATE SET
-           siteUrl=excluded.siteUrl,
-           sourceClass=excluded.sourceClass,
-           pagePath=excluded.pagePath,
-           sessions=excluded.sessions,
-           engagedSessions=excluded.engagedSessions,
-           keyEvents=excluded.keyEvents,
-           averageSessionDuration=excluded.averageSessionDuration`,
+      await runWarehouseStatement(
+        db,
+        insertLlm,
+        insertLlmSql,
         [
           job.ownerId,
           job.propertyId,
