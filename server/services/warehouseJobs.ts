@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import type { AppDatabase } from '../database.js';
+import { canAccessSite } from '../accessControl.js';
 import { canonicalPageKey } from '../reporting/url.js';
 import { googleApiFetchJson } from './googleAuth.js';
 import { isMultiSitePlan } from '../../shared/plans.js';
@@ -874,7 +875,7 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
     try {
       const targetDate = latestStableReportingDate();
       const users = await db.all<any>(`
-        SELECT id, tier, activatedSiteUrl, activatedGa4PropertyId, unlockedSites
+        SELECT id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites
         FROM users
         WHERE gscRefreshToken IS NOT NULL AND gscRefreshToken != ''
       `);
@@ -889,8 +890,16 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
             sites.add(site.trim());
           }
         }
+        if (user.tier === 'enterprise') {
+          for (const site of parseStringArray(user.knownSites)) {
+            sites.add(site.trim());
+          }
+        }
 
         for (const siteUrl of sites) {
+          if (!(await canAccessSite(db, user.id, siteUrl))) {
+            continue;
+          }
           const propertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId : null;
           await queueWarehouseSyncJob(db, {
             ownerId: user.id,

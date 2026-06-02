@@ -136,7 +136,7 @@ export function startBingDailyScheduler(db: AppDatabase) {
     running = true;
     try {
       const users = await db.all<any>(`
-        SELECT id, tier, activatedSiteUrl, unlockedSites, bingApiKey
+        SELECT id, tier, activatedSiteUrl, knownSites, unlockedSites, bingApiKey
         FROM users
         WHERE bingApiKey IS NOT NULL AND bingApiKey != ''
       `);
@@ -148,6 +148,11 @@ export function startBingDailyScheduler(db: AppDatabase) {
         }
         if (isMultiSitePlan(user.tier)) {
           for (const site of parseStringArray(user.unlockedSites)) {
+            sites.add(site.trim());
+          }
+        }
+        if (user.tier === 'enterprise') {
+          for (const site of parseStringArray(user.knownSites)) {
             sites.add(site.trim());
           }
         }
