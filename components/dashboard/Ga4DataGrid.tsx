@@ -201,6 +201,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
   useEffect(() => {
     if (!coverage || loading) return;
+    if (data.length > 0) return;
     const hasWarehouseWork =
       Number(coverage.activeJobCount || 0) > 0 ||
       Number(coverage.activeDateCount || 0) > 0 ||
@@ -209,7 +210,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
 
     const timeout = window.setTimeout(() => setPollKey((value) => value + 1), 10000);
     return () => window.clearTimeout(timeout);
-  }, [coverage, loading])
+  }, [coverage, loading, data.length])
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {

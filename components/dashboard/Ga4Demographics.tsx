@@ -91,6 +91,7 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
 
   useEffect(() => {
     if (!coverage || loading) return;
+    if (Object.values(data).some((rows) => Array.isArray(rows) && rows.length > 0)) return;
     const hasWarehouseWork =
       Number(coverage.activeJobCount || 0) > 0 ||
       Number(coverage.activeDateCount || 0) > 0 ||
@@ -99,7 +100,7 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
 
     const timeout = window.setTimeout(() => setPollKey((value) => value + 1), 10000);
     return () => window.clearTimeout(timeout);
-  }, [coverage, loading])
+  }, [coverage, loading, data])
 
   if (loading && Object.keys(data).length === 0) {
     return (

@@ -17,7 +17,6 @@ import { Ga4ApiService } from "./services/ga4Service"
 import { Input } from "@/components/ui/input"
 import { AnnotationsService, Annotation } from "./services/annotationsService"
 import { GlobalSyncPoller } from "./components/dashboard/GlobalSyncPoller"
-import { GscWarehouseAutoSync } from "./components/dashboard/GscWarehouseAutoSync"
 import { CrawlAutoStarter } from "./components/dashboard/CrawlAutoStarter"
 
 import { Toaster } from "@/components/ui/sonner"
@@ -851,7 +850,6 @@ function MainApp() {
   return (
     <SidebarProvider>
       <GlobalSyncPoller siteUrl={selectedSite} />
-      <GscWarehouseAutoSync siteUrl={selectedSite} />
       <CrawlAutoStarter siteUrl={selectedSite} />
       <div className="app-shell-bg flex min-h-screen w-full">
         <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />

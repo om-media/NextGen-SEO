@@ -211,11 +211,17 @@ function GscSyncStatusBadge({
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [pollKey, setPollKey] = useState(0);
-  const lastCoverageSignature = useRef<string | null>(null);
+  const lastCoverageSnapshot = useRef<{
+    activeJobCount: number;
+    coveredDateCount: number;
+    errorJobCount: number;
+    lastCoveredDate: string | null;
+    missingDateCount: number;
+  } | null>(null);
   const coverageScopeKey = `${siteUrl}|${ga4PropertyId || ""}|${dateRange.from?.toISOString() || ""}|${dateRange.to?.toISOString() || ""}`;
 
   useEffect(() => {
-    lastCoverageSignature.current = null;
+    lastCoverageSnapshot.current = null;
   }, [coverageScopeKey]);
 
   useEffect(() => {
@@ -291,18 +297,30 @@ function GscSyncStatusBadge({
 
           setCoverage(nextCoverage);
           if (nextCoverage) {
-            const signature = [
-              nextCoverage.activeDateCount,
-              nextCoverage.activeJobCount,
-              nextCoverage.coveredDateCount,
-              nextCoverage.errorJobCount,
-              nextCoverage.lastCoveredDate || "",
-              nextCoverage.missingDateCount,
-            ].join(":");
-            if (lastCoverageSignature.current && lastCoverageSignature.current !== signature) {
+            const previous = lastCoverageSnapshot.current;
+            const completedBackgroundWork = Boolean(
+              previous &&
+              previous.activeJobCount > 0 &&
+              nextCoverage.activeJobCount === 0 &&
+              (
+                previous.coveredDateCount !== nextCoverage.coveredDateCount ||
+                previous.errorJobCount !== nextCoverage.errorJobCount ||
+                previous.lastCoveredDate !== nextCoverage.lastCoveredDate ||
+                previous.missingDateCount !== nextCoverage.missingDateCount
+              ),
+            );
+
+            if (completedBackgroundWork) {
               onCoverageProgress?.();
             }
-            lastCoverageSignature.current = signature;
+
+            lastCoverageSnapshot.current = {
+              activeJobCount: nextCoverage.activeJobCount,
+              coveredDateCount: nextCoverage.coveredDateCount,
+              errorJobCount: nextCoverage.errorJobCount,
+              lastCoveredDate: nextCoverage.lastCoveredDate,
+              missingDateCount: nextCoverage.missingDateCount,
+            };
           }
 
           if (activeJobCount > 0) {
@@ -349,10 +367,10 @@ function GscSyncStatusBadge({
   if (loading) {
     label = "Checking coverage";
   } else if (activeJobCount > 0) {
-    label = `Importing ${backfillSource} history`;
+    label = "Updating stored data";
     statusTitle = activeDateCount > 0
-      ? `Importing stored ${backfillSource} data for ${formatWholeNumber(activeDateCount)} selected day${activeDateCount === 1 ? "" : "s"}. Charts keep using available rows while this finishes.`
-      : `Importing stored ${backfillSource} data. Charts keep using available rows while this finishes.`;
+      ? `Background warehouse import is storing ${backfillSource} data for ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}. Existing dashboard rows stay visible.`
+      : `Background warehouse import is storing ${backfillSource} data. Existing dashboard rows stay visible.`;
   } else if (errorJobCount > 0) {
     label = `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`;
     statusTitle = "Some warehouse sync jobs for this selected date range need attention.";

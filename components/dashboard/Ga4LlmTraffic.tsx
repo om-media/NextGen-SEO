@@ -117,7 +117,12 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
           setCompareData(isCompareMode ? compareReport : null)
           setCoverage(primaryReport.coverage || null)
           const activeJobs = Number(primaryReport.coverage?.activeJobCount || 0)
-          if (activeJobs > 0) {
+          const hasReportRows = Boolean(
+            primaryReport?.source?.rows?.length ||
+            primaryReport?.daily?.rows?.length ||
+            primaryReport?.landingPage?.rows?.length,
+          )
+          if (activeJobs > 0 && !hasReportRows) {
             pollTimer = window.setTimeout(() => {
               if (isMounted) setPollKey((key) => key + 1)
             }, 10_000)
