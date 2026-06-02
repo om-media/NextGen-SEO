@@ -253,6 +253,7 @@ const commonSchemaSql = `
     updatedAt TEXT,
     completedAt TEXT,
     lastError TEXT,
+    metricsJson TEXT,
     rowsSynced INTEGER DEFAULT 0
   );
 
@@ -428,6 +429,7 @@ const camelCaseColumns: Record<string, string> = {
   jobtype: 'jobType',
   targetstartdate: 'targetStartDate',
   targetdate: 'targetDate',
+  metricsjson: 'metricsJson',
   rowssynced: 'rowsSynced',
   keywordid: 'keywordId',
   rankingurl: 'rankingUrl',
@@ -769,6 +771,7 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN pageKey TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN ownerId TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN targetStartDate TEXT',
+    'ALTER TABLE warehouse_jobs ADD COLUMN metricsJson TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN ownerId TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN attemptCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN maxAttempts INTEGER DEFAULT 3',
@@ -817,6 +820,7 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS pageKey TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS targetStartDate TEXT',
+    'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS metricsJson TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS attemptCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS maxAttempts INTEGER DEFAULT 3',

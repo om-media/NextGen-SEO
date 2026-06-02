@@ -149,6 +149,18 @@ export type WarehouseJobSummary = {
   id: string;
   jobType: string;
   lastError?: string | null;
+  metrics?: {
+    apiMs?: number;
+    completedAt?: string;
+    days?: number;
+    jobType?: string;
+    phases?: Record<string, { apiMs?: number; rows?: number; writeMs?: number }>;
+    propertyIncluded?: boolean;
+    rows?: Record<string, number>;
+    rowsSynced?: number;
+    totalMs?: number;
+    writeMs?: number;
+  } | null;
   propertyId?: string | null;
   rowsSynced?: number | null;
   startedAt?: string | null;

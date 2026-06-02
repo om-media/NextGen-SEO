@@ -52,6 +52,16 @@ function formatDateDistance(value?: string | null) {
   }
 }
 
+function formatDurationMs(value?: number | null) {
+  if (!Number.isFinite(value || NaN)) return null;
+  const ms = Math.max(0, Number(value));
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
 function getDatasetStats(coverage: DataCoverageResponse | null, dataSource: DataSource) {
   if (!coverage) {
     return {
@@ -245,6 +255,9 @@ export function DataImportStatusPanel({
   const visibleJobs = jobs.filter((job) => job.status !== "superseded");
   const latestJob = visibleJobs[0] || null;
   const latestJobDistance = formatDateDistance(latestJob?.updatedAt);
+  const latestTotalDuration = formatDurationMs(latestJob?.metrics?.totalMs);
+  const latestApiDuration = formatDurationMs(latestJob?.metrics?.apiMs);
+  const latestWriteDuration = formatDurationMs(latestJob?.metrics?.writeMs);
 
   const status = actionState === "importing" && stats.missingDateCount > 0
     ? "starting"
@@ -390,6 +403,9 @@ export function DataImportStatusPanel({
                 {latestJob.rowsSynced !== undefined && latestJob.rowsSynced !== null && (
                   <span>{formatWholeNumber(Number(latestJob.rowsSynced || 0))} rows</span>
                 )}
+                {latestTotalDuration && <span>{latestTotalDuration} total</span>}
+                {latestApiDuration && <span>API {latestApiDuration}</span>}
+                {latestWriteDuration && <span>write {latestWriteDuration}</span>}
                 {latestJob.lastError && <span className="text-destructive">{latestJob.lastError}</span>}
               </div>
             ) : (

@@ -61,6 +61,16 @@ const toCoverageNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const parseWarehouseJobMetrics = (value: unknown) => {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
 async function resolveActiveGa4PropertyForSite(db: AppDatabase, ownerId: string, siteUrl: string, propertyId: string) {
   if (!propertyId) return '';
   const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null }>(
@@ -1573,6 +1583,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               startedAt = NULL,
               completedAt = NULL,
               lastError = NULL,
+              metricsJson = NULL,
               updatedAt = ?
           WHERE id = ? AND ownerId = ?
         `, [new Date().toISOString(), new Date().toISOString(), job.id, ownerId]);
@@ -1604,7 +1615,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
 
-      const jobs = await listWarehouseJobs(db, ownerId, siteUrl, limit);
+      const jobs = (await listWarehouseJobs(db, ownerId, siteUrl, limit)).map((job: any) => {
+        const { metricsJson, ...rest } = job;
+        return {
+          ...rest,
+          metrics: parseWarehouseJobMetrics(metricsJson),
+        };
+      });
       res.json({ jobs });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to load import jobs' });
