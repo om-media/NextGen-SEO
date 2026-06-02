@@ -4,9 +4,7 @@
 
 # GSC+
 
-GSC+ is a full-stack SEO analytics and monitoring dashboard for Google Search Console, GA4, crawl inventory, rank tracking, Bing, and AI-assisted analysis.
-
-View your app in AI Studio: https://ai.studio/apps/cc404f7d-10b9-4cce-bc27-97d82605d5d8
+NextGen SEO is a full-stack SEO analytics and monitoring dashboard for Google Search Console, GA4, crawl inventory, rank tracking, Bing, and AI-assisted analysis.
 
 ## Run Locally
 
