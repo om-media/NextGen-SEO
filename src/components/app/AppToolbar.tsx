@@ -29,6 +29,20 @@ type AppToolbarProps = {
   setIsCompareMode: (value: boolean) => void;
 };
 
+type ToolbarCoverageSnapshot = {
+  activeDateCount: number;
+  activeJobCount: number;
+  coveredDateCount: number;
+  errorJobCount: number;
+  expectedDateCount: number;
+  hasGa4Gaps: boolean;
+  hasGscGaps: boolean;
+  latestAvailableDate: string | null;
+  lastCoveredDate: string | null;
+  missingDateCount: number;
+  unavailableDateCount: number;
+};
+
 export function AppToolbar({
   activeMenu,
   compareDateRange,
@@ -49,10 +63,16 @@ export function AppToolbar({
   setIsCompareMode,
 }: AppToolbarProps) {
   const sectionCopy = getSectionCopy(activeMenu, dataSource);
-  const blendedGa4PropertyId = dataSource === "blended" ? ga4PropertyId : null;
-  const showDataControls = activeMenu !== "Settings" && activeMenu !== "AI Content Auditor";
+  const reportingGa4PropertyId = dataSource === "blended" || dataSource === "ga4" ? ga4PropertyId : null;
+  const isDashboard = activeMenu === "Dashboard";
   const [syncRefreshKey, setSyncRefreshKey] = useState(0);
   const [syncActionState, setSyncActionState] = useState<"idle" | "queueing">("idle");
+  const [toolbarCoverage, setToolbarCoverage] = useState<ToolbarCoverageSnapshot | null>(null);
+  const toolbarCoverageScopeKey = `${dataSource}|${currentSiteUrl}|${reportingGa4PropertyId || ""}|${dateRange.from?.toISOString() || ""}|${dateRange.to?.toISOString() || ""}`;
+
+  useEffect(() => {
+    setToolbarCoverage(null);
+  }, [toolbarCoverageScopeKey]);
 
   const handleRefreshResults = async () => {
     const range = getIsoDateRange(dateRange);
@@ -62,13 +82,13 @@ export function AppToolbar({
         await authFetch("/api/warehouse/jobs/missing", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            endDate: range.endDate,
-            propertyId: blendedGa4PropertyId || undefined,
-            maxDates: 60,
-            siteUrl: currentSiteUrl,
-            startDate: range.startDate,
-          }),
+            body: JSON.stringify({
+              endDate: range.endDate,
+              propertyId: reportingGa4PropertyId || undefined,
+              maxDates: 720,
+              siteUrl: currentSiteUrl,
+              startDate: range.startDate,
+            }),
         });
       }
     } catch (error) {
@@ -78,6 +98,16 @@ export function AppToolbar({
       setSyncActionState("idle");
     }
   };
+  const toolbarHasActiveImport = Number(toolbarCoverage?.activeJobCount || 0) > 0;
+  const toolbarRangeReady = Boolean(toolbarCoverage && toolbarCoverage.missingDateCount === 0 && toolbarCoverage.errorJobCount === 0);
+  const importButtonDisabled = syncActionState === "queueing" || toolbarHasActiveImport || toolbarRangeReady;
+  const importButtonLabel = syncActionState === "queueing"
+    ? "Starting import"
+    : toolbarHasActiveImport
+      ? "Import running"
+      : toolbarRangeReady
+        ? "Range ready"
+        : "Import missing days";
 
   return (
     <div className="premium-panel relative overflow-hidden rounded-2xl border border-border px-5 py-4 sm:px-6">
@@ -100,29 +130,36 @@ export function AppToolbar({
           {sectionCopy.description}
         </p>
       </div>
-      {showDataControls ? (
       <div className="flex w-full flex-col items-start gap-2 xl:min-w-[760px] xl:items-end">
         <div className="flex w-full flex-wrap items-center gap-2 xl:justify-end">
-          {(dataSource === "gsc" || dataSource === "blended") && (
+          {isDashboard && (dataSource === "gsc" || dataSource === "blended" || dataSource === "ga4") && (
             <>
               <GscSyncStatusBadge
+                dataSource={dataSource}
                 dateRange={dateRange}
-                ga4PropertyId={blendedGa4PropertyId}
+                ga4PropertyId={reportingGa4PropertyId}
+                onCoverageLoaded={setToolbarCoverage}
                 onCoverageProgress={onWarehouseCoverageChange}
                 refreshKey={syncRefreshKey + gscSyncVersion}
                 siteUrl={currentSiteUrl}
               />
               <button
                 className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
-                disabled={syncActionState === "queueing"}
+                disabled={importButtonDisabled}
                 onClick={handleRefreshResults}
                 title={dataSource === "blended"
-                  ? "Queue missing GSC and GA4 warehouse data for reportable days in the selected date range."
-                  : "Queue missing GSC warehouse data for reportable days in the selected date range."}
+                  ? "Import missing Search Console and Analytics days for the selected range."
+                  : dataSource === "ga4"
+                    ? "Import missing Analytics pages and breakdowns for the selected range."
+                    : "Import missing Search Console days for the selected range."}
                 type="button"
               >
-                <RefreshCw className={`h-4 w-4 ${syncActionState === "queueing" ? "animate-spin" : ""}`} />
-                {syncActionState === "queueing" ? "Queueing sync" : "Sync range"}
+                {toolbarRangeReady ? (
+                  <CheckCircle2 className="h-4 w-4 text-primary" />
+                ) : (
+                  <RefreshCw className={`h-4 w-4 ${syncActionState === "queueing" || toolbarHasActiveImport ? "animate-spin" : ""}`} />
+                )}
+                {importButtonLabel}
               </button>
               {rawDataAvailable && onOpenRawData && (
                 <button
@@ -130,44 +167,40 @@ export function AppToolbar({
                   onClick={onOpenRawData}
                   type="button"
                 >
-                  Raw exports
+                  Export data
                 </button>
               )}
             </>
           )}
-          <div className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-            <Switch id="compare-mode" checked={isCompareMode} onCheckedChange={setIsCompareMode} />
-            <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">
-              Compare
-            </Label>
-          </div>
-          <div className="[&>button]:h-9 [&>button]:rounded-xl [&>button]:border-border [&>button]:bg-card [&>button]:shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-            <DatePicker date={dateRange.from} setDate={onFromDateChange} label="From" />
-          </div>
-          <span className="text-sm font-medium px-1 text-muted-foreground">to</span>
-          <div className="[&>button]:h-9 [&>button]:rounded-xl [&>button]:border-border [&>button]:bg-card [&>button]:shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-            <DatePicker date={dateRange.to} setDate={onToDateChange} label="To" />
+          <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:w-auto sm:grid-cols-[auto_auto_auto_auto] sm:items-center">
+            <div className="col-span-2 flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-[0_8px_20px_rgba(15,61,46,0.06)] sm:col-span-1">
+              <Switch id="compare-mode" checked={isCompareMode} onCheckedChange={setIsCompareMode} />
+              <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">
+                Compare
+              </Label>
+            </div>
+            <div className="min-w-0 [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 [&>button]:overflow-hidden [&>button]:rounded-xl [&>button]:border-border [&>button]:bg-card [&>button]:shadow-[0_8px_20px_rgba(15,61,46,0.06)] sm:[&>button]:w-auto sm:[&>button]:min-w-[160px]">
+              <DatePicker date={dateRange.from} setDate={onFromDateChange} label="From" />
+            </div>
+            <span className="hidden text-sm font-medium px-1 text-muted-foreground sm:block">to</span>
+            <div className="min-w-0 [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 [&>button]:overflow-hidden [&>button]:rounded-xl [&>button]:border-border [&>button]:bg-card [&>button]:shadow-[0_8px_20px_rgba(15,61,46,0.06)] sm:[&>button]:w-auto sm:[&>button]:min-w-[160px]">
+              <DatePicker date={dateRange.to} setDate={onToDateChange} label="To" />
+            </div>
           </div>
         </div>
         {isCompareMode && (
-          <div className="flex flex-wrap items-center gap-1 self-start rounded-xl border border-dashed border-border bg-card/70 p-1 shadow-[0_8px_20px_rgba(15,61,46,0.04)] xl:self-end sm:gap-2">
-            <span className="text-sm font-medium px-1 text-muted-foreground sm:px-2">vs</span>
-            <DatePicker date={compareDateRange.from} setDate={onCompareFromDateChange} label="Compare From" />
-            <span className="text-sm font-medium px-1 text-muted-foreground sm:px-2">to</span>
-            <DatePicker date={compareDateRange.to} setDate={onCompareToDateChange} label="Compare To" />
+          <div className="grid w-full grid-cols-2 gap-2 self-start rounded-xl border border-dashed border-border bg-card/70 p-1 shadow-[0_8px_20px_rgba(15,61,46,0.04)] xl:self-end sm:w-auto sm:grid-cols-[auto_auto_auto_auto] sm:items-center">
+            <span className="col-span-2 text-sm font-medium px-2 text-muted-foreground sm:col-span-1">vs</span>
+            <div className="min-w-0 [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 sm:[&>button]:w-auto sm:[&>button]:min-w-[160px]">
+              <DatePicker date={compareDateRange.from} setDate={onCompareFromDateChange} label="Compare From" />
+            </div>
+            <span className="hidden text-sm font-medium px-1 text-muted-foreground sm:block">to</span>
+            <div className="min-w-0 [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 sm:[&>button]:w-auto sm:[&>button]:min-w-[160px]">
+              <DatePicker date={compareDateRange.to} setDate={onCompareToDateChange} label="Compare To" />
+            </div>
           </div>
         )}
       </div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-          <span className="rounded-full border border-border bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground">
-            Workspace controls live here
-          </span>
-          <span className="rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-[0_8px_20px_rgba(15,61,46,0.04)]">
-            No date range needed
-          </span>
-        </div>
-      )}
       </div>
     </div>
   );
@@ -184,31 +217,23 @@ function getIsoDateRange(dateRange: DateRange) {
 const formatWholeNumber = (value: number) => new Intl.NumberFormat("en-US").format(value);
 
 function GscSyncStatusBadge({
+  dataSource,
   dateRange,
   ga4PropertyId,
+  onCoverageLoaded,
   onCoverageProgress,
   refreshKey,
   siteUrl,
 }: {
+  dataSource: DataSource;
   dateRange: DateRange;
   ga4PropertyId?: string | null;
+  onCoverageLoaded?: (coverage: ToolbarCoverageSnapshot | null) => void;
   onCoverageProgress?: () => void;
   refreshKey: number;
   siteUrl: string;
 }) {
-  const [coverage, setCoverage] = useState<{
-    activeDateCount: number;
-    activeJobCount: number;
-    coveredDateCount: number;
-    errorJobCount: number;
-    expectedDateCount: number;
-    hasGa4Gaps: boolean;
-    hasGscGaps: boolean;
-    latestAvailableDate: string | null;
-    lastCoveredDate: string | null;
-    missingDateCount: number;
-    unavailableDateCount: number;
-  } | null>(null);
+  const [coverage, setCoverage] = useState<ToolbarCoverageSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [pollKey, setPollKey] = useState(0);
   const lastCoverageSnapshot = useRef<{
@@ -227,6 +252,7 @@ function GscSyncStatusBadge({
   useEffect(() => {
     if (!siteUrl) {
       setCoverage(null);
+      onCoverageLoaded?.(null);
       return;
     }
 
@@ -255,28 +281,51 @@ function GscSyncStatusBadge({
           let activeJobCount = 0;
           let nextCoverage: typeof coverage = null;
           if (range && status?.gsc?.site) {
+            const includeGsc = dataSource === "gsc" || dataSource === "blended";
+            const includeGa4Pages = (dataSource === "ga4" || dataSource === "blended") && Boolean(status?.ga4?.enabled);
+            const includeGa4Dimensions = dataSource === "ga4" && Boolean(status?.ga4?.enabled);
+            const datasets = [
+              ...(includeGsc ? [
+                status.gsc.site,
+                status.gsc.query,
+                status.gsc.pageQuery,
+                status.gsc.country,
+              ] : []),
+              ...(includeGa4Pages ? [status.ga4.pages] : []),
+              ...(includeGa4Dimensions ? [status.ga4.dimensions] : []),
+            ].filter(Boolean);
             activeJobCount = Number(status?.warehouseJobs?.queued || 0)
               + Number(status?.warehouseJobs?.running || 0)
               + Number(status?.warehouseJobs?.retrying || 0);
-            const gscMissingDateCount = Math.max(
+            const gscMissingDateCount = includeGsc ? Math.max(
               Number(status?.gsc?.site?.missingDateCount || 0),
               Number(status?.gsc?.query?.missingDateCount || 0),
               Number(status?.gsc?.pageQuery?.missingDateCount || 0),
-            );
+              Number(status?.gsc?.country?.missingDateCount || 0),
+            ) : 0;
             const ga4MissingDateCount = status?.ga4?.enabled
-              ? Number(status?.ga4?.pages?.missingDateCount || 0)
+              ? Math.max(
+                includeGa4Pages ? Number(status?.ga4?.pages?.missingDateCount || 0) : 0,
+                includeGa4Dimensions ? Number(status?.ga4?.dimensions?.missingDateCount || 0) : 0,
+              )
               : 0;
+            const coveredDateCounts = datasets.map((dataset: any) => Number(dataset?.coveredDateCount || 0));
+            const expectedDateCounts = datasets.map((dataset: any) => Number(dataset?.expectedDateCount || 0));
+            const lastCoveredDates = datasets
+              .map((dataset: any) => dataset?.lastCoveredDate)
+              .filter(Boolean)
+              .sort();
             nextCoverage = {
               activeDateCount: Number(status?.warehouseJobs?.activeDateCount || 0),
               activeJobCount,
-              coveredDateCount: status.gsc.site.coveredDateCount || 0,
+              coveredDateCount: coveredDateCounts.length > 0 ? Math.min(...coveredDateCounts) : 0,
               errorJobCount: Number(status?.warehouseJobs?.error || 0),
-              expectedDateCount: status.gsc.site.expectedDateCount || 0,
+              expectedDateCount: expectedDateCounts.length > 0 ? Math.max(...expectedDateCounts) : 0,
               hasGa4Gaps: ga4MissingDateCount > 0,
               hasGscGaps: gscMissingDateCount > 0,
               latestAvailableDate: status?.dateRange?.latestAvailableDate || null,
-              lastCoveredDate: status.gsc.site.lastCoveredDate || null,
-              missingDateCount: status.gsc.site.missingDateCount || 0,
+              lastCoveredDate: lastCoveredDates[0] || null,
+              missingDateCount: Math.max(gscMissingDateCount, ga4MissingDateCount),
               unavailableDateCount: Number(status?.dateRange?.unavailableDateCount || 0),
             };
           } else {
@@ -296,6 +345,7 @@ function GscSyncStatusBadge({
           }
 
           setCoverage(nextCoverage);
+          onCoverageLoaded?.(nextCoverage);
           if (nextCoverage) {
             const previous = lastCoverageSnapshot.current;
             const completedBackgroundWork = Boolean(
@@ -335,6 +385,7 @@ function GscSyncStatusBadge({
       .catch(() => {
         if (!cancelled) {
           setCoverage(null);
+          onCoverageLoaded?.(null);
         }
       })
       .finally(() => {
@@ -346,7 +397,7 @@ function GscSyncStatusBadge({
     return () => {
       cancelled = true;
     };
-  }, [dateRange, ga4PropertyId, pollKey, refreshKey, siteUrl]);
+  }, [dataSource, dateRange, ga4PropertyId, onCoverageLoaded, pollKey, refreshKey, siteUrl]);
 
   const lastMetricDate = coverage?.lastCoveredDate || null;
   const latestAvailableDate = coverage?.latestAvailableDate || lastMetricDate;
@@ -355,39 +406,51 @@ function GscSyncStatusBadge({
   const errorJobCount = coverage?.errorJobCount || 0;
   const unavailableDateCount = coverage?.unavailableDateCount || 0;
   const isPartial = Boolean(coverage && coverage.expectedDateCount > 0 && coverage.coveredDateCount < coverage.expectedDateCount);
-  const backfillSource = coverage?.hasGscGaps && coverage.hasGa4Gaps
-    ? "GSC/GA4"
+  const importSource = coverage?.hasGscGaps && coverage.hasGa4Gaps
+    ? "Search Console and Analytics"
+    : coverage?.hasGa4Gaps
+      ? "Analytics"
+      : coverage?.hasGscGaps
+        ? "Search Console"
+        : "reporting";
+  const importSourceShort = coverage?.hasGscGaps && coverage.hasGa4Gaps
+    ? "GSC + GA4"
     : coverage?.hasGa4Gaps
       ? "GA4"
       : coverage?.hasGscGaps
         ? "GSC"
-        : "Warehouse";
+        : "Data";
   let label = "Preparing data";
   let statusTitle = "Checking stored reporting coverage for this date range.";
   if (loading) {
-    label = "Checking coverage";
+    label = "Checking stored data";
   } else if (activeJobCount > 0) {
-    label = "Updating stored data";
+    label = activeDateCount > 0
+      ? `${importSourceShort} import: ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}`
+      : `${importSourceShort} import running`;
     statusTitle = activeDateCount > 0
-      ? `Background warehouse import is storing ${backfillSource} data for ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}. Existing dashboard rows stay visible.`
-      : `Background warehouse import is storing ${backfillSource} data. Existing dashboard rows stay visible.`;
+      ? `The app is importing ${importSource} data for ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}. Existing dashboard rows stay visible while this finishes.`
+      : `The app is importing ${importSource} data. Existing dashboard rows stay visible while this finishes.`;
   } else if (errorJobCount > 0) {
-    label = `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`;
-    statusTitle = "Some warehouse sync jobs for this selected date range need attention.";
+    label = "Import needs review";
+    statusTitle = `${errorJobCount} data import ${errorJobCount === 1 ? "job needs" : "jobs need"} attention for the selected range.`;
+  } else if (coverage?.hasGscGaps || coverage?.hasGa4Gaps) {
+    label = `Import missing ${importSourceShort}`;
+    statusTitle = `${formatWholeNumber(coverage.missingDateCount)} reportable day${coverage.missingDateCount === 1 ? "" : "s"} need ${importSource} data. The app queues missing warehouse imports automatically; use Import missing days to retry immediately.`;
   } else if (!lastMetricDate && latestAvailableDate && unavailableDateCount > 0) {
-    label = `Available through ${format(parseISO(latestAvailableDate), "MMM d")}`;
+    label = `Data through ${format(parseISO(latestAvailableDate), "MMM d")}`;
     statusTitle = `Google Search Console data is delayed by about 2 days. ${unavailableDateCount} recent selected day${unavailableDateCount === 1 ? "" : "s"} will appear when Google publishes them.`;
   } else if (lastMetricDate) {
     label = isPartial
-      ? `Partial: ${coverage?.coveredDateCount}/${coverage?.expectedDateCount} days through ${format(parseISO(lastMetricDate), "MMM d")}`
+      ? `${coverage?.coveredDateCount}/${coverage?.expectedDateCount} days ready through ${format(parseISO(lastMetricDate), "MMM d")}`
       : unavailableDateCount > 0 && latestAvailableDate
-        ? `Current through ${format(parseISO(latestAvailableDate), "MMM d")}`
-        : `Analyzed through ${format(parseISO(lastMetricDate), "MMM d")}`;
+        ? `Data through ${format(parseISO(latestAvailableDate), "MMM d")}`
+        : `Data ready through ${format(parseISO(lastMetricDate), "MMM d")}`;
     statusTitle = isPartial
-      ? "Stored warehouse data does not cover every day in the selected range yet."
+      ? `${coverage?.coveredDateCount}/${coverage?.expectedDateCount} reportable days are stored for this range. Missing days will import in the background.`
       : unavailableDateCount > 0
         ? `Google Search Console data is delayed by about 2 days. ${unavailableDateCount} recent selected day${unavailableDateCount === 1 ? "" : "s"} will appear when Google publishes them.`
-        : "Stored warehouse data covers the selected date range.";
+        : "Stored reporting data covers the selected date range.";
   }
 
   return (
@@ -440,6 +503,20 @@ function getSectionCopy(activeMenu: string, dataSource: DataSource) {
     return {
       title: "Audit content opportunities",
       description: "Review content quality signals and prioritize pages that need clearer, stronger SEO intent.",
+    };
+  }
+
+  if (activeMenu === "Raw Data") {
+    return {
+      title: "Inspect stored source rows",
+      description: "Review the stored Search Console, Analytics, and crawl rows that power the workspace reports.",
+    };
+  }
+
+  if (activeMenu === "Reconciliation") {
+    return {
+      title: "Reconcile source conflicts",
+      description: "Compare search, analytics, and crawl evidence so mismatched pages are easier to resolve.",
     };
   }
 

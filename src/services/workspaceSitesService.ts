@@ -24,6 +24,23 @@ export type WorkspaceSiteStatus = {
   siteUrl: string;
   warehouse: {
     earliestMetricDate: string | null;
+    jobs: {
+      completed: number;
+      error: number;
+      latest: null | {
+        lastError: string | null;
+        rowsSynced: number;
+        status: string;
+        targetDate: string | null;
+        targetStartDate: string | null;
+        updatedAt: string | null;
+      };
+      latestUpdatedAt: string | null;
+      queued: number;
+      retrying: number;
+      running: number;
+      total: number;
+    };
     lastMetricDate: string | null;
     metricDayCount: number;
     rowCount: number;

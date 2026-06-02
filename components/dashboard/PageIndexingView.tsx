@@ -455,7 +455,7 @@ export function PageIndexingView({ siteUrl, dateRange, isLive }: { siteUrl: stri
             )}
           </div>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-[#647067]">
-            Reviewing warehoused Search Console pages, server-log crawl evidence, and cached URL Inspection results.
+            Reviewing stored Search Console pages, server-log crawl evidence, and cached URL Inspection results.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] p-1.5 shrink-0">

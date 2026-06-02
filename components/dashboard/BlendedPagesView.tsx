@@ -845,6 +845,19 @@ export function BlendedPagesView({
   const pageCount = Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE));
   const paginatedRows = rows;
   const hasGa4Rows = (sourceMeta?.totals.ga4Pages ?? rows.filter((row) => row.ga4).length) > 0;
+  const coverageDatasets = [
+    coverage?.gsc.site,
+    coverage?.gsc.pageQuery,
+    ga4PropertyId ? coverage?.ga4.pages : null,
+  ].filter(Boolean) as CoverageDataset[];
+  const sourceMissingDateCount = coverageDatasets.length > 0
+    ? Math.max(...coverageDatasets.map((dataset) => dataset.missingDateCount))
+    : 0;
+  const sourceActiveJobCount = Number(coverage?.warehouseJobs.queued || 0)
+    + Number(coverage?.warehouseJobs.retrying || 0)
+    + Number(coverage?.warehouseJobs.running || 0);
+  const sourceFailedJobCount = Number(coverage?.warehouseJobs.error || 0);
+  const sourceRangeReady = Boolean(coverage && sourceMissingDateCount === 0 && sourceFailedJobCount === 0);
 
   const totals = useMemo(() => {
     if (sourceMeta?.totals) {
@@ -998,7 +1011,7 @@ export function BlendedPagesView({
     try {
       await queueMissingCoverageSync({
         endDate: dateStrings.endDate,
-        maxDates: 60,
+        maxDates: 720,
         propertyId: ga4PropertyId,
         siteUrl,
         startDate: dateStrings.startDate,
@@ -1053,7 +1066,7 @@ export function BlendedPagesView({
           accentClass="bg-[#FFF2E8] text-[#F97316]"
           icon={<ArrowDown className="h-5 w-5" />}
           label="Bounce rate"
-          sublabel={hasGa4Rows ? "Weighted by sessions" : "Waiting for GA4 warehouse"}
+          sublabel={hasGa4Rows ? "Weighted by sessions" : "Analytics import in progress"}
           value={hasGa4Rows ? formatPercent(totals.bounceRate) : "-"}
         />
         <MetricCard
@@ -1074,7 +1087,7 @@ export function BlendedPagesView({
 
       {!hasGa4Rows && ga4PropertyId && (
         <div className="rounded-2xl border border-[#D9E5DE] bg-[#F4FAF6] p-4 text-sm text-[#34483E]">
-          GA4 is connected, but page-level GA4 data has not been warehoused for this range yet. The app collects landing-page metrics automatically as the warehouse refreshes.
+          GA4 is connected, but page-level Analytics data is still importing for this range. Landing-page metrics will appear here automatically as stored data catches up.
         </div>
       )}
 
@@ -1087,18 +1100,28 @@ export function BlendedPagesView({
       <section className="rounded-2xl border border-[#E6ECE8] bg-[#FBFCFB] p-5 shadow-[0_12px_32px_rgba(15,61,46,0.04)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Source sync</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#647067]">Source imports</p>
             <h3 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-[#0F172A]">Data readiness for this range</h3>
           </div>
           <Button
             variant="outline"
             size="sm"
             className="h-9 w-fit rounded-xl border-[#D9E5DE] bg-white"
-            disabled={!dateStrings || coverageSyncing}
+            disabled={!dateStrings || coverageLoading || coverageSyncing || sourceActiveJobCount > 0 || sourceRangeReady}
             onClick={handleRefreshMissingCoverage}
           >
-            <RefreshCw className={`mr-2 h-4 w-4 ${coverageSyncing ? "animate-spin" : ""}`} />
-            {coverageSyncing ? "Queueing..." : "Refresh missing days"}
+            {sourceRangeReady ? (
+              <CheckCircle2 className="mr-2 h-4 w-4 text-[#0F3D2E]" />
+            ) : (
+              <RefreshCw className={`mr-2 h-4 w-4 ${coverageSyncing || sourceActiveJobCount > 0 ? "animate-spin" : ""}`} />
+            )}
+            {coverageSyncing
+              ? "Starting import"
+              : sourceActiveJobCount > 0
+                ? "Import running"
+                : sourceRangeReady
+                  ? "Range ready"
+                  : "Import missing days"}
           </Button>
         </div>
 
@@ -1137,7 +1160,7 @@ export function BlendedPagesView({
         <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-[#647067]">
           <span className="inline-flex items-center gap-1 rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
             <Database className="h-3.5 w-3.5" />
-            Jobs {formatNumber(coverage?.warehouseJobs.total ?? 0)}
+            Import jobs {formatNumber(coverage?.warehouseJobs.total ?? 0)}
           </span>
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
             Queued {formatNumber((coverage?.warehouseJobs.queued ?? 0) + (coverage?.warehouseJobs.retrying ?? 0))}
@@ -1232,7 +1255,7 @@ export function BlendedPagesView({
 
             <div className="overflow-hidden rounded-2xl border border-[#E6ECE8]">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1900px] text-sm">
+                <table className="w-full min-w-[1320px] text-sm">
                   <thead className="bg-[#FBFCFB] text-xs font-semibold text-[#34483E]">
                     <tr>
                       <th className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-[#E6ECE8] bg-[#FBFCFB] px-4 py-3 text-left">

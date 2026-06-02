@@ -188,6 +188,8 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
           setError(err.message)
         } else if (err.message === "Failed to fetch") {
           setError("Network error: Unable to connect to Google Analytics API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
+        } else if (/not warehoused|being prepared|not ready|history import/i.test(err.message)) {
+          setError("This Analytics report needs stored history for the selected range. Existing Overview and Pages data stays available while the import completes.")
         } else {
           setError(err.message)
         }
@@ -289,8 +291,13 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
     (
       Number(coverage.activeJobCount || 0) > 0 ||
       Number(coverage.activeDateCount || 0) > 0 ||
-      Number(coverage.queuedDateCount || 0) > 0
+      Number(coverage.queuedDateCount || 0) > 0 ||
+      Number(coverage.missingDateCount || 0) > 0
     );
+  const hasActiveWarehouseWork =
+    Number(coverage?.activeJobCount || 0) > 0 ||
+    Number(coverage?.activeDateCount || 0) > 0 ||
+    Number(coverage?.queuedDateCount || 0) > 0;
 
   if (loading && data.length === 0) {
     return (
@@ -393,9 +400,9 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
           <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
             <Database className="h-5 w-5" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground">GA4 {getDimensionHeader()} is not warehoused yet</h3>
+          <h3 className="text-lg font-semibold text-foreground">GA4 {getDimensionHeader()} report is being prepared</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            This dashboard no longer reads Google Analytics live in the background. Page and date reports use the app warehouse today; this dimension needs a dedicated sync table before it can appear here.
+            The app is storing this Analytics breakdown in the background. Page and date reports are available now; this report will appear once its historical import is ready.
           </p>
         </CardContent>
       </Card>
@@ -403,19 +410,33 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
   }
 
   return (
-    <div className="space-y-6">
-      {shouldShowCoverage && (
+    <div className="space-y-6" aria-busy={loading}>
+      {loading && data.length > 0 && !shouldShowCoverage && (
         <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="font-medium text-foreground">Refreshing Analytics report</span>
+          </div>
+          <span>Existing rows stay visible while the latest stored data loads.</span>
+        </div>
+      )}
+
+      {shouldShowCoverage && (
+        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            {hasActiveWarehouseWork ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            ) : (
+              <Database className="h-4 w-4 text-primary" />
+            )}
             <span className="font-medium text-foreground">
-              Backfilling {Math.max(Number(coverage.activeDateCount || 0), Number(coverage.queuedDateCount || 0), Number(coverage.activeJobCount || 0)).toLocaleString()} days
+              {hasActiveWarehouseWork ? "Importing Analytics history" : "Analytics breakdown import available"}
             </span>
             <span>
-              {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days stored
+              {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days ready
             </span>
           </div>
-          <span>Existing rows stay visible while the warehouse catches up.</span>
+          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while the import catches up." : "The import status panel will prepare this breakdown automatically."}</span>
         </div>
       )}
 
@@ -574,7 +595,9 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
               {currentData.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={metrics.length + 1} className="h-24 text-center text-muted-foreground">
-                    No data available.
+                    {Number(coverage?.missingDateCount || 0) > 0
+                      ? "This Analytics breakdown needs stored history for the selected range."
+                      : "No data available."}
                   </TableCell>
                 </TableRow>
               ) : (

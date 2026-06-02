@@ -42,22 +42,26 @@ export type DataCoverageResponse = {
     unavailableDates?: string[];
   };
   ga4: {
+    dimensions: CoverageDataset;
     enabled: boolean;
     pages: CoverageDataset;
     propertyId: string | null;
   };
   gsc: {
+    country: CoverageDataset;
     pageQuery: CoverageDataset;
     query: CoverageDataset;
     site: CoverageDataset;
   };
   siteUrl: string;
   warehouseJobs: {
+    activeDateCount: number;
     completed: number;
     error: number;
     queued: number;
     retrying: number;
     running: number;
+    superseded?: number;
     total: number;
   };
 };
@@ -102,13 +106,15 @@ export async function queueMissingCoverageSync(params: {
 
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(data?.error || "Failed to queue missing sync jobs");
+    throw new Error(data?.error || "Failed to start missing-days import");
   }
 
   return data as {
-    jobs: Array<{ id: string; status: string; targetDate: string }>;
+    jobs: Array<{ id: string; status: string; targetDate: string; targetStartDate?: string | null }>;
     latestAvailableDate?: string;
     queued: number;
+    queuedCoreDates?: number;
+    queuedGa4DimensionDates?: number;
     remainingMissingDates: number;
     skippedUnavailableDates?: number;
   };
@@ -128,11 +134,44 @@ export async function retryFailedCoverageSync(params: {
 
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(data?.error || "Failed to retry failed sync jobs");
+    throw new Error(data?.error || "Failed to retry failed imports");
   }
 
   return data as {
     remainingFailedJobs: number;
     retried: number;
   };
+}
+
+export type WarehouseJobSummary = {
+  attemptCount?: number | null;
+  completedAt?: string | null;
+  id: string;
+  jobType: string;
+  lastError?: string | null;
+  propertyId?: string | null;
+  rowsSynced?: number | null;
+  startedAt?: string | null;
+  status: "queued" | "running" | "retrying" | "completed" | "error" | "superseded" | string;
+  targetDate: string;
+  targetStartDate?: string | null;
+  updatedAt?: string | null;
+};
+
+export async function fetchWarehouseJobs(params: {
+  limit?: number;
+  siteUrl: string;
+}) {
+  const searchParams = new URLSearchParams({
+    limit: String(params.limit || 10),
+    siteUrl: params.siteUrl,
+  });
+
+  const response = await authFetch(`/api/warehouse/jobs?${searchParams.toString()}`);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.error || "Failed to load import jobs");
+  }
+
+  return (Array.isArray(data?.jobs) ? data.jobs : []) as WarehouseJobSummary[];
 }

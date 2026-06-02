@@ -46,6 +46,8 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
 
       const rows = [];
       for (const siteUrl of sites) {
+        const unlockedSites = parseStringArray(user.unlockedSites);
+        const isAccessibleSite = user.tier === 'enterprise' || unlockedSites.includes(siteUrl) || siteUrl === user.activatedSiteUrl;
         const warehouse = await db.get<any>(`
           SELECT
             MIN(date) AS earliestMetricDate,
@@ -56,6 +58,28 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND siteUrl = ?
         `, [ownerId, siteUrl]);
         const syncStatus = await db.get<any>('SELECT * FROM warehouse_sync_status WHERE ownerId = ? AND siteUrl = ?', [ownerId, siteUrl]);
+        const importJobs = await db.get<any>(`
+          SELECT
+            SUM(CASE WHEN status != 'superseded' THEN 1 ELSE 0 END) AS total,
+            SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
+            SUM(CASE WHEN status = 'retrying' THEN 1 ELSE 0 END) AS retrying,
+            SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+            SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS error,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+            MAX(updatedAt) AS latestUpdatedAt
+          FROM warehouse_jobs
+          WHERE ownerId = ? AND siteUrl = ?
+            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
+        `, [ownerId, siteUrl]);
+        const latestImportJob = await db.get<any>(`
+          SELECT status, targetStartDate, targetDate, rowsSynced, lastError, updatedAt
+          FROM warehouse_jobs
+          WHERE ownerId = ? AND siteUrl = ?
+            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
+            AND status != 'superseded'
+          ORDER BY updatedAt DESC
+          LIMIT 1
+        `, [ownerId, siteUrl]);
         const latestCrawl = await db.get<any>(`
           SELECT *
           FROM crawl_jobs
@@ -95,7 +119,7 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
             updatedAt: latestCrawl.updatedAt || null,
           } : null,
           isDefault: siteUrl === user.activatedSiteUrl,
-          isUnlocked: parseStringArray(user.unlockedSites).includes(siteUrl),
+          isUnlocked: isAccessibleSite,
           siteUrl,
           warehouse: {
             earliestMetricDate: warehouse?.earliestMetricDate || null,
@@ -104,6 +128,23 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
             rowCount: toNumber(warehouse?.rowCount),
             status: syncStatus?.status || (warehouse?.lastMetricDate ? 'synced' : 'empty'),
             updatedAt: syncStatus?.lastUpdated || null,
+            jobs: {
+              completed: toNumber(importJobs?.completed),
+              error: toNumber(importJobs?.error),
+              latest: latestImportJob ? {
+                lastError: latestImportJob.lastError || null,
+                rowsSynced: toNumber(latestImportJob.rowsSynced),
+                status: latestImportJob.status || 'unknown',
+                targetDate: latestImportJob.targetDate || null,
+                targetStartDate: latestImportJob.targetStartDate || null,
+                updatedAt: latestImportJob.updatedAt || null,
+              } : null,
+              latestUpdatedAt: importJobs?.latestUpdatedAt || null,
+              queued: toNumber(importJobs?.queued),
+              retrying: toNumber(importJobs?.retrying),
+              running: toNumber(importJobs?.running),
+              total: toNumber(importJobs?.total),
+            },
           },
         });
       }

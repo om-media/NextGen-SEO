@@ -38,7 +38,7 @@ export function hasValidMetricRows(rows: unknown, minKeys: number) {
 }
 
 export function isValidWarehouseDimensions(value: unknown): value is string[] {
-  const validDimensions = new Set(['date', 'query', 'page']);
+  const validDimensions = new Set(['date', 'query', 'page', 'country']);
   return isStringArray(value) && value.every((dimension) => validDimensions.has(dimension));
 }
 

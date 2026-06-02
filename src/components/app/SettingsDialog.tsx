@@ -250,7 +250,7 @@ export function SettingsDialog({
                       <Badge variant="outline">{planDefinition.aiInsights}</Badge>
                     </div>
                     <div className="flex items-center justify-between gap-4">
-                      <span>Warehouse sync</span>
+                      <span>History import</span>
                       <Badge variant="outline">{planDefinition.warehouseSync}</Badge>
                     </div>
                     <div className="flex items-center justify-between gap-4">

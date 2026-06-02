@@ -164,24 +164,28 @@ async function fetchGscRows(db: AppDatabase, ownerId: string, siteUrl: string, d
 }
 
 async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
-  const [siteRows, queryRows, pageQueryRows] = await Promise.all([
+  const [siteRows, queryRows, pageQueryRows, countryRows] = await Promise.all([
     fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date']),
     fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date', 'query']),
     fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date', 'page', 'query']),
+    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date', 'country']),
   ]);
   const siteRowsByDate = groupRowsByDate(siteRows);
   const queryRowsByDate = groupRowsByDate(queryRows);
   const pageQueryRowsByDate = groupRowsByDate(pageQueryRows);
+  const countryRowsByDate = groupRowsByDate(countryRows);
 
   for (const date of eachIsoDate(startDate, endDate)) {
     const dateSiteRows = siteRowsByDate.get(date) || [];
     const dateQueryRows = queryRowsByDate.get(date) || [];
     const datePageQueryRows = pageQueryRowsByDate.get(date) || [];
+    const dateCountryRows = countryRowsByDate.get(date) || [];
 
     await db.transaction(async () => {
       await db.run('DELETE FROM gsc_site_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
       await db.run('DELETE FROM gsc_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
       await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
+      await db.run('DELETE FROM gsc_country_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
 
       for (const row of dateSiteRows) {
         await db.run('INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?)', [job.ownerId, job.siteUrl, date, toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
@@ -196,10 +200,23 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
           [job.ownerId, job.siteUrl, date, page, canonicalPageKey(page, job.siteUrl), row.keys?.[2] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)],
         );
       }
+      if (dateCountryRows.length === 0) {
+        await db.run(
+          'INSERT INTO gsc_country_metrics (ownerId, siteUrl, date, country, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [job.ownerId, job.siteUrl, date, '', 0, 0, 0, 0],
+        );
+      } else {
+        for (const row of dateCountryRows) {
+          await db.run(
+            'INSERT INTO gsc_country_metrics (ownerId, siteUrl, date, country, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [job.ownerId, job.siteUrl, date, row.keys?.[1] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)],
+          );
+        }
+      }
     })();
   }
 
-  return siteRows.length + queryRows.length + pageQueryRows.length;
+  return siteRows.length + queryRows.length + pageQueryRows.length + countryRows.length;
 }
 
 async function syncGscDate(db: AppDatabase, job: WarehouseJob) {
@@ -499,13 +516,17 @@ async function failOrRetry(db: AppDatabase, job: WarehouseJob, error: unknown) {
   });
 }
 
-export async function queueWarehouseSyncJob(db: AppDatabase, input: { jobType?: string; ownerId: string; propertyId?: string | null; siteUrl: string; targetDate: string; targetStartDate?: string | null }) {
+export async function queueWarehouseSyncJob(db: AppDatabase, input: { dedupeCompleted?: boolean; jobType?: string; ownerId: string; propertyId?: string | null; siteUrl: string; targetDate: string; targetStartDate?: string | null }) {
   const jobType = input.jobType || 'daily-sync';
   const propertyId = input.propertyId || null;
   const targetStartDate = input.targetStartDate || input.targetDate;
+  const dedupeStatuses = input.dedupeCompleted === false
+    ? ['queued', 'retrying', 'running']
+    : ['queued', 'retrying', 'running', 'completed'];
+  const statusPlaceholders = dedupeStatuses.map(() => '?').join(', ');
   const existing = propertyId
-    ? await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND COALESCE(propertyId, '') = ? AND jobType = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, propertyId, jobType])
-    : await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND jobType = ? AND status IN ('queued', 'retrying', 'running', 'completed') LIMIT 1", [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, jobType]);
+    ? await db.get<WarehouseJob>(`SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND COALESCE(propertyId, '') = ? AND jobType = ? AND status IN (${statusPlaceholders}) LIMIT 1`, [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, propertyId, jobType, ...dedupeStatuses])
+    : await db.get<WarehouseJob>(`SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND jobType = ? AND status IN (${statusPlaceholders}) LIMIT 1`, [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, jobType, ...dedupeStatuses]);
   if (existing) return existing;
   const id = crypto.randomUUID();
   const queuedAt = nowIso();
@@ -562,7 +583,7 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   if (!startDate || !endDate) return [];
 
   const propertyId = input.propertyId || '';
-  const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, jobRows] = await Promise.all([
+  const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, jobRows] = await Promise.all([
     db.all<{ date: string }>(`
       SELECT date
       FROM gsc_site_metrics
@@ -581,6 +602,12 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
       WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
       GROUP BY date
     `, [input.ownerId, input.siteUrl, startDate, endDate]),
+    db.all<{ date: string }>(`
+      SELECT date
+      FROM gsc_country_metrics
+      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+      GROUP BY date
+    `, [input.ownerId, input.siteUrl, startDate, endDate]),
     propertyId
       ? db.all<{ date: string }>(`
         SELECT date
@@ -589,8 +616,8 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
         GROUP BY date
       `, [input.ownerId, propertyId, startDate, endDate])
       : Promise.resolve([]),
-    db.all<{ propertyId: string | null; targetDate: string; targetStartDate: string | null }>(`
-      SELECT propertyId, targetStartDate, targetDate
+    db.all<{ propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null }>(`
+      SELECT propertyId, status, targetStartDate, targetDate
       FROM warehouse_jobs
       WHERE ownerId = ? AND siteUrl = ?
         AND jobType IN ('daily-sync', 'core-range-sync')
@@ -602,13 +629,18 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
   const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
   const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
+  const gscCountryDates = new Set(gscCountryRows.map((row) => row.date));
   const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
   const anyCoreJobDates = new Set<string>();
+  const activeCoreJobDates = new Set<string>();
   const matchingPropertyJobDates = new Set<string>();
 
   for (const row of jobRows) {
     for (const date of jobDatesWithin(row, startDate, endDate)) {
       anyCoreJobDates.add(date);
+      if (['queued', 'retrying', 'running'].includes(row.status)) {
+        activeCoreJobDates.add(date);
+      }
       if (propertyId && row.propertyId === propertyId) {
         matchingPropertyJobDates.add(date);
       }
@@ -616,9 +648,12 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   }
 
   return dates.filter((date) => {
-    const needsGsc = !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date);
+    const needsExistingGsc = !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date);
+    const needsGscCountry = !gscCountryDates.has(date);
     const needsGa4 = Boolean(propertyId && !ga4PageDates.has(date));
-    return (needsGsc && !anyCoreJobDates.has(date)) || (needsGa4 && !matchingPropertyJobDates.has(date));
+    return (needsExistingGsc && !anyCoreJobDates.has(date))
+      || (needsGscCountry && !activeCoreJobDates.has(date))
+      || (needsGa4 && !matchingPropertyJobDates.has(date));
   });
 }
 
@@ -800,8 +835,9 @@ export async function queueWarehouseBootstrapJobs(db: AppDatabase, input: { days
   };
 }
 
-export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
+export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
+    dedupeCompleted: input.dedupeCompleted,
     jobType: 'ga4-llm-range-sync',
     ownerId: input.ownerId,
     propertyId: input.propertyId,
@@ -811,8 +847,9 @@ export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { ownerI
   });
 }
 
-export async function queueWarehouseCoreRangeJob(db: AppDatabase, input: { ownerId: string; propertyId?: string | null; siteUrl: string; startDate: string; endDate: string }) {
+export async function queueWarehouseCoreRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; propertyId?: string | null; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
+    dedupeCompleted: input.dedupeCompleted,
     jobType: 'core-range-sync',
     ownerId: input.ownerId,
     propertyId: input.propertyId,
@@ -822,8 +859,9 @@ export async function queueWarehouseCoreRangeJob(db: AppDatabase, input: { owner
   });
 }
 
-export async function queueWarehouseGa4DimensionRangeJob(db: AppDatabase, input: { ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
+export async function queueWarehouseGa4DimensionRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
+    dedupeCompleted: input.dedupeCompleted,
     jobType: 'ga4-dimension-range-sync',
     ownerId: input.ownerId,
     propertyId: input.propertyId,

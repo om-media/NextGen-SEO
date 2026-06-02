@@ -619,7 +619,7 @@ export function Ga4Overview({
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <div className="h-[360px] w-full">
+            <div className="h-[360px] min-w-0 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 18, right: 12, left: 0, bottom: 0 }}>
                   <defs>

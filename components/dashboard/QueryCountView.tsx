@@ -502,7 +502,7 @@ export function QueryCountView({
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <div className="h-[300px] w-full">
+            <div className="h-[300px] min-w-0 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
                   <defs>

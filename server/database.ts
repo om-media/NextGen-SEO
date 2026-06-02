@@ -110,6 +110,18 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, siteUrl, date, query)
   );
 
+  CREATE TABLE IF NOT EXISTS gsc_country_metrics (
+    ownerId TEXT,
+    siteUrl TEXT,
+    date TEXT,
+    country TEXT,
+    clicks INTEGER,
+    impressions INTEGER,
+    ctr REAL,
+    position REAL,
+    PRIMARY KEY (ownerId, siteUrl, date, country)
+  );
+
   CREATE TABLE IF NOT EXISTS gsc_page_query_metrics (
     ownerId TEXT,
     siteUrl TEXT,
@@ -359,6 +371,7 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_gsc_site_owner_site_date ON gsc_site_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_query_owner_site_date ON gsc_query_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_query_owner_site_date_query ON gsc_query_metrics(ownerId, siteUrl, date, query);
+  CREATE INDEX IF NOT EXISTS idx_gsc_country_owner_site_date_country ON gsc_country_metrics(ownerId, siteUrl, date, country);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_date_page ON gsc_page_query_metrics(ownerId, siteUrl, date, page);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_date_query ON gsc_page_query_metrics(ownerId, siteUrl, date, query);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_page_date ON gsc_page_query_metrics(ownerId, siteUrl, page, date);

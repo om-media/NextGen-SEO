@@ -128,7 +128,7 @@ export function AuthScreen() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(15,61,46,0.12),transparent_28%),radial-gradient(circle_at_82%_72%,rgba(47,125,246,0.10),transparent_34%),linear-gradient(180deg,#FBFCFB_0%,#F8FAF9_52%,#F4F8F7_100%)]" />
       <div className="pointer-events-none absolute -bottom-24 right-[-8%] h-[520px] w-[720px] rounded-full bg-[#EAF4EC]/70 blur-3xl" />
       <div className="relative grid w-full max-w-6xl overflow-hidden rounded-[28px] border border-[#E6ECE8] bg-white/80 shadow-[0_30px_90px_rgba(15,61,46,0.14)] backdrop-blur-xl lg:grid-cols-[0.95fr_1fr]">
-        <section className="relative hidden min-h-[660px] overflow-hidden border-r border-[#E6ECE8] bg-[#FBFCFB] p-10 lg:block">
+        <section className="relative isolate hidden min-h-[660px] overflow-hidden border-r border-[#E6ECE8] bg-[#FBFCFB] p-10 lg:block">
           <div className="relative z-10 flex h-full flex-col justify-between">
             <div>
               <div className="flex items-center gap-3">
@@ -164,7 +164,7 @@ export function AuthScreen() {
           <img
             src="/images/hero-mountains.png"
             alt=""
-            className="pointer-events-none absolute bottom-0 right-[-170px] w-[760px] max-w-none opacity-75"
+            className="pointer-events-none absolute bottom-[-18px] right-[-190px] z-0 w-[760px] max-w-none opacity-45 [mask-image:linear-gradient(to_top,black_0%,black_54%,transparent_84%)]"
           />
         </section>
 

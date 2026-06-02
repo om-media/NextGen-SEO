@@ -89,7 +89,10 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
         }),
       })
       const payload = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(payload?.error || "Failed to load LLM referral warehouse report")
+      if (!response.ok) {
+        const message = String(payload?.error || "Failed to load stored LLM referral report");
+        throw new Error(message.includes("warehouse") ? "This LLM referral report needs stored history for the selected range." : message)
+      }
       return payload
     }
 
@@ -195,19 +198,19 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
   const expectedDateCount = Number(coverage?.expectedDateCount || 0)
   const isWarehouseUpdating = refreshing || activeJobCount > 0
   const coverageText = expectedDateCount > 0
-    ? `${coveredDateCount}/${expectedDateCount} days stored`
-    : "Checking warehouse coverage"
+    ? `${coveredDateCount}/${expectedDateCount} days ready`
+    : "Checking stored data"
   const statusText = error
     ? "Could not refresh LLM report"
     : activeJobCount > 0
-      ? `Backfilling ${activeDateCount} day${activeDateCount === 1 ? "" : "s"}`
+      ? "Importing LLM traffic history"
       : missingDateCount > 0
-        ? `${missingDateCount} day${missingDateCount === 1 ? "" : "s"} not stored yet`
+        ? `${missingDateCount} day${missingDateCount === 1 ? "" : "s"} still importing`
         : refreshing
           ? "Refreshing stored report"
           : errorJobCount > 0
-            ? `${errorJobCount} sync issue${errorJobCount === 1 ? "" : "s"}`
-            : "Warehouse report ready"
+            ? `${errorJobCount} import issue${errorJobCount === 1 ? "" : "s"}`
+            : "Report ready"
 
   if (coverage && activeJobCount > 0 && !data?.source?.rows?.length) {
     return (
@@ -216,9 +219,9 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
           <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground">Backfilling LLM referral traffic</h3>
+          <h3 className="text-lg font-semibold text-foreground">Preparing LLM referral traffic</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            {coverageText}. The app is storing GA4 source and landing-page facts for this report, then this view will update automatically.
+            {coverageText}. The app is importing Analytics source and landing-page facts for this report, then this view will update automatically.
           </p>
         </CardContent>
       </Card>
@@ -471,7 +474,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
             <span>{error || coverageText}</span>
           </div>
           <span className="text-xs text-muted-foreground">
-            Existing rows stay visible while the warehouse catches up.
+            Existing rows stay visible while the import catches up.
           </span>
         </div>
       )}
@@ -484,8 +487,8 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
         {renderMetricCard("Average session duration", curDuration, prevDuration, 'averageSessionDuration')}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="col-span-1 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+      <div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card className="col-span-1 min-w-0 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-col gap-3 border-b border-[#E6ECE8] bg-white sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle>Traffic metrics by LLM referrer</CardTitle>
@@ -503,10 +506,10 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
                   <TableRow>
                     <TableHead>LLM Referrer</TableHead>
                     <TableHead className="text-right">Sessions</TableHead>
-                    <TableHead className="text-right">Engaged sessions</TableHead>
+                    <TableHead className="text-right">Engaged</TableHead>
                     <TableHead className="text-right">Key events</TableHead>
-                    <TableHead className="text-right">Session key event rate</TableHead>
-                    <TableHead className="text-right">Average session duration</TableHead>
+                    <TableHead className="text-right">Event rate</TableHead>
+                    <TableHead className="text-right">Avg. duration</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -551,12 +554,12 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
           </CardContent>
         </Card>
 
-        <Card className="col-span-1 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <Card className="col-span-1 min-w-0 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
           <CardHeader className="border-b border-[#E6ECE8] bg-white">
             <CardTitle>LLM Session trend over time</CardTitle>
             <CardDescription>Shows the daily trend of LLM sessions over the selected time period.</CardDescription>
           </CardHeader>
-          <CardContent className="h-[340px] pt-6">
+          <CardContent className="h-[340px] min-w-0 pt-6">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />

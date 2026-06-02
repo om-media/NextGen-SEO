@@ -139,7 +139,7 @@ export function AppStatusPanels({
           <div className="flex items-center gap-2">
             <AlertCircle className="h-5 w-5" />
             <div className="text-sm">
-              <strong>Google data needs attention</strong> - Your app login is still active, but the saved Google reporting connection needs attention. The dashboard is showing the latest synced warehouse data until you reconnect.
+              <strong>Google data needs attention</strong> - Your app login is still active, but the saved Google reporting connection needs attention. The dashboard is showing the latest stored data until you reconnect.
             </div>
           </div>
           <Button onClick={onConnectGoogle} variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-700 hover:bg-amber-500/20 dark:border-amber-900/60 dark:text-amber-100 dark:hover:bg-amber-900/30" disabled={isConnectingGoogle}>

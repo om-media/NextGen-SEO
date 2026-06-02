@@ -63,9 +63,9 @@ export class GscApiService {
     // Dashboard reads should not silently fall back to Google APIs; explicit
     // sync actions are responsible for refreshing the warehouse.
     const hasUnsupportedFilter = dimensionFilterGroups?.some((group: any) => 
-      group.filters?.some((filter: any) => filter.dimension !== 'query' && filter.dimension !== 'date' && filter.dimension !== 'page')
+      group.filters?.some((filter: any) => filter.dimension !== 'query' && filter.dimension !== 'date' && filter.dimension !== 'page' && filter.dimension !== 'country')
     );
-    const canUseWarehouse = !forceLive && !hasUnsupportedFilter && dimensions.every(d => d === 'query' || d === 'date' || d === 'page');
+    const canUseWarehouse = !forceLive && !hasUnsupportedFilter && dimensions.every(d => d === 'query' || d === 'date' || d === 'page' || d === 'country');
     if (!forceLive) {
       if (!canUseWarehouse) {
         return [];

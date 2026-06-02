@@ -797,7 +797,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
 
           <div className="overflow-hidden rounded-2xl border border-border">
             <div className="overflow-x-auto">
-              <Table className="min-w-[1660px]">
+              <Table className="min-w-[1240px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[24%]">URL</TableHead>

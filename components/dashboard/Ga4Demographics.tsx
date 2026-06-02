@@ -128,23 +128,32 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
     (
       Number(coverage.activeJobCount || 0) > 0 ||
       Number(coverage.activeDateCount || 0) > 0 ||
-      Number(coverage.queuedDateCount || 0) > 0
+      Number(coverage.queuedDateCount || 0) > 0 ||
+      Number(coverage.missingDateCount || 0) > 0
     );
+  const hasActiveWarehouseWork =
+    Number(coverage?.activeJobCount || 0) > 0 ||
+    Number(coverage?.activeDateCount || 0) > 0 ||
+    Number(coverage?.queuedDateCount || 0) > 0;
 
   return (
     <div className="mb-4 space-y-4">
       {shouldShowCoverage && (
         <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            {hasActiveWarehouseWork ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            ) : (
+              <span className="h-2 w-2 rounded-full bg-primary" />
+            )}
             <span className="font-medium text-foreground">
-              Backfilling {Math.max(Number(coverage.activeDateCount || 0), Number(coverage.queuedDateCount || 0), Number(coverage.activeJobCount || 0)).toLocaleString()} days
+              {hasActiveWarehouseWork ? "Importing Analytics history" : "Analytics breakdown import available"}
             </span>
             <span>
-              {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days stored
+              {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days ready
             </span>
           </div>
-          <span>Existing rows stay visible while the warehouse catches up.</span>
+          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while the import catches up." : "The import status panel will prepare these breakdowns automatically."}</span>
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">

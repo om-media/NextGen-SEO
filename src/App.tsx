@@ -26,6 +26,7 @@ import { AppHeader } from "./components/app/AppHeader"
 import { OnboardingFlow } from "./components/app/OnboardingFlow"
 import { AppStatusPanels } from "./components/app/AppStatusPanels"
 import { AppToolbar } from "./components/app/AppToolbar"
+import { DataImportStatusPanel } from "./components/app/DataImportStatusPanel"
 import { SettingsDialog, type SettingsDraft } from "./components/app/SettingsDialog"
 import { UnlockSiteDialog } from "./components/app/UnlockSiteDialog"
 import { Ga4PropertyDialog } from "./components/app/Ga4PropertyDialog"
@@ -698,6 +699,15 @@ function MainApp() {
   const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
   const currentSelection = dataSource === 'ga4' ? selectedGa4Property : selectedSite;
   const showStatusPanels = activeMenu === "Dashboard";
+  const showReportToolbar = [
+    "AI Content Auditor",
+    "Dashboard",
+    "LLM Traffic",
+    "Page Indexing",
+    "Raw Data",
+    "Reconciliation",
+    "Server Logs",
+  ].includes(activeMenu);
   const hasValidSelectedSite = currentSites.some((site) => {
     if (site.siteUrl !== currentSelection) {
       return false;
@@ -871,30 +881,44 @@ function MainApp() {
               switchDataSource(nextSource, availableSites);
             }}
             selectedSite={currentSelection}
+            selectedWorkspaceSite={selectedSite}
             user={user}
             userProfile={userProfile}
           />
           <main className="flex-1 p-4 sm:p-6 overflow-auto">
             <div className="max-w-[1480px] mx-auto space-y-6">
-              <AppToolbar
-                activeMenu={activeMenu}
-                compareDateRange={compareDateRange}
-                currentSiteUrl={selectedSite}
-                dataSource={dataSource}
-                dateRange={dateRange}
-                firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
-                ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
-                gscSyncVersion={gscSyncVersion}
-                isCompareMode={isCompareMode}
-                onCompareFromDateChange={handleCompareFromDateChange}
-                onCompareToDateChange={handleCompareToDateChange}
-                onFromDateChange={handleFromDateChange}
-                onOpenRawData={() => setActiveMenu("Raw Data")}
-                onToDateChange={handleToDateChange}
-                onWarehouseCoverageChange={bumpGscSyncVersion}
-                rawDataAvailable={canUseRawExports(userProfile?.tier)}
-                setIsCompareMode={setIsCompareMode}
-              />
+              {showReportToolbar && (
+                <AppToolbar
+                  activeMenu={activeMenu}
+                  compareDateRange={compareDateRange}
+                  currentSiteUrl={selectedSite}
+                  dataSource={dataSource}
+                  dateRange={dateRange}
+                  firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
+                  ga4PropertyId={dataSource === 'ga4' ? selectedGa4Property : userProfile?.activatedGa4PropertyId || null}
+                  gscSyncVersion={gscSyncVersion}
+                  isCompareMode={isCompareMode}
+                  onCompareFromDateChange={handleCompareFromDateChange}
+                  onCompareToDateChange={handleCompareToDateChange}
+                  onFromDateChange={handleFromDateChange}
+                  onOpenRawData={() => setActiveMenu("Raw Data")}
+                  onToDateChange={handleToDateChange}
+                  onWarehouseCoverageChange={bumpGscSyncVersion}
+                  rawDataAvailable={canUseRawExports(userProfile?.tier)}
+                  setIsCompareMode={setIsCompareMode}
+                />
+              )}
+
+              {activeMenu === "Dashboard" && (dataSource === "gsc" || dataSource === "blended" || dataSource === "ga4") && selectedSite && (
+                <DataImportStatusPanel
+                  dataSource={dataSource}
+                  dateRange={dateRange}
+                  ga4PropertyId={dataSource === 'ga4' ? selectedGa4Property : userProfile?.activatedGa4PropertyId || null}
+                  onCoverageChange={bumpGscSyncVersion}
+                  refreshKey={gscSyncVersion}
+                  siteUrl={selectedSite}
+                />
+              )}
 
               {showStatusPanels && (
                 <AppStatusPanels

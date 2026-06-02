@@ -141,7 +141,7 @@ function isGoogleAuthError(message: string) {
 
 function getFriendlyGscError(message: string) {
   if (message === "WAREHOUSE_UNSUPPORTED_DIMENSION") {
-    return "This Search Console breakdown is not warehoused yet. Use the Queries and Pages tabs for stored dashboard data.";
+    return "This Search Console breakdown is not available from stored reporting data yet.";
   }
 
   if (isGoogleAuthError(message)) {
@@ -182,7 +182,7 @@ export function useGscGridData({
     const startDate = format(dateRange.from, "yyyy-MM-dd");
     const endDate = format(dateRange.to, "yyyy-MM-dd");
 
-    const canUseWarehouse = dimension === "query" || dimension === "page";
+    const canUseWarehouse = dimension === "query" || dimension === "page" || dimension === "country";
     if (!useLiveData && !canUseWarehouse) {
       setData([]);
       setError(getFriendlyGscError("WAREHOUSE_UNSUPPORTED_DIMENSION"));

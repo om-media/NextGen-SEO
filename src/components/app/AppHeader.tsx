@@ -30,6 +30,7 @@ type AppHeaderProps = {
   onSignOut: () => Promise<void>;
   onSwitchDataSource: (nextSource: DataSource) => void;
   selectedSite: string;
+  selectedWorkspaceSite: string;
   user: AppUser;
   userProfile: UserProfile | null;
 };
@@ -41,6 +42,22 @@ function getSiteDisplayName(site: SiteLike) {
 
   return site.siteUrl.replace("https://", "").replace("http://", "").replace("sc-domain:", "");
 }
+
+function getPlainSiteName(siteUrl: string | null | undefined) {
+  if (!siteUrl) {
+    return "No site selected";
+  }
+
+  return siteUrl.replace("https://", "").replace("http://", "").replace("sc-domain:", "").replace(/\/$/, "");
+}
+
+const DATA_SOURCE_LABELS: Record<DataSource, string> = {
+  bing: "Bing Webmaster",
+  blended: "Blended",
+  ga4: "Google Analytics 4",
+  gsc: "Google Search Console",
+};
+const DATA_SOURCE_OPTIONS: DataSource[] = ["gsc", "bing", "ga4", "blended"];
 
 export function AppHeader({
   activeMenu,
@@ -54,6 +71,7 @@ export function AppHeader({
   onSignOut,
   onSwitchDataSource,
   selectedSite,
+  selectedWorkspaceSite,
   user,
   userProfile,
 }: AppHeaderProps) {
@@ -65,76 +83,20 @@ export function AppHeader({
     activeMenu === "Dashboard" &&
     (dataSource === "gsc" || dataSource === "blended") &&
     !googleConnected;
+  const selectorLabel = dataSource === "ga4" ? "Analytics property" : dataSource === "bing" ? "Bing site" : "Workspace site";
+  const shouldShowWorkspaceContext = dataSource === "ga4" && Boolean(selectedWorkspaceSite);
 
   return (
-    <header className="sticky top-0 z-10 flex min-h-16 flex-wrap items-center gap-4 border-b border-border bg-background/92 px-4 py-2 backdrop-blur-xl sm:px-6">
-      <SidebarTrigger />
-      <div className="flex flex-1 items-center gap-4 min-w-0 overflow-x-auto pb-1 sm:pb-0 hide-scrollbars">
-        <div className="hidden sm:block whitespace-nowrap">
-          <h1 className="text-[15px] font-semibold leading-none">{activeMenu}</h1>
-          <p className="mt-1 text-[11px] font-medium text-muted-foreground">Live workspace</p>
+    <header className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-border bg-background/92 px-4 py-2 backdrop-blur-xl sm:px-6">
+      <div className="flex min-w-0 flex-1 items-center gap-3 md:flex-none">
+        <SidebarTrigger />
+        <div className="min-w-0">
+          <h1 className="truncate text-[15px] font-semibold leading-none">{activeMenu}</h1>
+          <p className="mt-1 hidden text-[11px] font-medium text-muted-foreground sm:block">Live workspace</p>
         </div>
-
-        {activeMenu === "Dashboard" && (
-          <div className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-2xl border border-border bg-card p-1 shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-            <Button variant={dataSource === "gsc" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3 data-[state=open]:bg-secondary" onClick={() => onSwitchDataSource("gsc")}>
-              Google Search Console
-            </Button>
-            <Button variant={dataSource === "bing" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3" onClick={() => onSwitchDataSource("bing")}>
-              Bing Webmaster
-            </Button>
-            <Button variant={dataSource === "ga4" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3" onClick={() => onSwitchDataSource("ga4")}>
-              Google Analytics 4
-            </Button>
-            <Button variant={dataSource === "blended" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3" onClick={() => onSwitchDataSource("blended")}>
-              Blended
-            </Button>
-          </div>
-        )}
-
-        {currentSites.length > 0 && (
-          <Select value={selectedSite} onValueChange={onSelectSite}>
-            <SelectTrigger className={`h-9 shrink-0 rounded-2xl border border-border bg-card shadow-[0_8px_20px_rgba(15,61,46,0.06)] ${dataSource === "ga4" ? "w-[220px] sm:w-[340px]" : "w-[180px] sm:w-[250px]"}`}>
-              <SelectValue placeholder="Select a property">
-                {selectedSiteOption ? getSiteDisplayName(selectedSiteOption) : "Select a property"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent
-              align="start"
-              className={dataSource === "ga4" ? "max-w-[min(26rem,calc(100vw-2rem))] border-border/80 shadow-xl" : "border-border/80 shadow-xl"}
-            >
-              {currentSites.map((site) => {
-                const isUnlocked = dataSource === "ga4"
-                  ? true
-                  : userProfile?.tier === "enterprise" || userProfile?.unlockedSites.includes(site.siteUrl);
-                return (
-                  <SelectItem key={site.siteUrl} value={site.siteUrl}>
-                    <div className="flex min-w-0 items-center justify-between w-full gap-2">
-                      <span className="min-w-0 truncate">{getSiteDisplayName(site)}</span>
-                      {!isUnlocked && <Lock className="h-3 w-3 text-muted-foreground ml-2" />}
-                    </div>
-                  </SelectItem>
-                );
-              })}
-            </SelectContent>
-          </Select>
-        )}
-
-        {showGoogleConnectAction && (
-          <Button
-            onClick={onConnectGoogle}
-            variant="outline"
-            size="sm"
-            className="interactive-lift h-9 border-amber-500/60 bg-amber-50/80 text-amber-700 hover:bg-amber-100/70 hover:text-amber-800"
-            disabled={isConnectingGoogle}
-          >
-            {isConnectingGoogle ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <AlertCircle className="w-4 h-4 mr-2" />}
-            {isConnectingGoogle ? "Connecting..." : "Connect Google Data"}
-          </Button>
-        )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-2 md:order-3">
         <ThemeToggle />
         <Button variant="outline" size="icon" className="relative h-9 w-9 rounded-2xl border-border bg-card shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
           <Bell className="h-4 w-4" />
@@ -167,6 +129,94 @@ export function AppHeader({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+      </div>
+
+      <div className="order-3 flex w-full min-w-0 flex-col gap-2 md:order-2 md:w-auto md:flex-1 md:flex-row md:items-center">
+        {activeMenu === "Dashboard" && (
+          <>
+            <div className="flex min-w-0 flex-col gap-1 md:hidden">
+              <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Data source</span>
+              <Select value={dataSource} onValueChange={(value) => onSwitchDataSource(value as DataSource)}>
+                <SelectTrigger className="h-9 w-full rounded-2xl border border-border bg-card shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
+                  <SelectValue placeholder="Choose data source">{DATA_SOURCE_LABELS[dataSource]}</SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" className="border-border/80 shadow-xl">
+                  {DATA_SOURCE_OPTIONS.map((source) => (
+                    <SelectItem key={source} value={source}>
+                      {DATA_SOURCE_LABELS[source]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="hidden shrink-0 items-center gap-1 whitespace-nowrap rounded-2xl border border-border bg-card p-1 shadow-[0_8px_20px_rgba(15,61,46,0.06)] md:flex">
+              <Button aria-label="Show Google Search Console dashboard" variant={dataSource === "gsc" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3 data-[state=open]:bg-secondary" onClick={() => onSwitchDataSource("gsc")}>
+                Google Search Console
+              </Button>
+              <Button aria-label="Show Bing Webmaster dashboard" variant={dataSource === "bing" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3" onClick={() => onSwitchDataSource("bing")}>
+                Bing Webmaster
+              </Button>
+              <Button aria-label="Show Google Analytics dashboard" variant={dataSource === "ga4" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3" onClick={() => onSwitchDataSource("ga4")}>
+                Google Analytics 4
+              </Button>
+              <Button aria-label="Show blended page dashboard" variant={dataSource === "blended" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3" onClick={() => onSwitchDataSource("blended")}>
+                Blended
+              </Button>
+            </div>
+          </>
+        )}
+
+        {currentSites.length > 0 && (
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{selectorLabel}</span>
+            <Select value={selectedSite} onValueChange={onSelectSite}>
+              <SelectTrigger className={`h-9 w-full min-w-0 rounded-2xl border border-border bg-card shadow-[0_8px_20px_rgba(15,61,46,0.06)] md:w-[260px] ${dataSource === "ga4" ? "lg:w-[340px]" : "lg:w-[280px]"}`}>
+                <SelectValue placeholder={`Select ${selectorLabel.toLowerCase()}`}>
+                  {selectedSiteOption ? getSiteDisplayName(selectedSiteOption) : `Select ${selectorLabel.toLowerCase()}`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent
+                align="start"
+                className={dataSource === "ga4" ? "max-w-[min(26rem,calc(100vw-2rem))] border-border/80 shadow-xl" : "border-border/80 shadow-xl"}
+              >
+                {currentSites.map((site) => {
+                  const isUnlocked = dataSource === "ga4"
+                    ? true
+                    : userProfile?.tier === "enterprise" || userProfile?.unlockedSites.includes(site.siteUrl);
+                  return (
+                    <SelectItem key={site.siteUrl} value={site.siteUrl}>
+                      <div className="flex min-w-0 items-center justify-between w-full gap-2">
+                        <span className="min-w-0 truncate">{getSiteDisplayName(site)}</span>
+                        {!isUnlocked && <Lock className="h-3 w-3 text-muted-foreground ml-2" />}
+                      </div>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {shouldShowWorkspaceContext && (
+          <div className="flex h-9 min-w-0 items-center rounded-2xl border border-border bg-secondary/70 px-3 text-xs text-muted-foreground md:max-w-[260px]">
+            <span className="mr-1 shrink-0 font-semibold text-foreground">Site</span>
+            <span className="min-w-0 truncate">{getPlainSiteName(selectedWorkspaceSite)}</span>
+          </div>
+        )}
+
+        {showGoogleConnectAction && (
+          <Button
+            onClick={onConnectGoogle}
+            variant="outline"
+            size="sm"
+            className="interactive-lift h-9 w-full border-amber-500/60 bg-amber-50/80 text-amber-700 hover:bg-amber-100/70 hover:text-amber-800 md:w-auto"
+            disabled={isConnectingGoogle}
+          >
+            {isConnectingGoogle ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <AlertCircle className="w-4 h-4 mr-2" />}
+            {isConnectingGoogle ? "Connecting..." : "Connect Google Data"}
+          </Button>
+        )}
       </div>
     </header>
   );

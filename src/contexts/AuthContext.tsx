@@ -329,8 +329,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const unlockSite = async (siteUrl: string) => {
     if (!user || !userProfile) return;
 
-    if (userProfile.tier === 'enterprise') return;
-
     const limit = getPlanPropertyLimit(userProfile.tier);
     if (limit !== null && userProfile.unlockedSites.length >= limit) {
       throw new Error(`You have reached the maximum number of sites for your ${userProfile.tier} tier.`);

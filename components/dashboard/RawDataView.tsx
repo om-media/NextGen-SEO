@@ -286,7 +286,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
           <div>
             <CardTitle>Raw data exports</CardTitle>
             <CardDescription className="mt-2 max-w-3xl">
-              Export-parity workspace for raw warehouse rows. Use this when you would normally export GSC, GA4, or crawler rows into a spreadsheet.
+              Export-parity workspace for stored source rows. Use this when you would normally export GSC, GA4, or crawler rows into a spreadsheet.
             </CardDescription>
           </div>
           <Button variant="outline" className="rounded-xl" disabled={loading || exporting || page.total === 0} onClick={exportRows}>

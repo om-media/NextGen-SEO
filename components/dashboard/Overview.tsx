@@ -952,7 +952,7 @@ export function Overview({
               </div>
             </div>
           ) : (
-            <div className="h-[320px] w-full">
+            <div className="h-[320px] min-w-0 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 18, right: 10, left: 0, bottom: 0 }}>
                   <defs>

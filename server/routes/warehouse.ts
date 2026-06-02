@@ -15,10 +15,12 @@ import { googleApiFetchJson } from '../services/googleAuth.js';
 import { canUseRawExports } from '../../shared/plans.js';
 import {
   CORE_RANGE_JOB_DAYS,
+  GA4_DIMENSION_RANGE_JOB_DAYS,
   LLM_RANGE_JOB_DAYS,
   listWarehouseJobs,
   queueWarehouseBootstrapJobs,
   queueWarehouseCoreRangeJob,
+  queueWarehouseGa4DimensionRangeJob,
   queueWarehouseLlmRangeJob,
   queueWarehouseSyncJob,
 } from '../services/warehouseJobs.js';
@@ -41,6 +43,7 @@ const GA4_WAREHOUSE_DIMENSIONS = new Set([
   ...GA4_PAGE_WAREHOUSE_DIMENSIONS,
   ...GA4_DIMENSION_WAREHOUSE_DIMENSIONS,
 ]);
+const GA4_DIMENSION_DATASET_COUNT = GA4_DIMENSION_WAREHOUSE_DIMENSIONS.size;
 const GA4_RAW_DIMENSIONS: Record<string, string> = {
   browser: 'browser',
   city: 'city',
@@ -149,6 +152,29 @@ const coverageFromRows = (
 ) => {
   const countByDate = new Map(rows.map((row) => [String(row.date || ''), toCoverageNumber(row.rowCount)]));
   const coveredDates = expectedDates.filter((date) => (countByDate.get(date) || 0) > 0 || completedDates.has(date));
+  const missingDates = expectedDates.filter((date) => !coveredDates.includes(date));
+  const totalRows = rows.reduce((sum, row) => sum + toCoverageNumber(row.rowCount), 0);
+
+  return {
+    coveredDateCount: coveredDates.length,
+    coverageRatio: expectedDates.length > 0 ? coveredDates.length / expectedDates.length : 0,
+    expectedDateCount: expectedDates.length,
+    firstCoveredDate: coveredDates[0] || null,
+    lastCoveredDate: coveredDates[coveredDates.length - 1] || null,
+    missingDateCount: missingDates.length,
+    missingDates: missingDates.slice(0, 31),
+    totalRows,
+  };
+};
+
+const coverageFromRowsWithMinimum = (
+  expectedDates: string[],
+  rows: Array<{ date?: string | null; rowCount?: number | null }>,
+  minimumRowCount: number,
+  completedDates = new Set<string>(),
+) => {
+  const countByDate = new Map(rows.map((row) => [String(row.date || ''), toCoverageNumber(row.rowCount)]));
+  const coveredDates = expectedDates.filter((date) => (countByDate.get(date) || 0) >= minimumRowCount || completedDates.has(date));
   const missingDates = expectedDates.filter((date) => !coveredDates.includes(date));
   const totalRows = rows.reduce((sum, row) => sum + toCoverageNumber(row.rowCount), 0);
 
@@ -501,7 +527,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         if (!warehouseDimension) {
           return res.status(409).json({
             code: 'GA4_REPORT_NOT_WAREHOUSED',
-            error: 'This GA4 report is not warehoused yet.',
+            error: 'This GA4 report is not available in the stored warehouse model yet.',
           });
         }
         const [coverage, report] = await Promise.all([
@@ -529,7 +555,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       if (!allowLive) {
         return res.status(409).json({
           code: 'GA4_REPORT_NOT_WAREHOUSED',
-          error: 'This GA4 report is not warehoused yet. Use a page/date GA4 report or run an explicit sync before reviewing this dimension.',
+          error: 'This GA4 report is not available in the stored warehouse model yet. Use one of the supported stored dimensions or enable an explicit live request.',
           metadata: {
             source: 'warehouse',
             supportedDimensions: Array.from(GA4_WAREHOUSE_DIMENSIONS),
@@ -555,7 +581,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const ownerId = req.authUser!.uid;
     const { propertyId, siteUrl, startDate, endDate, maxDates } = req.body || {};
     if (!isNonEmptyString(propertyId) || !isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
-      return res.status(400).json({ error: 'Invalid GA4 LLM warehouse sync payload' });
+      return res.status(400).json({ error: 'Invalid LLM traffic import request' });
     }
 
     try {
@@ -633,7 +659,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
       });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to queue GA4 LLM warehouse jobs' });
+      return res.status(500).json({ error: err.message || 'Failed to start LLM traffic import' });
     }
   });
 
@@ -776,7 +802,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         },
       });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to load GA4 LLM warehouse report' });
+      return res.status(500).json({ error: err.message || 'Failed to load LLM traffic report' });
     }
   });
 
@@ -1032,7 +1058,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const unavailableDates = endDate > latestAvailableDate
         ? eachIsoDate(maxIsoDate(startDate, addIsoDays(latestAvailableDate, 1)), endDate)
         : [];
-      const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, latestCrawl, warehouseJobRows, bingStatus, bingUser] = await Promise.all([
+      const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, ga4DimensionRows, latestCrawl, warehouseJobRows, bingStatus, bingUser] = await Promise.all([
         db.all<{ date: string; rowCount: number }>(`
           SELECT date, COUNT(*) AS rowCount
           FROM gsc_site_metrics
@@ -1054,10 +1080,26 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           GROUP BY date
           ORDER BY date ASC
         `, [ownerId, siteUrl, startDate, effectiveEndDate]),
+        db.all<{ date: string; rowCount: number }>(`
+          SELECT date, COUNT(*) AS rowCount
+          FROM gsc_country_metrics
+          WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+          GROUP BY date
+          ORDER BY date ASC
+        `, [ownerId, siteUrl, startDate, effectiveEndDate]),
         effectivePropertyId
           ? db.all<{ date: string; rowCount: number }>(`
             SELECT date, COUNT(*) AS rowCount
             FROM ga4_page_metrics
+            WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+            GROUP BY date
+            ORDER BY date ASC
+          `, [ownerId, effectivePropertyId, startDate, effectiveEndDate])
+          : Promise.resolve([]),
+        effectivePropertyId
+          ? db.all<{ date: string; rowCount: number }>(`
+            SELECT date, COUNT(DISTINCT dimension) AS rowCount
+            FROM ga4_dimension_metrics
             WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
@@ -1074,20 +1116,28 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           SELECT jobType, propertyId, status, targetStartDate, targetDate
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
-            AND jobType IN ('daily-sync', 'core-range-sync')
+            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync')
         `, [ownerId, siteUrl, startDate, effectiveEndDate]),
         getBingCacheStatus(db, ownerId, siteUrl),
         db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [ownerId]),
       ]);
-      const completedJobs = warehouseJobRows.filter((row) => row.status === 'completed');
+      const completedCoreJobs = warehouseJobRows.filter((row) => row.status === 'completed' && ['daily-sync', 'core-range-sync'].includes(row.jobType));
+      const completedGa4DimensionJobs = warehouseJobRows.filter((row) => row.status === 'completed' && row.jobType === 'ga4-dimension-range-sync');
       const activeJobs = warehouseJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
       const completedGscDates = new Set<string>();
-      addJobDatesToSet(completedGscDates, completedJobs, startDate, effectiveEndDate);
+      addJobDatesToSet(completedGscDates, completedCoreJobs, startDate, effectiveEndDate);
       const completedGa4Dates = new Set<string>();
+      const completedGa4DimensionDates = new Set<string>();
       if (effectivePropertyId) {
         addJobDatesToSet(
           completedGa4Dates,
-          completedJobs.filter((row) => row.propertyId === effectivePropertyId),
+          completedCoreJobs.filter((row) => row.propertyId === effectivePropertyId),
+          startDate,
+          effectiveEndDate,
+        );
+        addJobDatesToSet(
+          completedGa4DimensionDates,
+          completedGa4DimensionJobs.filter((row) => row.propertyId === effectivePropertyId),
           startDate,
           effectiveEndDate,
         );
@@ -1095,13 +1145,29 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
       const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
       const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
+      const gscCountryDates = new Set(gscCountryRows.map((row) => row.date));
       const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
-      const missingDates = new Set(expectedDates.filter((date) => {
-        const needsGsc = (!gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date)) && !completedGscDates.has(date);
+      const ga4DimensionDateCounts = new Map(ga4DimensionRows.map((row) => [row.date, toCoverageNumber(row.rowCount)]));
+      const missingCoreDates = new Set(expectedDates.filter((date) => {
+        const needsExistingGsc = (!gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date)) && !completedGscDates.has(date);
+        const needsGscCountry = !gscCountryDates.has(date);
+        const needsGsc = needsExistingGsc || needsGscCountry;
         const needsGa4 = Boolean(effectivePropertyId && !ga4PageDates.has(date) && !completedGa4Dates.has(date));
         return needsGsc || needsGa4;
       }));
-      const relevantActiveJobs = activeJobs.filter((job) => jobDatesWithin(job, startDate, effectiveEndDate).some((date) => missingDates.has(date)));
+      const missingGa4DimensionDates = new Set(expectedDates.filter((date) => Boolean(
+        effectivePropertyId
+        && (ga4DimensionDateCounts.get(date) || 0) < GA4_DIMENSION_DATASET_COUNT
+        && !completedGa4DimensionDates.has(date),
+      )));
+      const missingDates = new Set([...missingCoreDates, ...missingGa4DimensionDates]);
+      const relevantActiveJobs = activeJobs.filter((job) => {
+        const dates = jobDatesWithin(job, startDate, effectiveEndDate);
+        if (job.jobType === 'ga4-dimension-range-sync') {
+          return dates.some((date) => missingGa4DimensionDates.has(date));
+        }
+        return dates.some((date) => missingCoreDates.has(date));
+      });
       const activeDates = new Set<string>();
       addJobDatesToSet(activeDates, relevantActiveJobs, startDate, effectiveEndDate);
       for (const date of [...activeDates]) {
@@ -1111,7 +1177,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         counts[row.status] = (counts[row.status] || 0) + 1;
         return counts;
       }, {} as Record<string, number>);
-      const jobCountByStatus = warehouseJobRows.reduce((counts, row) => {
+      const supersededJobCount = warehouseJobRows.filter((row) => row.status === 'superseded').length;
+      const visibleWarehouseJobRows = warehouseJobRows.filter((row) => row.status !== 'superseded');
+      const jobCountByStatus = visibleWarehouseJobRows.reduce((counts, row) => {
         counts[row.status] = (counts[row.status] || 0) + 1;
         return counts;
       }, {} as Record<string, number>);
@@ -1155,10 +1223,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         },
         ga4: {
           enabled: Boolean(effectivePropertyId),
+          dimensions: effectivePropertyId
+            ? coverageFromRowsWithMinimum(expectedDates, ga4DimensionRows, GA4_DIMENSION_DATASET_COUNT, completedGa4DimensionDates)
+            : coverageFromRows(expectedDates, []),
           pages: coverageFromRows(expectedDates, ga4PageRows, completedGa4Dates),
           propertyId: effectivePropertyId || null,
         },
         gsc: {
+          country: coverageFromRows(expectedDates, gscCountryRows),
           pageQuery: coverageFromRows(expectedDates, gscPageQueryRows, completedGscDates),
           query: coverageFromRows(expectedDates, gscQueryRows, completedGscDates),
           site: coverageFromRows(expectedDates, gscSiteRows, completedGscDates),
@@ -1176,8 +1248,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           queued: activeJobCountByStatus.queued || 0,
           retrying: activeJobCountByStatus.retrying || 0,
           running: activeJobCountByStatus.running || 0,
-          superseded: jobCountByStatus.superseded || 0,
-          total: warehouseJobRows.length,
+          superseded: supersededJobCount,
+          total: visibleWarehouseJobRows.length,
         },
         siteUrl,
       });
@@ -1227,7 +1299,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const ownerId = req.authUser!.uid;
     const { siteUrl, propertyId, days } = req.body || {};
     if (!isNonEmptyString(siteUrl)) {
-      return res.status(400).json({ error: 'Invalid warehouse bootstrap payload' });
+      return res.status(400).json({ error: 'Invalid history import request' });
     }
 
     try {
@@ -1243,7 +1315,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
       const user = await db.get<any>('SELECT gscRefreshToken FROM users WHERE id = ?', [ownerId]);
       if (!user?.gscRefreshToken) {
-        return res.status(409).json({ error: 'Connect Google data before queueing warehouse bootstrap.' });
+        return res.status(409).json({ error: 'Connect Google data before importing historical reports.' });
       }
 
       const boundedDays = Number.isFinite(Number(days)) ? Math.min(Math.max(Number(days), 1), 720) : undefined;
@@ -1261,7 +1333,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         totalJobs: result.totalQueued,
       });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to queue warehouse bootstrap' });
+      return res.status(500).json({ error: err.message || 'Failed to start history import' });
     }
   });
 
@@ -1291,7 +1363,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       });
       res.json({ job });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to queue warehouse sync job' });
+      res.status(500).json({ error: err.message || 'Failed to start data import' });
     }
   });
 
@@ -1299,7 +1371,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const ownerId = req.authUser!.uid;
     const { siteUrl, propertyId, startDate, endDate, maxDates } = req.body || {};
     if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
-      return res.status(400).json({ error: 'Invalid missing warehouse job payload' });
+      return res.status(400).json({ error: 'Invalid missing-days import request' });
     }
 
     try {
@@ -1315,15 +1387,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
       const user = await db.get<any>('SELECT gscRefreshToken FROM users WHERE id = ?', [ownerId]);
       if (!user?.gscRefreshToken) {
-        return res.status(409).json({ error: 'Connect Google data before queueing warehouse gap fills.' });
+        return res.status(409).json({ error: 'Connect Google data before importing missing days.' });
       }
 
       const latestAvailableDate = latestStableReportingDate();
       const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
       const expectedDates = eachIsoDate(startDate, effectiveEndDate);
       const requestedPropertyId = effectivePropertyId;
-      const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), 120) : 60;
-      const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, jobRows] = await Promise.all([
+      const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), 720) : 720;
+      const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, ga4DimensionRows, jobRows] = await Promise.all([
         db.all<{ date: string }>(`
           SELECT date
           FROM gsc_site_metrics
@@ -1342,54 +1414,90 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
         `, [ownerId, siteUrl, startDate, effectiveEndDate]),
+        db.all<{ date: string }>(`
+          SELECT date
+          FROM gsc_country_metrics
+          WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+          GROUP BY date
+        `, [ownerId, siteUrl, startDate, effectiveEndDate]),
         requestedPropertyId
           ? db.all<{ date: string }>(`
             SELECT date
             FROM ga4_page_metrics
             WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
             GROUP BY date
-          `, [ownerId, requestedPropertyId, startDate, effectiveEndDate])
+        `, [ownerId, requestedPropertyId, startDate, effectiveEndDate])
           : Promise.resolve([]),
-        db.all<{ targetDate: string; targetStartDate: string | null; propertyId: string | null }>(`
-          SELECT targetDate, targetStartDate, propertyId
+        requestedPropertyId
+          ? db.all<{ date: string; rowCount: number }>(`
+            SELECT date, COUNT(DISTINCT dimension) AS rowCount
+            FROM ga4_dimension_metrics
+            WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+            GROUP BY date
+        `, [ownerId, requestedPropertyId, startDate, effectiveEndDate])
+          : Promise.resolve([]),
+        db.all<{ jobType: string; targetDate: string; targetStartDate: string | null; propertyId: string | null; status: string }>(`
+          SELECT jobType, targetDate, targetStartDate, propertyId, status
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
-            AND jobType IN ('daily-sync', 'core-range-sync')
+            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync')
             AND status IN ('queued', 'retrying', 'running', 'completed')
         `, [ownerId, siteUrl, startDate, effectiveEndDate]),
       ]);
       const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
       const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
       const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
+      const gscCountryDates = new Set(gscCountryRows.map((row) => row.date));
       const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
-      const jobsByDate = new Map<string, Array<{ propertyId: string | null }>>();
+      const ga4DimensionDateCounts = new Map(ga4DimensionRows.map((row) => [row.date, toCoverageNumber(row.rowCount)]));
+      const jobsByDate = new Map<string, Array<{ jobType: string; propertyId: string | null; status: string }>>();
       for (const row of jobRows) {
         for (const date of jobDatesWithin(row, startDate, effectiveEndDate)) {
           if (!jobsByDate.has(date)) {
             jobsByDate.set(date, []);
           }
-          jobsByDate.get(date)?.push({ propertyId: row.propertyId || null });
+          jobsByDate.get(date)?.push({ jobType: row.jobType, propertyId: row.propertyId || null, status: row.status });
         }
       }
-      const hasAnyWarehouseJob = (date: string) => Boolean(jobsByDate.get(date)?.length);
+      const isCoreJob = (row: { jobType: string }) => row.jobType === 'daily-sync' || row.jobType === 'core-range-sync';
+      const hasAnyCoreWarehouseJob = (date: string) => Boolean(jobsByDate.get(date)?.some(isCoreJob));
+      const hasActiveCoreWarehouseJob = (date: string) => Boolean(
+        jobsByDate.get(date)?.some((row) => isCoreJob(row) && ['queued', 'retrying', 'running'].includes(row.status)),
+      );
       const hasMatchingPropertyJob = (date: string) => Boolean(
         requestedPropertyId
-        && jobsByDate.get(date)?.some((row) => row.propertyId === requestedPropertyId),
+        && jobsByDate.get(date)?.some((row) => isCoreJob(row) && row.propertyId === requestedPropertyId),
       );
-      const needsGscSync = (date: string) => !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date);
+      const hasMatchingDimensionJob = (date: string) => Boolean(
+        requestedPropertyId
+        && jobsByDate.get(date)?.some((row) => row.jobType === 'ga4-dimension-range-sync' && row.propertyId === requestedPropertyId),
+      );
+      const needsExistingGscSync = (date: string) => !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date);
+      const needsCountrySync = (date: string) => !gscCountryDates.has(date);
       const needsGa4Sync = (date: string) => Boolean(requestedPropertyId && !ga4PageDates.has(date));
-      const needsSync = (date: string) => (
-        (needsGscSync(date) && !hasAnyWarehouseJob(date))
+      const needsGa4DimensionSync = (date: string) => Boolean(
+        requestedPropertyId
+        && (ga4DimensionDateCounts.get(date) || 0) < GA4_DIMENSION_DATASET_COUNT
+        && !hasMatchingDimensionJob(date),
+      );
+      const needsCoreSync = (date: string) => (
+        (needsExistingGscSync(date) && !hasAnyCoreWarehouseJob(date))
+        || (needsCountrySync(date) && !hasActiveCoreWarehouseJob(date))
         || (needsGa4Sync(date) && !hasMatchingPropertyJob(date))
       );
-      const datesToQueue = expectedDates
-        .filter(needsSync)
+      const coreDatesToQueue = expectedDates
+        .filter(needsCoreSync)
+        .sort((a, b) => b.localeCompare(a))
+        .slice(0, queueLimit);
+      const dimensionDatesToQueue = expectedDates
+        .filter(needsGa4DimensionSync)
         .sort((a, b) => b.localeCompare(a))
         .slice(0, queueLimit);
 
       const jobs = [];
-      for (const chunk of chunkAscendingDates(datesToQueue, CORE_RANGE_JOB_DAYS)) {
+      for (const chunk of chunkAscendingDates(coreDatesToQueue, CORE_RANGE_JOB_DAYS)) {
         const job = await queueWarehouseCoreRangeJob(db, {
+          dedupeCompleted: false,
           endDate: chunk.endDate,
           ownerId,
           propertyId: requestedPropertyId || null,
@@ -1398,16 +1506,34 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         });
         jobs.push(job);
       }
+      if (requestedPropertyId) {
+        for (const chunk of chunkAscendingDates(dimensionDatesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
+          const job = await queueWarehouseGa4DimensionRangeJob(db, {
+            dedupeCompleted: false,
+            endDate: chunk.endDate,
+            ownerId,
+            propertyId: requestedPropertyId,
+            siteUrl,
+            startDate: chunk.startDate,
+          });
+          jobs.push(job);
+        }
+      }
+
+      const missingCoreCount = expectedDates.filter(needsCoreSync).length;
+      const missingDimensionCount = expectedDates.filter(needsGa4DimensionSync).length;
 
       return res.json({
         jobs,
         latestAvailableDate,
         queued: jobs.length,
-        remainingMissingDates: Math.max(expectedDates.filter(needsSync).length - datesToQueue.length, 0),
+        queuedCoreDates: coreDatesToQueue.length,
+        queuedGa4DimensionDates: dimensionDatesToQueue.length,
+        remainingMissingDates: Math.max(missingCoreCount - coreDatesToQueue.length, 0) + Math.max(missingDimensionCount - dimensionDatesToQueue.length, 0),
         skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
       });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to queue missing warehouse jobs' });
+      return res.status(500).json({ error: err.message || 'Failed to start missing-days import' });
     }
   });
 
@@ -1415,7 +1541,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const ownerId = req.authUser!.uid;
     const { siteUrl, startDate, endDate, maxJobs } = req.body || {};
     if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
-      return res.status(400).json({ error: 'Invalid failed warehouse retry payload' });
+      return res.status(400).json({ error: 'Invalid failed import retry request' });
     }
 
     try {
@@ -1425,7 +1551,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
       const user = await db.get<any>('SELECT gscRefreshToken FROM users WHERE id = ?', [ownerId]);
       if (!user?.gscRefreshToken) {
-        return res.status(409).json({ error: 'Connect Google data before retrying failed warehouse jobs.' });
+        return res.status(409).json({ error: 'Connect Google data before retrying failed imports.' });
       }
 
       const retryLimit = Number.isFinite(Number(maxJobs)) ? Math.min(Math.max(Number(maxJobs), 1), 120) : 60;
@@ -1463,7 +1589,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         retried: failedJobs.length,
       });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to retry failed warehouse jobs' });
+      return res.status(500).json({ error: err.message || 'Failed to retry failed imports' });
     }
   });
 
@@ -1481,7 +1607,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const jobs = await listWarehouseJobs(db, ownerId, siteUrl, limit);
       res.json({ jobs });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to load warehouse jobs' });
+      res.status(500).json({ error: err.message || 'Failed to load import jobs' });
     }
   });
 
@@ -1507,12 +1633,17 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const hasDate = dims.includes('date');
       const hasQuery = dims.includes('query');
       const hasPage = dims.includes('page');
+      const hasCountry = dims.includes('country');
       const wantsQueryCount = metric === 'queryCount';
       const hasPageFilter = Array.isArray(dimensionFilterGroups)
         && dimensionFilterGroups.some((group: any) =>
           Array.isArray(group.filters)
           && group.filters.some((filter: any) => filter.dimension === 'page' && isNonEmptyString(filter.expression))
         );
+
+      if (hasCountry && (hasPage || hasQuery || hasPageFilter)) {
+        return res.status(400).json({ error: 'Country metrics cannot be combined with page or query dimensions yet.' });
+      }
 
       const selectClauseElements: string[] = [];
       const groupByClauseElements: string[] = [];
@@ -1531,6 +1662,11 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       if (hasQuery) {
         selectClauseElements.push('query');
         groupByClauseElements.push('query');
+        if (!hasDate) orderClause = 'ORDER BY clicks DESC, impressions DESC';
+      }
+      if (hasCountry) {
+        selectClauseElements.push('country');
+        groupByClauseElements.push('country');
         if (!hasDate) orderClause = 'ORDER BY clicks DESC, impressions DESC';
       }
 
@@ -1575,13 +1711,40 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
                   params[`pageFilter${paramIdx}`] = `%${filter.expression}%`;
                 }
               }
+              if (filter.dimension === 'country' && filter.expression) {
+                const paramIdx = Object.keys(params).length;
+                if (filter.operator === 'equals') {
+                  whereClause += ` AND country = @countryFilter${paramIdx}`;
+                  params[`countryFilter${paramIdx}`] = filter.expression;
+                } else if (filter.operator === 'contains') {
+                  whereClause += ` AND country LIKE @countryFilter${paramIdx}`;
+                  params[`countryFilter${paramIdx}`] = `%${filter.expression}%`;
+                } else if (filter.operator === 'notContains') {
+                  whereClause += ` AND country NOT LIKE @countryFilter${paramIdx}`;
+                  params[`countryFilter${paramIdx}`] = `%${filter.expression}%`;
+                }
+              }
             }
           }
         }
       }
 
       let rows: any[] = [];
-      if (hasPage || (hasQuery && hasPageFilter)) {
+      if (hasCountry) {
+        rows = await db.all<any>(`
+          SELECT ${selectCols}
+                 SUM(clicks) as clicks,
+                 SUM(impressions) as impressions,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
+          FROM gsc_country_metrics
+          ${whereClause}
+            AND country <> ''
+          ${groupByClause}
+          ${orderClause}
+          LIMIT @limit OFFSET @offset
+        `, params);
+      } else if (hasPage || (hasQuery && hasPageFilter)) {
         rows = await db.all<any>(`
           SELECT ${selectCols} 
                  ${queryCountCol}
@@ -1642,7 +1805,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         if (hasDate) keys.push(r.date);
         if (hasPage) keys.push(r.page);
         if (hasQuery) keys.push(r.query);
+        if (hasCountry) keys.push(r.country);
         return {
+          country: r.country,
           date: r.date,
           page: r.page,
           query: r.query,
@@ -1678,7 +1843,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     try {
       const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
       if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Raw exports are available on paid plans.' });
+        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
       }
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
@@ -1790,7 +1955,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     try {
       const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
       if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Raw exports are available on paid plans.' });
+        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
       }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
@@ -1872,7 +2037,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     try {
       const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
       if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Raw exports are available on paid plans.' });
+        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
       }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });

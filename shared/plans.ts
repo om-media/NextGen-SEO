@@ -35,7 +35,7 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     featureHighlights: [
       '1 active property',
       'Core Search Console dashboard',
-      'Basic warehouse sync',
+      'Basic history import',
       'Starter rank tracking',
     ],
   },
@@ -56,7 +56,7 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     featureHighlights: [
       '3 active properties',
       'Expanded AI workflows',
-      'Extended warehouse sync',
+      'Extended history import',
       'Growth rank tracking',
     ],
   },
@@ -77,7 +77,7 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     featureHighlights: [
       'Unlimited active properties',
       'Priority AI workflows',
-      'Unlimited warehouse sync',
+      'Unlimited history import',
       'Scale rank tracking',
     ],
   },

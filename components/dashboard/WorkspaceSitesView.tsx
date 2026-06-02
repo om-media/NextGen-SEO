@@ -41,8 +41,40 @@ function SiteStat({ label, value }: { label: string; value: string }) {
 
 function getCoverageTone(site: WorkspaceSiteStatus) {
   if (!site.isUnlocked) return "outline";
+  if ((site.warehouse.jobs?.error || 0) > 0) return "destructive";
+  if ((site.warehouse.jobs?.running || 0) > 0 || (site.warehouse.jobs?.queued || 0) > 0 || (site.warehouse.jobs?.retrying || 0) > 0) return "secondary";
   if (site.warehouse.rowCount > 0 && site.crawl?.summary.totalPages) return "secondary";
   return "destructive";
+}
+
+function getAnalysisLabel(site: WorkspaceSiteStatus) {
+  if (!site.isUnlocked) return "Not activated";
+  if ((site.warehouse.jobs?.error || 0) > 0) return "Import failed";
+  if ((site.warehouse.jobs?.running || 0) > 0) return "Import running";
+  if ((site.warehouse.jobs?.queued || 0) > 0 || (site.warehouse.jobs?.retrying || 0) > 0) return "Import queued";
+  if (site.warehouse.rowCount > 0 && site.crawl?.summary.totalPages) return "Ready";
+  return "Preparing";
+}
+
+function getImportSummary(site: WorkspaceSiteStatus) {
+  const jobs = site.warehouse.jobs;
+  if (!jobs || jobs.total === 0) {
+    return site.isUnlocked ? "Automatic history import will start after Google data is connected." : "Activate to start automatic imports.";
+  }
+
+  const activeCount = jobs.running + jobs.queued + jobs.retrying;
+  if (jobs.error > 0) {
+    const latestError = jobs.latest?.lastError ? `: ${jobs.latest.lastError}` : "";
+    return `${formatNumber(jobs.error)} failed import${jobs.error === 1 ? "" : "s"}${latestError}`;
+  }
+  if (activeCount > 0) {
+    return `${formatNumber(activeCount)} import ${activeCount === 1 ? "job" : "jobs"} active. Existing data stays usable.`;
+  }
+  if (jobs.latest?.updatedAt) {
+    return `Latest import ${jobs.latest.status}, updated ${formatRelative(jobs.latest.updatedAt)}.`;
+  }
+
+  return `${formatNumber(jobs.total)} import ${jobs.total === 1 ? "job" : "jobs"} tracked.`;
 }
 
 export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSitesViewProps) {
@@ -84,7 +116,8 @@ export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSite
   const unlockedCount = sites.filter((site) => site.isUnlocked).length;
   const warehouseReadyCount = sites.filter((site) => site.warehouse.rowCount > 0).length;
   const crawledCount = sites.filter((site) => site.crawl?.summary.totalPages).length;
-  const issueCount = sites.filter((site) => site.isUnlocked && (!site.warehouse.rowCount || !site.crawl?.summary.totalPages || (site.crawl?.summary.errorPages || 0) > 0)).length;
+  const importActiveCount = sites.filter((site) => site.isUnlocked && ((site.warehouse.jobs?.running || 0) > 0 || (site.warehouse.jobs?.queued || 0) > 0 || (site.warehouse.jobs?.retrying || 0) > 0)).length;
+  const issueCount = sites.filter((site) => site.isUnlocked && (!site.warehouse.rowCount || !site.crawl?.summary.totalPages || (site.crawl?.summary.errorPages || 0) > 0 || (site.warehouse.jobs?.error || 0) > 0)).length;
 
   return (
     <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
@@ -93,7 +126,7 @@ export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSite
           <div>
             <CardTitle>Workspace sites</CardTitle>
             <CardDescription className="mt-2 max-w-3xl">
-              Activated properties and the latest automated analysis status for each workspace site.
+              Activated properties, automatic history imports, and the latest technical analysis status for each workspace site.
             </CardDescription>
           </div>
           <Button variant="outline" className="rounded-xl" disabled={loading} onClick={load}>
@@ -106,7 +139,8 @@ export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSite
         <div className="grid gap-3 md:grid-cols-4">
           <SiteStat label="Known sites" value={formatNumber(sites.length)} />
           <SiteStat label="Activated" value={formatNumber(unlockedCount)} />
-          <SiteStat label="Warehouse ready" value={formatNumber(warehouseReadyCount)} />
+          <SiteStat label="Data ready" value={formatNumber(warehouseReadyCount)} />
+          <SiteStat label="Importing" value={formatNumber(importActiveCount)} />
           <SiteStat label="Needs attention" value={formatNumber(issueCount)} />
         </div>
 
@@ -151,7 +185,7 @@ export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSite
                   </TableCell>
                   <TableCell>
                     <Badge variant={getCoverageTone(site)}>
-                      {site.warehouse.rowCount > 0 && site.crawl?.summary.totalPages ? "Ready" : site.isUnlocked ? "Needs data" : "Not activated"}
+                      {getAnalysisLabel(site)}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -161,6 +195,9 @@ export function WorkspaceSitesView({ onActivateSite, onOpenSite }: WorkspaceSite
                         <div className="font-medium">{formatNumber(site.warehouse.metricDayCount)} days</div>
                         <div className="text-xs text-muted-foreground">
                           {formatDate(site.warehouse.earliestMetricDate)} to {formatDate(site.warehouse.lastMetricDate)}
+                        </div>
+                        <div className="mt-1 max-w-[360px] text-xs text-muted-foreground">
+                          {getImportSummary(site)}
                         </div>
                       </div>
                     </div>
