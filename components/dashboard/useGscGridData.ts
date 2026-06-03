@@ -31,7 +31,7 @@ async function fetchWarehouseData(
   startDate: string,
   endDate: string,
   dimensionFilterGroups?: any[],
-): Promise<GridRow[]> {
+): Promise<{ rows: GridRow[]; totalRowCount?: number }> {
   const response = await authFetch("/api/warehouse/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -41,6 +41,7 @@ async function fetchWarehouseData(
       endDate,
       dimensions: [dimension],
       dimensionFilterGroups,
+      includeTotal: true,
       rowLimit: INITIAL_WAREHOUSE_GRID_ROW_LIMIT,
       startRow: 0,
     }),
@@ -50,17 +51,20 @@ async function fetchWarehouseData(
     throw new Error("Failed to fetch warehouse data");
   }
 
-  const rows = await response.json();
-  const allRows = Array.isArray(rows) ? rows : [];
+  const payload = await response.json();
+  const allRows = Array.isArray(payload) ? payload : Array.isArray(payload?.rows) ? payload.rows : [];
 
-  return allRows.map((row: any) => ({
+  return {
+    rows: allRows.map((row: any) => ({
     keys: [row[dimension]],
     clicks: toFiniteNumber(row.clicks),
     impressions: toFiniteNumber(row.impressions),
     ctr: toFiniteNumber(row.ctr),
     position: toFiniteNumber(row.position),
     queryCount: row.queryCount === undefined ? undefined : toFiniteNumber(row.queryCount),
-  })).filter((row: GridRow) => typeof row.keys?.[0] === "string" && row.keys[0].length > 0);
+    })).filter((row: GridRow) => typeof row.keys?.[0] === "string" && row.keys[0].length > 0),
+    totalRowCount: Array.isArray(payload) ? undefined : toFiniteNumber(payload?.totalRowCount),
+  };
 }
 
 function getPageQueryCounts(rows: GridRow[]) {
@@ -145,10 +149,14 @@ export function useGscGridData({
   const [error, setError] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<GscGridCoverage | null>(null);
   const [loading, setLoading] = useState(false);
+  const [rowLimit, setRowLimit] = useState<number | null>(null);
+  const [totalRowCount, setTotalRowCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!siteUrl || !dateRange?.from || !dateRange?.to) {
       setCoverage(null);
+      setRowLimit(null);
+      setTotalRowCount(null);
       return;
     }
 
@@ -163,6 +171,8 @@ export function useGscGridData({
     if (!useLiveData && !canUseWarehouse) {
       setData([]);
       setError(getFriendlyGscError("WAREHOUSE_UNSUPPORTED_DIMENSION"));
+      setRowLimit(null);
+      setTotalRowCount(null);
       setLoading(false);
       return;
     }
@@ -192,6 +202,7 @@ export function useGscGridData({
 
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
+          .then((rows) => ({ rows, totalRowCount: rows.length }))
       : fetchWarehouseData(siteUrl, dimension, startDate, endDate, dimensionFilterGroups);
 
     const comparePromise =
@@ -201,6 +212,7 @@ export function useGscGridData({
             const compareEndDate = format(compareDateRange.to!, "yyyy-MM-dd");
             return shouldUseLiveApi
               ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension], dimensionFilterGroups, true)
+                  .then((rows) => ({ rows, totalRowCount: rows.length }))
               : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, dimensionFilterGroups);
           })()
         : Promise.resolve(undefined);
@@ -224,7 +236,11 @@ export function useGscGridData({
         : Promise.resolve(undefined);
 
     primaryPromise
-      .then(async (primaryRows) => {
+      .then(async (primaryResult) => {
+        const primaryRows = primaryResult.rows;
+        const primaryTotalRowCount = primaryResult.totalRowCount ?? primaryRows.length;
+        setRowLimit(shouldUseLiveApi ? null : INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
+        setTotalRowCount(primaryTotalRowCount);
         setCoverage(await coveragePromise);
         let rowsWithPageQueryCounts = primaryRows;
 
@@ -253,7 +269,7 @@ export function useGscGridData({
         }
 
         const compareResult = await comparePromise
-          .then((compareRows) => ({ ok: true as const, compareRows }))
+          .then((compareRows) => ({ ok: true as const, compareRows: compareRows.rows }))
           .catch((err: Error) => {
             console.warn("Compare range failed for GSC grid; continuing with primary data only.", err);
             return { ok: false as const, error: err };
@@ -279,5 +295,13 @@ export function useGscGridData({
       });
   }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, refreshKey, siteUrl, tier, useLiveData]);
 
-  return { coverage, data, error, loading };
+  return {
+    coverage,
+    data,
+    error,
+    isRowLimited: Boolean(rowLimit && totalRowCount !== null && totalRowCount > data.length),
+    loading,
+    rowLimit,
+    totalRowCount,
+  };
 }

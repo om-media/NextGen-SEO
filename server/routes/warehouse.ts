@@ -1639,7 +1639,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
   app.post('/api/warehouse/query', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
-    const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups, metric, rowLimit, startRow } = req.body;
+    const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups, metric, rowLimit, startRow, includeTotal } = req.body;
     if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
       return res.status(400).json({ error: 'Missing or invalid parameters' });
     }
@@ -1756,7 +1756,23 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       let rows: any[] = [];
+      let totalRowCount: number | undefined;
+      const shouldIncludeTotal = includeTotal === true;
+
+      const getTotalRowCount = async (tableName: string, countExpression: string, extraWhere = '') => {
+        const total = await db.get<any>(`
+          SELECT COUNT(DISTINCT ${countExpression}) AS totalRowCount
+          FROM ${tableName}
+          ${whereClause}
+          ${extraWhere}
+        `, params);
+        return toFiniteNumber(total?.totalRowCount);
+      };
+
       if (hasCountry) {
+        if (shouldIncludeTotal) {
+          totalRowCount = await getTotalRowCount('gsc_country_metrics', 'country', "AND country <> ''");
+        }
         rows = await db.all<any>(`
           SELECT ${selectCols}
                  SUM(clicks) as clicks,
@@ -1771,6 +1787,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           LIMIT @limit OFFSET @offset
         `, params);
       } else if (hasPage || (hasQuery && hasPageFilter)) {
+        if (shouldIncludeTotal) {
+          totalRowCount = await getTotalRowCount(
+            'gsc_page_query_metrics',
+            hasQuery ? 'query' : "COALESCE(NULLIF(pageKey, ''), page)",
+          );
+        }
         rows = await db.all<any>(`
           SELECT ${selectCols} 
                  ${queryCountCol}
@@ -1799,6 +1821,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           LIMIT @limit OFFSET @offset
         `, params);
       } else if (hasQuery) {
+        if (shouldIncludeTotal) {
+          totalRowCount = await getTotalRowCount('gsc_query_metrics', 'query');
+        }
         rows = await db.all<any>(`
                  SELECT ${selectCols} 
                  SUM(clicks) as clicks, 
@@ -1845,6 +1870,11 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           position: toFiniteNumber(r.position),
         };
       });
+
+      if (shouldIncludeTotal) {
+        res.json({ rows, totalRowCount: totalRowCount ?? rows.length });
+        return;
+      }
 
       res.json(rows);
     } catch (err: any) {

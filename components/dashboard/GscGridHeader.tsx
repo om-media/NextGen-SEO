@@ -2,7 +2,7 @@ import { CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { GscAiInsightsDialog } from "./GscAiInsightsDialog";
-import { getGridTitle, getGridTitleWithCount, type GridDimension } from "./gscGridUtils";
+import { getGridTitle, type GridDimension } from "./gscGridUtils";
 
 type GscGridHeaderProps = {
   aiError: string | null;
@@ -16,7 +16,9 @@ type GscGridHeaderProps = {
   onExport: () => void;
   onGenerateInsights: () => Promise<void>;
   rowCount: number;
+  rowLimit?: number | null;
   showActions?: boolean;
+  totalRowCount?: number | null;
   titleOverride?: string;
 };
 
@@ -32,17 +34,31 @@ export function GscGridHeader({
   onExport,
   onGenerateInsights,
   rowCount,
+  rowLimit,
   showActions = true,
+  totalRowCount,
   titleOverride,
 }: GscGridHeaderProps) {
+  const hasWarehouseTotal = typeof totalRowCount === "number" && Number.isFinite(totalRowCount);
+  const isLimitedPreview = Boolean(rowLimit && hasWarehouseTotal && totalRowCount > rowCount);
+  const titleCount = hasWarehouseTotal ? totalRowCount : rowCount;
+  const titleCountSuffix = hasWarehouseTotal ? " total" : "";
+  const dimensionLabel = dimension === "query" ? "queries" : getGridTitle(dimension).toLowerCase().replace(/^top\s+/, "");
+  const description = descriptionOverride || `Analyze your top performing ${dimensionLabel} and discover new opportunities.`;
+
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div className="space-y-1">
         <CardTitle className="text-lg leading-tight text-[#0F172A]">
-          {titleOverride || getGridTitleWithCount(dimension, rowCount)}
+          {titleOverride || `${getGridTitle(dimension)} (${titleCount.toLocaleString()}${titleCountSuffix})`}
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          {descriptionOverride || `Analyze your top performing ${getGridTitle(dimension).toLowerCase()} and discover new opportunities.`}
+          {description}
+          {isLimitedPreview && (
+            <span className="ml-1">
+              Showing the top {rowCount.toLocaleString()} rows in this table for fast loading.
+            </span>
+          )}
         </p>
       </div>
 
