@@ -22,6 +22,7 @@ type CrawlRawKind = "pages" | "links";
 
 const pageSize = 100;
 const exportBatchSize = 5000;
+const internalExportColumns = new Set(["jobId", "jobID", "ownerId", "ownerID"]);
 const formatNumber = (value: number | null | undefined) => new Intl.NumberFormat("en-US").format(Number(value || 0));
 const formatPercent = (value: number | null | undefined) => `${(Number(value || 0) * 100).toFixed(2)}%`;
 const ga4PageKinds = new Set<RawGa4Kind>(["page", "page_date"]);
@@ -44,12 +45,15 @@ function toIsoDate(value: Date | undefined, fallback: Date) {
 
 function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   if (rows.length === 0) return;
-  const headers = Object.keys(rows[0]);
+  const publicRows = rows.map((row) => Object.fromEntries(
+    Object.entries(row).filter(([key]) => !internalExportColumns.has(key)),
+  ));
+  const headers = Object.keys(publicRows[0]);
   const escape = (value: unknown) => {
     const text = String(value ?? "");
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
-  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+  const csv = [headers, ...publicRows.map((row) => headers.map((header) => row[header]))]
     .map((line) => line.map(escape).join(","))
     .join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
