@@ -529,11 +529,11 @@ function MainApp() {
     });
 
     try {
-      await connectGoogleServices();
+      const connectionMessage = await connectGoogleServices();
       setSessionExpired(false);
       toast.success("Google data connected", {
         id: connectingToast,
-        description: "Live Search Console and GA4 access is ready. We’re refreshing your workspace now.",
+        description: connectionMessage || "Google access is ready. Historical imports are queued for this workspace.",
       });
     } catch (err: any) {
       toast.error("Google data connection failed", {

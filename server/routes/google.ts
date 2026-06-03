@@ -72,10 +72,44 @@ function uniqueSites(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
+type GoogleWarehouseBackfillSummary = {
+  coreJobs: number;
+  ga4DimensionJobs: number;
+  llmJobs: number;
+  siteCount: number;
+  totalJobs: number;
+};
+
+const emptyGoogleWarehouseBackfillSummary = (): GoogleWarehouseBackfillSummary => ({
+  coreJobs: 0,
+  ga4DimensionJobs: 0,
+  llmJobs: 0,
+  siteCount: 0,
+  totalJobs: 0,
+});
+
+function formatGoogleConnectionMessage(summary: GoogleWarehouseBackfillSummary, alreadySaved: boolean) {
+  const prefix = alreadySaved ? 'Google account connection is already saved.' : 'Google account connected.';
+  if (summary.siteCount === 0) {
+    return `${prefix} Choose a site to start importing historical Search Console and GA4 data.`;
+  }
+
+  if (summary.totalJobs === 0) {
+    return `${prefix} Historical imports are already queued or stored for ${summary.siteCount} site${summary.siteCount === 1 ? '' : 's'}.`;
+  }
+
+  const ga4Message = summary.ga4DimensionJobs + summary.llmJobs > 0
+    ? ' Search Console, GA4, and LLM traffic history are queued.'
+    : ' Search Console history is queued; choose a GA4 property to import GA4 history.';
+
+  return `${prefix} ${summary.totalJobs} historical import job${summary.totalJobs === 1 ? '' : 's'} queued for ${summary.siteCount} site${summary.siteCount === 1 ? '' : 's'}.${ga4Message}`;
+}
+
 export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
 
   const queueGoogleWarehouseBackfillForWorkspaceSites = async (ownerId: string) => {
+    const summary = emptyGoogleWarehouseBackfillSummary();
     try {
       const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null; knownSites?: string | null; tier?: string | null; unlockedSites?: string | null }>(
         'SELECT activatedGa4PropertyId, activatedSiteUrl, knownSites, tier, unlockedSites FROM users WHERE id = ?',
@@ -91,15 +125,21 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
         if (!(await canAccessSite(db, ownerId, siteUrl))) continue;
         const activePropertyId = isNonEmptyString(user?.activatedGa4PropertyId) ? user.activatedGa4PropertyId.trim() : '';
         const propertyId = siteUrl === activatedSiteUrl && activePropertyId ? activePropertyId : null;
-        await queueWarehouseBootstrapJobs(db, {
+        const queued = await queueWarehouseBootstrapJobs(db, {
           ownerId,
           propertyId,
           siteUrl,
         });
+        summary.siteCount += 1;
+        summary.coreJobs += queued.core.length;
+        summary.ga4DimensionJobs += queued.ga4Dimensions.length;
+        summary.llmJobs += queued.llm.length;
+        summary.totalJobs += queued.totalQueued;
       }
     } catch (err) {
       console.warn('Failed to queue Google warehouse backfill after connection', { ownerId, err });
     }
+    return summary;
   };
 
   app.get('/api/auth/google/start', (_req, res) => {
@@ -194,16 +234,16 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       if (!tokens.refresh_token) {
         const existingRefreshToken = await getStoredGoogleRefreshToken(db, userId);
         if (existingRefreshToken) {
-          await queueGoogleWarehouseBackfillForWorkspaceSites(userId);
-          return sendOauthPopupResponse(res, true, 'Google account connection is already saved. You can close this window.');
+          const summary = await queueGoogleWarehouseBackfillForWorkspaceSites(userId);
+          return sendOauthPopupResponse(res, true, formatGoogleConnectionMessage(summary, true));
         }
 
         return sendOauthPopupResponse(res, false, 'Google did not return a refresh token. Please try again.');
       }
 
       await storeGoogleRefreshToken(db, userId, tokens.refresh_token);
-      await queueGoogleWarehouseBackfillForWorkspaceSites(userId);
-      return sendOauthPopupResponse(res, true, 'Google account connected successfully. You can close this window.');
+      const summary = await queueGoogleWarehouseBackfillForWorkspaceSites(userId);
+      return sendOauthPopupResponse(res, true, formatGoogleConnectionMessage(summary, false));
     } catch (err: any) {
       return sendOauthPopupResponse(res, false, err.message || 'Google connection failed.');
     }

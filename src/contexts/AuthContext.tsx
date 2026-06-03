@@ -46,7 +46,7 @@ interface AuthContextType {
   loginWithEmail: (email: string, pass: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
-  connectGoogleServices: () => Promise<void>;
+  connectGoogleServices: () => Promise<string | undefined>;
   disconnectGoogleServices: () => Promise<void>;
   unlockSite: (siteUrl: string) => Promise<void>;
   setBingApiKey: (key: string) => Promise<void>;
@@ -256,7 +256,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Popup blocked. Please allow popups and try again.');
     }
 
-    await new Promise<void>((resolve, reject) => {
+    return new Promise<string | undefined>((resolve, reject) => {
       let settled = false;
       const timeoutId = window.setTimeout(() => {
         if (!settled) {
@@ -301,7 +301,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         try {
           await loadSession();
-          resolve();
+          resolve(typeof event.data.message === 'string' ? event.data.message : undefined);
         } catch (error: any) {
           reject(error);
         }
