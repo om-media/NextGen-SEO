@@ -161,6 +161,12 @@ export function GscDataGrid({
   }));
 
   const totalPages = Math.ceil(filteredData.length / pageSize);
+  const totalAvailablePages = shouldShowTotalRowCount && totalRowCount
+    ? Math.max(1, Math.ceil(totalRowCount / pageSize))
+    : totalPages;
+  const loadedPageLabel = isRowLimited && totalAvailablePages > totalPages
+    ? `${totalPages.toLocaleString()} loaded`
+    : "";
   const handleNextPage = () => {
     if (currentPage < totalPages) {
       setCurrentPage((p) => Math.min(totalPages, p + 1));
@@ -746,7 +752,8 @@ export function GscDataGrid({
                   Previous
                 </Button>
                 <div className="text-sm font-medium">
-                  Page {currentPage} of {totalPages}
+                  Page {currentPage} of {totalAvailablePages.toLocaleString()}
+                  {loadedPageLabel && <span className="ml-1 font-normal text-muted-foreground">({loadedPageLabel})</span>}
                 </div>
                 <Button
                   variant="outline"
