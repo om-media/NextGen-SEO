@@ -854,6 +854,10 @@ type LegacyGscPageKeyRow = {
 };
 
 async function backfillGscPageKeys(db: AppDatabase) {
+  if (process.env.RUN_LEGACY_GSC_PAGEKEY_BACKFILL !== 'true') {
+    return;
+  }
+
   let totalUpdated = 0;
 
   for (let iteration = 0; iteration < 100; iteration += 1) {
