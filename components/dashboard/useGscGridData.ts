@@ -13,6 +13,7 @@ type UseGscGridDataParams = {
   dimensionFilterGroups?: any[];
   isCompareMode?: boolean;
   refreshKey?: number;
+  rowLimit?: number;
   siteUrl: string;
   tier?: "free" | "pro" | "enterprise";
   useLiveData?: boolean;
@@ -30,6 +31,7 @@ async function fetchWarehouseData(
   dimension: GridDimension,
   startDate: string,
   endDate: string,
+  rowLimit: number,
   dimensionFilterGroups?: any[],
 ): Promise<{ rows: GridRow[]; totalRowCount?: number }> {
   const response = await authFetch("/api/warehouse/query", {
@@ -42,7 +44,7 @@ async function fetchWarehouseData(
       dimensions: [dimension],
       dimensionFilterGroups,
       includeTotal: true,
-      rowLimit: INITIAL_WAREHOUSE_GRID_ROW_LIMIT,
+      rowLimit,
       startRow: 0,
     }),
   });
@@ -141,6 +143,7 @@ export function useGscGridData({
   dimensionFilterGroups,
   isCompareMode,
   refreshKey = 0,
+  rowLimit = INITIAL_WAREHOUSE_GRID_ROW_LIMIT,
   siteUrl,
   tier,
   useLiveData = true,
@@ -149,13 +152,13 @@ export function useGscGridData({
   const [error, setError] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<GscGridCoverage | null>(null);
   const [loading, setLoading] = useState(false);
-  const [rowLimit, setRowLimit] = useState<number | null>(null);
+  const [loadedRowLimit, setLoadedRowLimit] = useState<number | null>(null);
   const [totalRowCount, setTotalRowCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!siteUrl || !dateRange?.from || !dateRange?.to) {
       setCoverage(null);
-      setRowLimit(null);
+      setLoadedRowLimit(null);
       setTotalRowCount(null);
       return;
     }
@@ -171,7 +174,7 @@ export function useGscGridData({
     if (!useLiveData && !canUseWarehouse) {
       setData([]);
       setError(getFriendlyGscError("WAREHOUSE_UNSUPPORTED_DIMENSION"));
-      setRowLimit(null);
+      setLoadedRowLimit(null);
       setTotalRowCount(null);
       setLoading(false);
       return;
@@ -203,7 +206,7 @@ export function useGscGridData({
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
           .then((rows) => ({ rows, totalRowCount: rows.length }))
-      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, dimensionFilterGroups);
+      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, dimensionFilterGroups);
 
     const comparePromise =
       isCompareMode && compareDateRange?.from && compareDateRange?.to
@@ -213,7 +216,7 @@ export function useGscGridData({
             return shouldUseLiveApi
               ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension], dimensionFilterGroups, true)
                   .then((rows) => ({ rows, totalRowCount: rows.length }))
-              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, dimensionFilterGroups);
+              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, dimensionFilterGroups);
           })()
         : Promise.resolve(undefined);
 
@@ -239,7 +242,7 @@ export function useGscGridData({
       .then(async (primaryResult) => {
         const primaryRows = primaryResult.rows;
         const primaryTotalRowCount = primaryResult.totalRowCount ?? primaryRows.length;
-        setRowLimit(shouldUseLiveApi ? null : INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
+        setLoadedRowLimit(shouldUseLiveApi ? null : rowLimit);
         setTotalRowCount(primaryTotalRowCount);
         setCoverage(await coveragePromise);
         let rowsWithPageQueryCounts = primaryRows;
@@ -293,15 +296,15 @@ export function useGscGridData({
       .finally(() => {
         setLoading(false);
       });
-  }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, refreshKey, siteUrl, tier, useLiveData]);
+  }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, refreshKey, rowLimit, siteUrl, tier, useLiveData]);
 
   return {
     coverage,
     data,
     error,
-    isRowLimited: Boolean(rowLimit && totalRowCount !== null && totalRowCount > data.length),
+    isRowLimited: Boolean(loadedRowLimit && totalRowCount !== null && totalRowCount > data.length),
     loading,
-    rowLimit,
+    rowLimit: loadedRowLimit,
     totalRowCount,
   };
 }

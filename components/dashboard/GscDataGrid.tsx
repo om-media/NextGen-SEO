@@ -84,6 +84,8 @@ export function GscDataGrid({
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
   const [selectedQueryPage, setSelectedQueryPage] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pendingNextPageAfterLoad, setPendingNextPageAfterLoad] = useState(false);
+  const [requestedWarehouseRowLimit, setRequestedWarehouseRowLimit] = useState(1000);
   const pageSize = 100;
   const stableDimensionFilterGroups = useMemo(
     () => dimensionFilterGroups,
@@ -102,6 +104,7 @@ export function GscDataGrid({
     dimensionFilterGroups: stableDimensionFilterGroups,
     isCompareMode,
     refreshKey,
+    rowLimit: requestedWarehouseRowLimit,
     siteUrl,
     tier: userProfile?.tier,
     useLiveData,
@@ -110,6 +113,11 @@ export function GscDataGrid({
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, intentFilter, minClicks, minImpressions, maxPosition, isQuestionOnly, minWords, sortColumn, sortDirection, dimension, dateRange, compareDateRange, isCompareMode]);
+
+  useEffect(() => {
+    setRequestedWarehouseRowLimit(1000);
+    setPendingNextPageAfterLoad(false);
+  }, [siteUrl, dimension, stableDimensionFilterGroups, dateRange, compareDateRange, isCompareMode, refreshKey, useLiveData]);
 
   useEffect(() => {
     setSelectedRowKey(null);
@@ -145,12 +153,37 @@ export function GscDataGrid({
   );
   const shouldShowTotalRowCount = !hasActiveFilters && typeof totalRowCount === "number" && Number.isFinite(totalRowCount);
   const loadedRowCountLabel = `${sortedData.length.toLocaleString()}${isRowLimited ? " loaded" : ""}`;
+  const canLoadMoreWarehouseRows = Boolean(!useLiveData && isRowLimited && shouldShowTotalRowCount && totalRowCount > data.length);
+  const isAppendingRows = loading && data.length > 0;
   const exportableRows = sortedData.map((row) => ({
     ...row,
     intentLabel: dimension === "query" ? classifyIntent(row.keys[0], siteUrl) : undefined,
   }));
 
   const totalPages = Math.ceil(filteredData.length / pageSize);
+  const handleNextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage((p) => Math.min(totalPages, p + 1));
+      return;
+    }
+
+    if (canLoadMoreWarehouseRows) {
+      setPendingNextPageAfterLoad(true);
+      setRequestedWarehouseRowLimit((limit) => Math.min(limit + 1000, totalRowCount || limit + 1000));
+    }
+  };
+
+  useEffect(() => {
+    if (!pendingNextPageAfterLoad || loading) {
+      return;
+    }
+
+    const nextPage = currentPage + 1;
+    if (nextPage <= totalPages) {
+      setCurrentPage(nextPage);
+    }
+    setPendingNextPageAfterLoad(false);
+  }, [currentPage, loading, pendingNextPageAfterLoad, totalPages]);
   const isConnectionIssue = error?.startsWith("Your Google data connection needs attention.") ?? false;
   const isWarehousePreparationMessage = Boolean(error && /stored reporting data|breakdown is not available|being prepared/i.test(error));
   const hasCoverage = Boolean(coverage && Number(coverage.expectedDateCount || 0) > 0);
@@ -523,7 +556,7 @@ export function GscDataGrid({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? (
+                {loading && data.length === 0 ? (
                   Array.from({ length: 8 }).map((_, index) => (
                     <TableRow key={`loading-${index}`}>
                       <TableCell className="py-4">
@@ -694,13 +727,14 @@ export function GscDataGrid({
             </Table>
           </div>
 
-          {!loading && !error && sortedData.length > 0 && (
+          {!error && sortedData.length > 0 && (
             <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm text-muted-foreground">
                 Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, sortedData.length)} of {loadedRowCountLabel} rows
                 {shouldShowTotalRowCount && totalRowCount > sortedData.length && (
                   <span className="ml-1">({totalRowCount.toLocaleString()} total available)</span>
                 )}
+                {isAppendingRows && <span className="ml-1">Loading more rows...</span>}
               </div>
               <div className="flex items-center space-x-2">
                 <Button
@@ -717,10 +751,10 @@ export function GscDataGrid({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
+                  onClick={handleNextPage}
+                  disabled={loading || (currentPage === totalPages && !canLoadMoreWarehouseRows)}
                 >
-                  Next
+                  {loading && pendingNextPageAfterLoad ? "Loading..." : "Next"}
                 </Button>
               </div>
             </div>
