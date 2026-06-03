@@ -78,6 +78,7 @@ function MainApp() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [dataSource, setDataSource] = useState<DataSource>('gsc')
   const [gscSyncVersion, setGscSyncVersion] = useState(0)
+  const [backgroundEffectsReady, setBackgroundEffectsReady] = useState(false)
   const bumpGscSyncVersion = useCallback(() => setGscSyncVersion((version) => version + 1), [])
   
   const [showSettingsModal, setShowSettingsModal] = useState(false)
@@ -147,8 +148,28 @@ function MainApp() {
   }
 
   useEffect(() => {
-    fetchAnnotations();
-  }, [selectedSite, user?.uid])
+    if (!backgroundEffectsReady) return;
+
+    const timer = window.setTimeout(() => {
+      void fetchAnnotations();
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [backgroundEffectsReady, selectedSite, user?.uid])
+
+  useEffect(() => {
+    if (!user) {
+      setBackgroundEffectsReady(false);
+      return;
+    }
+
+    setBackgroundEffectsReady(false);
+    const timer = window.setTimeout(() => {
+      setBackgroundEffectsReady(true);
+    }, 3500);
+
+    return () => window.clearTimeout(timer);
+  }, [user?.uid])
 
   useEffect(() => {
     localStorage.setItem('gsc_sites_cache', JSON.stringify(sites));
@@ -212,13 +233,17 @@ function MainApp() {
       return
     }
 
+    if (!showSettingsModal && !backgroundEffectsReady) {
+      return;
+    }
+
     getBillingConfig()
       .then(setBillingConfig)
       .catch((error) => {
         console.warn("Failed to load billing config:", error)
         setBillingConfig(null)
       })
-  }, [user])
+  }, [backgroundEffectsReady, showSettingsModal, user])
 
   const [dateRange, setDateRange] = useState<DateRange>({
     from: subDays(new Date(), 30),
@@ -318,6 +343,15 @@ function MainApp() {
 
     if (dataSource === 'gsc' || dataSource === 'blended') {
       if (googleConnected) {
+        if (!backgroundEffectsReady && !isOnboarding) {
+          fetchOfflineGscSites(userProfile)
+            .then((offlineSites) => {
+              setSites(prev => mergeUniqueSites(prev, offlineSites));
+            })
+            .catch(e => console.error("Offline fallback err:", e));
+          return;
+        }
+
         setFetchingSites(true)
         setApiError(null)
         const gscService = new GscApiService(null, userProfile?.tier || 'free')
@@ -381,6 +415,9 @@ function MainApp() {
         setSelectedSite("");
         return;
       }
+      if (!backgroundEffectsReady && !isOnboarding) {
+        return;
+      }
       setFetchingSites(true)
       setApiError(null)
       const bingService = new BingApiService()
@@ -403,6 +440,9 @@ function MainApp() {
         })
         .finally(() => setFetchingSites(false))
     } else if (dataSource === 'ga4' && googleConnected) {
+      if (!backgroundEffectsReady && !isOnboarding) {
+        return;
+      }
       setFetchingSites(true)
       setApiError(null)
       const ga4Service = new Ga4ApiService()
@@ -433,7 +473,7 @@ function MainApp() {
     } else if (dataSource === 'ga4' && !googleConnected) {
       setGa4Sites([])
     }
-  }, [dataSource, isOnboarding, user, userProfile])
+  }, [backgroundEffectsReady, dataSource, isOnboarding, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
     if (!userProfile) return;
@@ -872,8 +912,12 @@ function MainApp() {
 
   return (
     <SidebarProvider>
-      <GlobalSyncPoller siteUrl={selectedSite} />
-      <CrawlAutoStarter siteUrl={selectedSite} />
+      {backgroundEffectsReady && (
+        <>
+          <GlobalSyncPoller siteUrl={selectedSite} />
+          <CrawlAutoStarter siteUrl={selectedSite} />
+        </>
+      )}
       <div className="app-shell-bg flex min-h-screen w-full">
         <AppSidebar selectedSite={selectedSite} activeMenu={activeMenu} onMenuSelect={handleMenuSelect} />
         <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
