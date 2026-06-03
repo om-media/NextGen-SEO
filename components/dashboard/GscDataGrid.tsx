@@ -134,6 +134,17 @@ export function GscDataGrid({
 
   const filteredData = filterGridData(data, dimension, gridFilters, siteUrl);
   const sortedData = sortGridData(filteredData, sortColumn, sortDirection, siteUrl);
+  const hasActiveFilters = Boolean(
+    gridFilters.searchTerm ||
+      intentFilter !== "all" ||
+      minClicks !== "" ||
+      minImpressions !== "" ||
+      maxPosition !== "" ||
+      isQuestionOnly ||
+      minWords !== "",
+  );
+  const shouldShowTotalRowCount = !hasActiveFilters && typeof totalRowCount === "number" && Number.isFinite(totalRowCount);
+  const loadedRowCountLabel = `${sortedData.length.toLocaleString()}${isRowLimited ? " loaded" : ""}`;
   const exportableRows = sortedData.map((row) => ({
     ...row,
     intentLabel: dimension === "query" ? classifyIntent(row.keys[0], siteUrl) : undefined,
@@ -397,7 +408,7 @@ export function GscDataGrid({
             rowLimit={isRowLimited ? rowLimit : null}
             rowCount={sortedData.length}
             showActions={showHeaderActions}
-            totalRowCount={gridFilters.searchTerm || intentFilter !== "all" || minClicks !== "" || minImpressions !== "" || maxPosition !== "" || isQuestionOnly || minWords !== "" ? null : totalRowCount}
+            totalRowCount={shouldShowTotalRowCount ? totalRowCount : null}
             titleOverride={titleOverride}
           />
         </CardHeader>
@@ -686,7 +697,10 @@ export function GscDataGrid({
           {!loading && !error && sortedData.length > 0 && (
             <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm text-muted-foreground">
-                Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, sortedData.length)} of {sortedData.length} entries
+                Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, sortedData.length)} of {loadedRowCountLabel} rows
+                {shouldShowTotalRowCount && totalRowCount > sortedData.length && (
+                  <span className="ml-1">({totalRowCount.toLocaleString()} total available)</span>
+                )}
               </div>
               <div className="flex items-center space-x-2">
                 <Button
