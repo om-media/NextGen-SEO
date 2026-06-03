@@ -1322,7 +1322,30 @@ async function listCrawlPages(
   const rows = await db.all<CrawlPageRecord & { inboundLinkCount: number }>(
     `
       SELECT
-        p.*,
+        p.siteUrl,
+        p.url,
+        p.normalizedUrl,
+        p.pageKey,
+        p.finalUrl,
+        p.statusCode,
+        p.contentType,
+        p.title,
+        p.metaDescription,
+        p.h1Text,
+        p.h1Count,
+        p.h2Count,
+        p.wordCount,
+        p.canonicalUrl,
+        p.noindex,
+        p.depth,
+        p.discoveredFrom,
+        p.discoveredFromUrl,
+        p.discoveredAt,
+        p.crawledAt,
+        p.responseTimeMs,
+        p.internalLinkCount,
+        p.outgoingLinkCount,
+        p.errorMessage,
         COALESCE(inbound.inboundCount, 0) AS "inboundLinkCount"
       FROM crawl_pages p
       LEFT JOIN (
@@ -1380,7 +1403,7 @@ async function listCrawlLinks(
   );
   const rows = await db.all<CrawlLinkRecord>(
     `
-      SELECT ownerId, siteUrl, jobId, fromUrl, toUrl, fromPageKey, toPageKey, discoveredAt, depth
+      SELECT siteUrl, fromUrl, toUrl, fromPageKey, toPageKey, discoveredAt, depth
       FROM crawl_links
       WHERE ${where.join(' AND ')}
       ORDER BY depth ASC, fromUrl ASC, toUrl ASC

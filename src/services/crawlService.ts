@@ -54,7 +54,6 @@ export type CrawlPageRow = {
   h2Count: number;
   inboundLinkCount?: number;
   internalLinkCount: number;
-  jobId: string;
   metaDescription: string | null;
   noindex: number;
   normalizedUrl: string;
@@ -73,8 +72,6 @@ export type CrawlLinkRow = {
   discoveredAt: string | null;
   fromPageKey: string;
   fromUrl: string;
-  jobId: string;
-  ownerId: string;
   siteUrl: string;
   toPageKey: string;
   toUrl: string;

@@ -498,7 +498,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                   ) : crawlLinkRows.length === 0 ? (
                     <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No raw crawl links found.</TableCell></TableRow>
                   ) : crawlLinkRows.map((row, index) => (
-                    <TableRow key={`${row.jobId}-${row.fromUrl}-${row.toUrl}-${index}`}>
+                    <TableRow key={`${row.fromUrl}-${row.toUrl}-${index}`}>
                       <TableCell className="max-w-[360px] truncate" title={row.fromUrl}>{row.fromUrl}</TableCell>
                       <TableCell className="max-w-[360px] truncate" title={row.toUrl}>{row.toUrl}</TableCell>
                       <TableCell className="max-w-[220px] truncate" title={row.fromPageKey}>{row.fromPageKey}</TableCell>
@@ -525,8 +525,8 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                     <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading raw rows...</TableCell></TableRow>
                   ) : crawlRows.length === 0 ? (
                     <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw crawl rows found.</TableCell></TableRow>
-                  ) : crawlRows.map((row) => (
-                    <TableRow key={`${row.jobId}-${row.normalizedUrl}`}>
+                  ) : crawlRows.map((row, index) => (
+                    <TableRow key={`${row.normalizedUrl}-${index}`}>
                       <TableCell className="max-w-[520px] truncate" title={row.url}>{row.url}</TableCell>
                       <TableCell>{row.statusCode || "Error"}</TableCell>
                       <TableCell className="max-w-[280px] truncate" title={row.title || ""}>{row.title || "Untitled"}</TableCell>
