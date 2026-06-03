@@ -1134,6 +1134,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const completedCoreJobs = warehouseJobRows.filter((row) => row.status === 'completed' && ['daily-sync', 'core-range-sync'].includes(row.jobType));
       const completedGa4DimensionJobs = warehouseJobRows.filter((row) => row.status === 'completed' && row.jobType === 'ga4-dimension-range-sync');
       const activeJobs = warehouseJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
+      const errorJobs = warehouseJobRows.filter((row) => row.status === 'error');
       const completedGscDates = new Set<string>();
       addJobDatesToSet(completedGscDates, completedCoreJobs, startDate, effectiveEndDate);
       const completedGa4Dates = new Set<string>();
@@ -1178,6 +1179,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         }
         return dates.some((date) => missingCoreDates.has(date));
       });
+      const relevantErrorJobs = errorJobs.filter((job) => {
+        const dates = jobDatesWithin(job, startDate, effectiveEndDate);
+        if (job.jobType === 'ga4-dimension-range-sync') {
+          return dates.some((date) => missingGa4DimensionDates.has(date));
+        }
+        return dates.some((date) => missingCoreDates.has(date));
+      });
       const activeDates = new Set<string>();
       addJobDatesToSet(activeDates, relevantActiveJobs, startDate, effectiveEndDate);
       for (const date of [...activeDates]) {
@@ -1193,6 +1201,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         counts[row.status] = (counts[row.status] || 0) + 1;
         return counts;
       }, {} as Record<string, number>);
+      jobCountByStatus.error = relevantErrorJobs.length;
 
       const crawlSummary = latestCrawl
         ? await db.get<any>(`

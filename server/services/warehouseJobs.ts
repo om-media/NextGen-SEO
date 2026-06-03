@@ -1041,7 +1041,7 @@ export async function queueWarehouseGa4DimensionRangeJob(db: AppDatabase, input:
 }
 
 export async function listWarehouseJobs(db: AppDatabase, ownerId: string, siteUrl: string, limit = 20) {
-  return db.all<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? ORDER BY updatedAt DESC LIMIT ?', [ownerId, siteUrl, limit]);
+  return db.all<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND status != 'superseded' ORDER BY updatedAt DESC LIMIT ?", [ownerId, siteUrl, limit]);
 }
 
 export function startWarehouseJobWorker(db: AppDatabase) {
