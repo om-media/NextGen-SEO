@@ -62,6 +62,21 @@ function formatDurationMs(value?: number | null) {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
+function formatWaitEstimate(value?: number | null) {
+  if (!Number.isFinite(value || NaN)) return null;
+  const ms = Math.max(0, Number(value));
+  if (ms < 60_000) return "under 1 minute";
+  if (ms < 60 * 60_000) {
+    const minutes = Math.max(1, Math.round(ms / 60_000));
+    return `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  const hours = Math.floor(ms / (60 * 60_000));
+  const minutes = Math.round((ms % (60 * 60_000)) / 60_000);
+  return minutes > 0
+    ? `about ${hours}h ${minutes}m`
+    : `about ${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
 function getDatasetStats(coverage: DataCoverageResponse | null, dataSource: DataSource) {
   if (!coverage) {
     return {
@@ -254,10 +269,21 @@ export function DataImportStatusPanel({
     : 0;
   const visibleJobs = jobs.filter((job) => job.status !== "superseded");
   const latestJob = visibleJobs[0] || null;
+  const latestTimedJob = visibleJobs.find((job) => Number.isFinite(Number(job.metrics?.totalMs))) || null;
   const latestJobDistance = formatDateDistance(latestJob?.updatedAt);
   const latestTotalDuration = formatDurationMs(latestJob?.metrics?.totalMs);
   const latestApiDuration = formatDurationMs(latestJob?.metrics?.apiMs);
   const latestWriteDuration = formatDurationMs(latestJob?.metrics?.writeMs);
+  const latestTimedDuration = Number(latestTimedJob?.metrics?.totalMs || 0);
+  const estimatedRemainingMs = activeJobCount > 0 && latestTimedDuration > 0
+    ? activeJobCount * latestTimedDuration
+    : null;
+  const estimatedRemaining = formatWaitEstimate(estimatedRemainingMs);
+  const estimateText = activeJobCount > 0
+    ? estimatedRemaining
+      ? `Estimated wait ${estimatedRemaining}, based on the latest completed import job. Large sites and Google API throttling can change this.`
+      : "Estimated wait will appear after the first import job completes."
+    : null;
 
   const status = actionState === "importing" && stats.missingDateCount > 0
     ? "starting"
@@ -365,6 +391,9 @@ export function DataImportStatusPanel({
           </div>
 
           <p className="mt-3 text-sm text-muted-foreground">{statusCopy.text}</p>
+          {estimateText && (
+            <p className="mt-1 text-xs text-muted-foreground">{estimateText}</p>
+          )}
 
           <div className="mt-4">
             <div className="flex flex-wrap gap-2">
@@ -379,11 +408,12 @@ export function DataImportStatusPanel({
           </div>
         </div>
 
-        <div className="grid min-w-0 gap-2 sm:grid-cols-4 lg:w-[520px]">
+        <div className="grid min-w-0 gap-2 sm:grid-cols-5 lg:w-[640px]">
           <StatusMetric label="Missing" value={formatWholeNumber(stats.missingDateCount)} />
           <StatusMetric label="Queued" value={formatWholeNumber(Number(coverage?.warehouseJobs.queued || 0) + Number(coverage?.warehouseJobs.retrying || 0))} />
           <StatusMetric label="Running" value={formatWholeNumber(Number(coverage?.warehouseJobs.running || 0))} />
           <StatusMetric label="Failed" tone={failedJobCount > 0 ? "danger" : "default"} value={formatWholeNumber(failedJobCount)} />
+          <StatusMetric label="Est. wait" value={activeJobCount > 0 ? estimatedRemaining || "Learning" : "Ready"} />
         </div>
       </div>
 
