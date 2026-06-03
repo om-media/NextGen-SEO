@@ -378,14 +378,17 @@ function MainApp() {
           .catch(err => {
             if (isGoogleAuthError(err.message) || err.message.includes('GOOGLE_NOT_CONNECTED')) {
               console.warn("Stored Google connection is missing or expired.");
-              setSessionExpired(true);
               
               // Fallback to warehouse-synced / offline sites + known sites from profile
               fetchOfflineGscSites(userProfile)
                 .then((offlineSites) => {
+                  setSessionExpired(offlineSites.length === 0);
                   setSites(prev => mergeUniqueSites(prev, offlineSites));
                 })
-                .catch(e => console.error("Offline fallback err:", e));
+                .catch(e => {
+                  setSessionExpired(true);
+                  console.error("Offline fallback err:", e);
+                });
             } else if (err.message === "Failed to fetch") {
               console.error("Network error fetching sites:", err)
               setApiError("Network error: Unable to connect to Google Search Console API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
