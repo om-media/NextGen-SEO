@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Check, Plus, ExternalLink } from "lucide-react";
+import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Check, Plus, ExternalLink, Database, AlertCircle } from "lucide-react";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { saveFilter } from "@/src/services/dbService";
 import { generateGscInsights, isAiProviderUnavailableError } from "@/src/services/aiService";
@@ -95,7 +95,7 @@ export function GscDataGrid({
     hideTrackerButton,
     siteUrl,
   });
-  const { data, error, loading } = useGscGridData({
+  const { coverage, data, error, loading } = useGscGridData({
     compareDateRange,
     dateRange,
     dimension,
@@ -141,6 +141,38 @@ export function GscDataGrid({
 
   const totalPages = Math.ceil(filteredData.length / pageSize);
   const isConnectionIssue = error?.startsWith("Your Google data connection needs attention.") ?? false;
+  const isWarehousePreparationMessage = Boolean(error && /stored reporting data|breakdown is not available|being prepared/i.test(error));
+  const hasCoverage = Boolean(coverage && Number(coverage.expectedDateCount || 0) > 0);
+  const hasActiveWarehouseWork = Boolean(
+    coverage &&
+    (Number(coverage.activeJobCount || 0) > 0 ||
+      Number(coverage.activeDateCount || 0) > 0 ||
+      Number(coverage.queuedDateCount || 0) > 0)
+  );
+  const hasCoverageGap = Boolean(
+    coverage &&
+    Number(coverage.expectedDateCount || 0) > 0 &&
+    Number(coverage.coveredDateCount || 0) < Number(coverage.expectedDateCount || 0)
+  );
+  const hasWarehouseErrors = Boolean(coverage && Number(coverage.errorJobCount || 0) > 0);
+  const shouldShowCoverageStatus = !useLiveData && hasCoverage && (hasActiveWarehouseWork || hasCoverageGap || hasWarehouseErrors || sortedData.length === 0);
+  const coverageLabel = coverage
+    ? `${Number(coverage.coveredDateCount || 0).toLocaleString()} / ${Number(coverage.expectedDateCount || 0).toLocaleString()} days ready`
+    : "";
+  const coverageStatusTitle = hasWarehouseErrors
+    ? "Search Console import needs attention"
+    : hasActiveWarehouseWork
+      ? "Importing Search Console history"
+      : hasCoverageGap
+        ? "Search Console history import available"
+        : "Stored Search Console data is ready";
+  const coverageStatusDescription = hasWarehouseErrors
+    ? "Some import jobs failed. Use the import status panel above to retry failed jobs."
+    : hasActiveWarehouseWork
+      ? "Existing rows stay visible while the app prepares the missing days for this breakdown."
+      : hasCoverageGap
+        ? "Use the import status panel above to queue the remaining missing days for this date range."
+        : "This breakdown is loaded from the app warehouse for the selected range.";
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -312,9 +344,26 @@ export function GscDataGrid({
 
   return (
     <div className="space-y-6">
-      {!isConnectionIssue && error && (
+      {!isConnectionIssue && error && !isWarehousePreparationMessage && (
         <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-sm text-red-600 shadow-[0_10px_24px_rgba(127,29,29,0.05)] dark:border-red-900/50 dark:bg-red-950/35 dark:text-red-200">
           {error}
+        </div>
+      )}
+
+      {!isConnectionIssue && (shouldShowCoverageStatus || isWarehousePreparationMessage) && (
+        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            {hasActiveWarehouseWork ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            ) : hasWarehouseErrors ? (
+              <AlertCircle className="h-4 w-4 text-destructive" />
+            ) : (
+              <Database className="h-4 w-4 text-primary" />
+            )}
+            <span className="font-medium text-foreground">{coverageStatusTitle}</span>
+            {coverageLabel && <span>{coverageLabel}</span>}
+          </div>
+          <span>{coverageStatusDescription}</span>
         </div>
       )}
 
@@ -496,7 +545,7 @@ export function GscDataGrid({
                       )}
                     </TableRow>
                   ))
-                ) : error ? (
+                ) : error && !isWarehousePreparationMessage ? (
                   <TableRow>
                     <TableCell colSpan={dimension === "query" ? 7 : dimension === "page" ? 6 : 5} className="h-24 text-center text-destructive">
                       {error}
@@ -505,7 +554,9 @@ export function GscDataGrid({
                 ) : sortedData.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={dimension === "query" ? 7 : dimension === "page" ? 6 : 5} className="h-24 text-center text-muted-foreground">
-                      No data found.
+                      {shouldShowCoverageStatus || isWarehousePreparationMessage
+                        ? "This breakdown will populate as the stored Search Console import catches up."
+                        : "No data found."}
                     </TableCell>
                   </TableRow>
                 ) : (

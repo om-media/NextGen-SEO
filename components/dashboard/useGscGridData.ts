@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { GscApiService } from "@/src/services/gscService";
 import { authFetch } from "@/src/lib/authFetch";
+import { fetchDataCoverage, type CoverageDataset } from "@/src/services/dataCoverageService";
 import type { GridDimension, GridRow } from "./gscGridUtils";
 
 type UseGscGridDataParams = {
@@ -155,6 +156,13 @@ function getFriendlyGscError(message: string) {
   return message;
 }
 
+type GscGridCoverage = CoverageDataset & {
+  activeDateCount: number;
+  activeJobCount: number;
+  errorJobCount: number;
+  queuedDateCount: number;
+};
+
 export function useGscGridData({
   compareDateRange,
   dateRange,
@@ -168,10 +176,12 @@ export function useGscGridData({
 }: UseGscGridDataParams) {
   const [data, setData] = useState<GridRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [coverage, setCoverage] = useState<GscGridCoverage | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!siteUrl || !dateRange?.from || !dateRange?.to) {
+      setCoverage(null);
       return;
     }
 
@@ -191,6 +201,27 @@ export function useGscGridData({
     }
 
     const shouldUseLiveApi = Boolean(useLiveData);
+    if (shouldUseLiveApi) {
+      setCoverage(null);
+    }
+
+    const coveragePromise = shouldUseLiveApi
+      ? Promise.resolve(null)
+      : fetchDataCoverage({ siteUrl, startDate, endDate })
+          .then((result) => {
+            const dataset = result.gsc[dimension];
+            return {
+              ...dataset,
+              activeDateCount: Number(result.warehouseJobs.activeDateCount || 0),
+              activeJobCount: Number(result.warehouseJobs.running || 0) + Number(result.warehouseJobs.queued || 0) + Number(result.warehouseJobs.retrying || 0),
+              errorJobCount: Number(result.warehouseJobs.error || 0),
+              queuedDateCount: Number(result.warehouseJobs.queued || 0) + Number(result.warehouseJobs.retrying || 0),
+            };
+          })
+          .catch((err: Error) => {
+            console.warn("Failed to load GSC warehouse coverage:", err);
+            return null;
+          });
 
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
@@ -227,6 +258,7 @@ export function useGscGridData({
 
     primaryPromise
       .then(async (primaryRows) => {
+        setCoverage(await coveragePromise);
         let rowsWithPageQueryCounts = primaryRows;
 
         if (dimension === "page") {
@@ -273,11 +305,12 @@ export function useGscGridData({
           console.error("Failed to fetch GSC data:", err);
         }
         setError(friendlyMessage);
+        coveragePromise.then(setCoverage);
       })
       .finally(() => {
         setLoading(false);
       });
   }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, refreshKey, siteUrl, tier, useLiveData]);
 
-  return { data, error, loading };
+  return { coverage, data, error, loading };
 }
