@@ -18,6 +18,8 @@ type UseGscGridDataParams = {
   useLiveData?: boolean;
 };
 
+const INITIAL_WAREHOUSE_GRID_ROW_LIMIT = 5000;
+
 function toFiniteNumber(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
@@ -30,28 +32,26 @@ async function fetchWarehouseData(
   endDate: string,
   dimensionFilterGroups?: any[],
 ): Promise<GridRow[]> {
-  const allRows: any[] = [];
-  const rowLimit = 50000;
-  let startRow = 0;
-  let hasMore = true;
+  const response = await authFetch("/api/warehouse/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      siteUrl,
+      startDate,
+      endDate,
+      dimensions: [dimension],
+      dimensionFilterGroups,
+      rowLimit: INITIAL_WAREHOUSE_GRID_ROW_LIMIT,
+      startRow: 0,
+    }),
+  });
 
-  while (hasMore) {
-    const response = await authFetch("/api/warehouse/query", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ siteUrl, startDate, endDate, dimensions: [dimension], dimensionFilterGroups, rowLimit, startRow }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch warehouse data");
-    }
-
-    const rows = await response.json();
-    const pageRows = Array.isArray(rows) ? rows : [];
-    allRows.push(...pageRows);
-    hasMore = pageRows.length === rowLimit;
-    startRow += rowLimit;
+  if (!response.ok) {
+    throw new Error("Failed to fetch warehouse data");
   }
+
+  const rows = await response.json();
+  const allRows = Array.isArray(rows) ? rows : [];
 
   return allRows.map((row: any) => ({
     keys: [row[dimension]],
@@ -61,39 +61,6 @@ async function fetchWarehouseData(
     position: toFiniteNumber(row.position),
     queryCount: row.queryCount === undefined ? undefined : toFiniteNumber(row.queryCount),
   })).filter((row: GridRow) => typeof row.keys?.[0] === "string" && row.keys[0].length > 0);
-}
-
-async function fetchWarehousePageQueryRows(siteUrl: string, startDate: string, endDate: string): Promise<GridRow[]> {
-  const allRows: any[] = [];
-  const rowLimit = 50000;
-  let startRow = 0;
-  let hasMore = true;
-
-  while (hasMore) {
-    const response = await authFetch("/api/warehouse/query", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ siteUrl, startDate, endDate, dimensions: ["page", "query"], rowLimit, startRow }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch warehouse page query data");
-    }
-
-    const rows = await response.json();
-    const pageRows = Array.isArray(rows) ? rows : [];
-    allRows.push(...pageRows);
-    hasMore = pageRows.length === rowLimit;
-    startRow += rowLimit;
-  }
-
-  return allRows.map((row: any) => ({
-    keys: [row.page, row.query],
-    clicks: toFiniteNumber(row.clicks),
-    impressions: toFiniteNumber(row.impressions),
-    ctr: toFiniteNumber(row.ctr),
-    position: toFiniteNumber(row.position),
-  })).filter((row: GridRow) => typeof row.keys?.[0] === "string" && typeof row.keys?.[1] === "string");
 }
 
 function getPageQueryCounts(rows: GridRow[]) {
@@ -242,7 +209,7 @@ export function useGscGridData({
       dimension === "page"
         ? (shouldUseLiveApi
             ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ["page", "query"], undefined, true)
-            : fetchWarehousePageQueryRows(siteUrl, startDate, endDate))
+            : Promise.resolve(undefined))
         : Promise.resolve(undefined);
 
     const comparePageQueryCountPromise =
@@ -252,7 +219,7 @@ export function useGscGridData({
             const compareEndDate = format(compareDateRange.to!, "yyyy-MM-dd");
             return shouldUseLiveApi
               ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ["page", "query"], undefined, true)
-              : fetchWarehousePageQueryRows(siteUrl, compareStartDate, compareEndDate);
+              : Promise.resolve(undefined);
           })()
         : Promise.resolve(undefined);
 
