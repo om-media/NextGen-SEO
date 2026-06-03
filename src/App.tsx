@@ -3,7 +3,7 @@ import { AppSidebar } from "@/components/layout/AppSidebar"
 import { Button } from "@/components/ui/button"
 import { AuthProvider, useAuth } from "./contexts/AuthContext"
 import { BarChart3 } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useState } from "react"
 import { GscApiService, GscSite } from "./services/gscService"
 import { subDays, differenceInDays } from "date-fns"
 import { DateRange } from "react-day-picker"
@@ -21,21 +21,32 @@ import { CrawlAutoStarter } from "./components/dashboard/CrawlAutoStarter"
 
 import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
-import { AppContent, type Ga4DashboardTab, type GscDashboardTab } from "./components/app/AppContent"
+import type { Ga4DashboardTab, GscDashboardTab } from "./components/app/AppContent"
 import { AppHeader } from "./components/app/AppHeader"
-import { OnboardingFlow } from "./components/app/OnboardingFlow"
 import { AppStatusPanels } from "./components/app/AppStatusPanels"
 import { AppToolbar } from "./components/app/AppToolbar"
 import { DataImportStatusPanel } from "./components/app/DataImportStatusPanel"
-import { SettingsDialog, type SettingsDraft } from "./components/app/SettingsDialog"
-import { UnlockSiteDialog } from "./components/app/UnlockSiteDialog"
-import { Ga4PropertyDialog } from "./components/app/Ga4PropertyDialog"
+import type { SettingsDraft } from "./components/app/SettingsDialog"
 import { getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
 import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownSites } from "./lib/siteData"
 import { getBillingConfig, openBillingPortal, startCheckout, type BillingConfig } from "./services/billingService"
 import { canUseRawExports, canUseReconciliation, getPlanPropertyLimit, isMultiSitePlan } from "../shared/plans"
 
 type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
+
+const AppContent = lazy(() => import("./components/app/AppContent").then((module) => ({ default: module.AppContent })));
+const OnboardingFlow = lazy(() => import("./components/app/OnboardingFlow").then((module) => ({ default: module.OnboardingFlow })));
+const SettingsDialog = lazy(() => import("./components/app/SettingsDialog").then((module) => ({ default: module.SettingsDialog })));
+const UnlockSiteDialog = lazy(() => import("./components/app/UnlockSiteDialog").then((module) => ({ default: module.UnlockSiteDialog })));
+const Ga4PropertyDialog = lazy(() => import("./components/app/Ga4PropertyDialog").then((module) => ({ default: module.Ga4PropertyDialog })));
+
+function DashboardContentFallback() {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.04)]">
+      Loading workspace...
+    </div>
+  );
+}
 
 function MainApp() {
   const { user, userProfile, loading, signOut, connectGoogleServices, disconnectGoogleServices, unlockSite, setBingApiKey, completeOnboarding, updateDefaultSite, updateDefaultGa4Property, updateUserProfile } = useAuth()
@@ -837,23 +848,25 @@ function MainApp() {
 
   if (userProfile && !userProfile.onboardingCompleted) {
     return (
-      <OnboardingFlow
-        fetchingSites={fetchingSites}
-        fetchingGa4Sites={fetchingSites}
-        ga4Sites={ga4Sites}
-        googleConnected={Boolean(userProfile.googleConnected)}
-        isConnectingGoogle={isConnectingGoogleData}
-        onComplete={handleFinishOnboarding}
-        onConnectGoogle={handleConnectGoogleData}
-        onOpenPlan={() => openSettings("plan")}
-        onSelectGa4Property={setSelectedGa4Property}
-        onSelectSite={setSelectedSite}
-        selectedGa4Property={selectedGa4Property}
-        selectedSite={selectedSite}
-        sites={sites}
-        userName={(user.displayName || user.email || '').split(' ')[0]}
-        userProfile={userProfile}
-      />
+      <Suspense fallback={<DashboardContentFallback />}>
+        <OnboardingFlow
+          fetchingSites={fetchingSites}
+          fetchingGa4Sites={fetchingSites}
+          ga4Sites={ga4Sites}
+          googleConnected={Boolean(userProfile.googleConnected)}
+          isConnectingGoogle={isConnectingGoogleData}
+          onComplete={handleFinishOnboarding}
+          onConnectGoogle={handleConnectGoogleData}
+          onOpenPlan={() => openSettings("plan")}
+          onSelectGa4Property={setSelectedGa4Property}
+          onSelectSite={setSelectedSite}
+          selectedGa4Property={selectedGa4Property}
+          selectedSite={selectedSite}
+          sites={sites}
+          userName={(user.displayName || user.email || '').split(' ')[0]}
+          userProfile={userProfile}
+        />
+      </Suspense>
     )
   }
 
@@ -942,85 +955,89 @@ function MainApp() {
               )}
 
               {(activeMenu === "Settings" || activeMenu === "AI Content Auditor" || !( !userProfile?.googleConnected && (((dataSource === 'gsc' || dataSource === 'blended') && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) )) && (
-                <AppContent
-                  key={`${dataSource}-${selectedSite}-${selectedGa4Property}`}
-                  activeMenu={activeMenu}
-                  annotations={annotations}
-                  apiError={apiError}
-                  bingSites={bingSites}
-                  compareDateRange={compareDateRange}
-                  dataSource={dataSource}
-                  dateRange={dateRange}
-                  ga4DashboardTab={ga4DashboardTab}
-                  ga4Sites={accessibleGa4Sites}
-                  ga4UserDimension={ga4UserDimension}
-                  gscDashboardTab={gscDashboardTab}
-                  warehouseRefreshKey={gscSyncVersion}
-                  isCompareMode={isCompareMode}
-                  onAnnotationsChange={fetchAnnotations}
-                  onGa4DashboardTabChange={setGa4DashboardTab}
-                  onGa4UserDimensionChange={setGa4UserDimension}
-                  onGscDashboardTabChange={setGscDashboardTab}
-                  onActivateWorkspaceSite={unlockSite}
-                  onOpenSettings={openSettings}
-                  onOpenSiteWorkspace={handleOpenSiteWorkspace}
-                  selectedSite={dataSource === 'ga4' ? selectedGa4Property : selectedSite}
-                  setShowSystemAnnotations={setShowSystemAnnotations}
-                  setShowUserAnnotations={setShowUserAnnotations}
-                  showSystemAnnotations={showSystemAnnotations}
-                  showUserAnnotations={showUserAnnotations}
-                  sites={sites}
-                  useLiveData={false}
-                  userProfile={userProfile}
-                />
+                <Suspense fallback={<DashboardContentFallback />}>
+                  <AppContent
+                    key={`${dataSource}-${selectedSite}-${selectedGa4Property}`}
+                    activeMenu={activeMenu}
+                    annotations={annotations}
+                    apiError={apiError}
+                    bingSites={bingSites}
+                    compareDateRange={compareDateRange}
+                    dataSource={dataSource}
+                    dateRange={dateRange}
+                    ga4DashboardTab={ga4DashboardTab}
+                    ga4Sites={accessibleGa4Sites}
+                    ga4UserDimension={ga4UserDimension}
+                    gscDashboardTab={gscDashboardTab}
+                    warehouseRefreshKey={gscSyncVersion}
+                    isCompareMode={isCompareMode}
+                    onAnnotationsChange={fetchAnnotations}
+                    onGa4DashboardTabChange={setGa4DashboardTab}
+                    onGa4UserDimensionChange={setGa4UserDimension}
+                    onGscDashboardTabChange={setGscDashboardTab}
+                    onActivateWorkspaceSite={unlockSite}
+                    onOpenSettings={openSettings}
+                    onOpenSiteWorkspace={handleOpenSiteWorkspace}
+                    selectedSite={dataSource === 'ga4' ? selectedGa4Property : selectedSite}
+                    setShowSystemAnnotations={setShowSystemAnnotations}
+                    setShowUserAnnotations={setShowUserAnnotations}
+                    showSystemAnnotations={showSystemAnnotations}
+                    showUserAnnotations={showUserAnnotations}
+                    sites={sites}
+                    useLiveData={false}
+                    userProfile={userProfile}
+                  />
+                </Suspense>
               )}
             </div>
           </main>
         </div>
       </div>
 
-      <UnlockSiteDialog
-        onClose={() => setShowUnlockModal(false)}
-        onConfirm={confirmUnlock}
-        onOpenPlan={() => openSettings("plan")}
-        open={showUnlockModal}
-        siteToUnlock={siteToUnlock}
-        unlockError={unlockError}
-        userProfile={userProfile}
-      />
-      <SettingsDialog
-        billingConfig={billingConfig}
-        dataSource={dataSource}
-        googleConnected={Boolean(userProfile?.googleConnected)}
-        initialTab={settingsInitialTab}
-        isConnectingGoogle={isConnectingGoogleData}
-        isDisconnectingGoogle={isDisconnectingGoogleData}
-        isOpeningBillingPortal={isOpeningBillingPortal}
-        isStartingCheckout={isStartingCheckout}
-        isUpdatingDefaultSite={isUpdatingDefaultSite}
-        onClose={() => setShowSettingsModal(false)}
-        onConnectGoogle={handleConnectGoogleData}
-        onDisconnectGoogle={handleDisconnectGoogleData}
-        draft={settingsDraft}
-        onDraftChange={setSettingsDraft}
-        onOpenBillingPortal={handleOpenBillingPortal}
-        onSave={handleSaveSettings}
-        onSetDefaultSite={handleSetDefaultSite}
-        onStartCheckout={handleStartCheckout}
-        open={showSettingsModal}
-        selectedSite={selectedSite}
-        userEmail={user.email}
-        userProfile={userProfile}
-      />
-      <Ga4PropertyDialog
-        open={showGa4PropertyDialog}
-        properties={ga4Sites}
-        selectedProperty={pendingGa4Property}
-        saving={isSavingGa4Property}
-        onClose={() => setShowGa4PropertyDialog(false)}
-        onSave={handleSaveGa4Property}
-        onSelect={setPendingGa4Property}
-      />
+      <Suspense fallback={null}>
+        <UnlockSiteDialog
+          onClose={() => setShowUnlockModal(false)}
+          onConfirm={confirmUnlock}
+          onOpenPlan={() => openSettings("plan")}
+          open={showUnlockModal}
+          siteToUnlock={siteToUnlock}
+          unlockError={unlockError}
+          userProfile={userProfile}
+        />
+        <SettingsDialog
+          billingConfig={billingConfig}
+          dataSource={dataSource}
+          googleConnected={Boolean(userProfile?.googleConnected)}
+          initialTab={settingsInitialTab}
+          isConnectingGoogle={isConnectingGoogleData}
+          isDisconnectingGoogle={isDisconnectingGoogleData}
+          isOpeningBillingPortal={isOpeningBillingPortal}
+          isStartingCheckout={isStartingCheckout}
+          isUpdatingDefaultSite={isUpdatingDefaultSite}
+          onClose={() => setShowSettingsModal(false)}
+          onConnectGoogle={handleConnectGoogleData}
+          onDisconnectGoogle={handleDisconnectGoogleData}
+          draft={settingsDraft}
+          onDraftChange={setSettingsDraft}
+          onOpenBillingPortal={handleOpenBillingPortal}
+          onSave={handleSaveSettings}
+          onSetDefaultSite={handleSetDefaultSite}
+          onStartCheckout={handleStartCheckout}
+          open={showSettingsModal}
+          selectedSite={selectedSite}
+          userEmail={user.email}
+          userProfile={userProfile}
+        />
+        <Ga4PropertyDialog
+          open={showGa4PropertyDialog}
+          properties={ga4Sites}
+          selectedProperty={pendingGa4Property}
+          saving={isSavingGa4Property}
+          onClose={() => setShowGa4PropertyDialog(false)}
+          onSave={handleSaveGa4Property}
+          onSelect={setPendingGa4Property}
+        />
+      </Suspense>
     </SidebarProvider>
   )
 }

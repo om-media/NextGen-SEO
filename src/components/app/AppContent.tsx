@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,43 @@ type AppContentProps = {
   useLiveData: boolean;
   userProfile: UserProfile | null;
 };
+
+function DeferredOverviewGrid(props: {
+  compareDateRange: DateRange;
+  dateRange: DateRange;
+  isCompareMode: boolean;
+  refreshKey: number;
+  selectedSite: string;
+  useLiveData: boolean;
+}) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setReady(false);
+    const timer = window.setTimeout(() => setReady(true), 350);
+    return () => window.clearTimeout(timer);
+  }, [props.compareDateRange, props.dateRange, props.isCompareMode, props.refreshKey, props.selectedSite, props.useLiveData]);
+
+  if (!ready) {
+    return (
+      <div className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_28px_rgba(15,61,46,0.04)]">
+        Preparing query table...
+      </div>
+    );
+  }
+
+  return (
+    <GscDataGrid
+      siteUrl={props.selectedSite}
+      dateRange={props.dateRange}
+      isCompareMode={props.isCompareMode}
+      compareDateRange={props.compareDateRange}
+      useLiveData={props.useLiveData}
+      hideTrackerButton={true}
+      refreshKey={props.refreshKey}
+    />
+  );
+}
 
 function getVisibleAnnotations(annotations: Annotation[], showSystemAnnotations: boolean, showUserAnnotations: boolean) {
   return annotations.filter(
@@ -147,7 +184,14 @@ export function AppContent({
                 />
               }
             />
-            <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} hideTrackerButton={true} refreshKey={warehouseRefreshKey} />
+            <DeferredOverviewGrid
+              selectedSite={selectedSite}
+              dateRange={dateRange}
+              isCompareMode={isCompareMode}
+              compareDateRange={compareDateRange}
+              useLiveData={useLiveData}
+              refreshKey={warehouseRefreshKey}
+            />
           </TabsContent>
           <TabsContent value="queries" className="space-y-4">
             <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} refreshKey={warehouseRefreshKey} />

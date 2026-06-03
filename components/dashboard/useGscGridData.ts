@@ -18,7 +18,7 @@ type UseGscGridDataParams = {
   useLiveData?: boolean;
 };
 
-const INITIAL_WAREHOUSE_GRID_ROW_LIMIT = 5000;
+const INITIAL_WAREHOUSE_GRID_ROW_LIMIT = 1000;
 
 function toFiniteNumber(value: unknown) {
   const number = Number(value);
