@@ -88,6 +88,7 @@ export function GscDataGrid({
   const [selectedQueryPage, setSelectedQueryPage] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pendingNextPageAfterLoad, setPendingNextPageAfterLoad] = useState(false);
+  const [pendingExportAfterLoad, setPendingExportAfterLoad] = useState(false);
   const [requestedWarehouseRowLimit, setRequestedWarehouseRowLimit] = useState(INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
   const pageSize = 100;
   const stableDimensionFilterGroups = useMemo(
@@ -120,6 +121,7 @@ export function GscDataGrid({
   useEffect(() => {
     setRequestedWarehouseRowLimit(INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
     setPendingNextPageAfterLoad(false);
+    setPendingExportAfterLoad(false);
   }, [siteUrl, dimension, stableDimensionFilterGroups, dateRange, compareDateRange, isCompareMode, refreshKey, useLiveData]);
 
   useEffect(() => {
@@ -158,6 +160,15 @@ export function GscDataGrid({
   const loadedRowCountLabel = `${sortedData.length.toLocaleString()}${isRowLimited ? " loaded" : ""}`;
   const canLoadMoreWarehouseRows = Boolean(!useLiveData && isRowLimited && shouldShowTotalRowCount && totalRowCount > data.length);
   const isAppendingRows = loading && data.length > 0;
+  const fullWarehouseExportLimit = typeof totalRowCount === "number"
+    ? Math.min(totalRowCount, FULL_WAREHOUSE_GRID_ROW_LIMIT)
+    : FULL_WAREHOUSE_GRID_ROW_LIMIT;
+  const canPrepareFullWarehouseExport = Boolean(
+    !useLiveData &&
+      typeof totalRowCount === "number" &&
+      totalRowCount > data.length &&
+      requestedWarehouseRowLimit < fullWarehouseExportLimit
+  );
   const exportableRows = sortedData.map((row) => ({
     ...row,
     intentLabel: dimension === "query" ? classifyIntent(row.keys[0], siteUrl) : undefined,
@@ -308,8 +319,8 @@ export function GscDataGrid({
     }
   };
 
-  const handleExport = () => {
-    if (exportableRows.length === 0) {
+  const runCsvExport = (rows = exportableRows) => {
+    if (rows.length === 0) {
       toast.error("Nothing to export", {
         description: "Adjust the current filters or date range so the view contains data first.",
       });
@@ -320,13 +331,38 @@ export function GscDataGrid({
       dimension,
       includeCompare: Boolean(isCompareMode),
       includeIntent: dimension === "query",
-      rows: exportableRows,
+      rows,
     });
 
+    const cappedExport = !hasActiveFilters && typeof totalRowCount === "number" && rows.length < totalRowCount;
     toast.success("CSV exported", {
-      description: `Downloaded ${exportableRows.length.toLocaleString()} rows from the current ${dimension} view.`,
+      description: cappedExport
+        ? `Downloaded ${rows.length.toLocaleString()} rows from the current ${dimension} view. ${totalRowCount.toLocaleString()} rows are stored; export is capped at ${FULL_WAREHOUSE_GRID_ROW_LIMIT.toLocaleString()} rows.`
+        : `Downloaded ${rows.length.toLocaleString()} rows from the current ${dimension} view.`,
     });
   };
+
+  const handleExport = () => {
+    if (canPrepareFullWarehouseExport) {
+      setPendingExportAfterLoad(true);
+      setRequestedWarehouseRowLimit(fullWarehouseExportLimit);
+      toast.info("Preparing CSV", {
+        description: `Loading ${fullWarehouseExportLimit.toLocaleString()} stored rows before exporting.`,
+      });
+      return;
+    }
+
+    runCsvExport();
+  };
+
+  useEffect(() => {
+    if (!pendingExportAfterLoad || loading) {
+      return;
+    }
+
+    setPendingExportAfterLoad(false);
+    runCsvExport();
+  }, [loading, pendingExportAfterLoad, exportableRows]);
 
   const renderDifference = (current: number, previous: number | undefined, isPercentage = false, inverse = false) => {
     if (!isCompareMode || previous === undefined) return null;
@@ -462,6 +498,7 @@ export function GscDataGrid({
             descriptionOverride={descriptionOverride}
             dimension={dimension}
             isAiDialogOpen={isAiDialogOpen}
+            isExporting={pendingExportAfterLoad}
             isGeneratingAi={isGeneratingAi}
             onAiDialogOpenChange={setIsAiDialogOpen}
             onExport={handleExport}

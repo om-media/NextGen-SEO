@@ -1,6 +1,6 @@
 import { CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Download } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { GscAiInsightsDialog } from "./GscAiInsightsDialog";
 import { getGridTitle, type GridDimension } from "./gscGridUtils";
 
@@ -10,6 +10,7 @@ type GscGridHeaderProps = {
   descriptionOverride?: string;
   dimension: GridDimension;
   isAiDialogOpen: boolean;
+  isExporting?: boolean;
   isGeneratingAi: boolean;
   isAiProviderUnavailable: boolean;
   onAiDialogOpenChange: (open: boolean) => void;
@@ -28,6 +29,7 @@ export function GscGridHeader({
   descriptionOverride,
   dimension,
   isAiDialogOpen,
+  isExporting = false,
   isGeneratingAi,
   isAiProviderUnavailable,
   onAiDialogOpenChange,
@@ -75,9 +77,15 @@ export function GscGridHeader({
             open={isAiDialogOpen}
             title="AI SEO Insights"
           />
-          <Button variant="outline" size="sm" onClick={onExport} className="h-9 rounded-lg border-[#E6ECE8] bg-white">
-            <Download className="mr-2 h-4 w-4" />
-            Export CSV
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExport}
+            disabled={isExporting}
+            className="h-9 rounded-lg border-[#E6ECE8] bg-white"
+          >
+            {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            {isExporting ? "Preparing CSV" : "Export CSV"}
           </Button>
         </div>
       )}
