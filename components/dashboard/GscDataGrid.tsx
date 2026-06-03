@@ -28,6 +28,9 @@ import { useGscGridData } from "./useGscGridData";
 import { useRankTrackerKeywords } from "./useRankTrackerKeywords";
 import { cn } from "@/lib/utils";
 
+const INITIAL_WAREHOUSE_GRID_ROW_LIMIT = 1000;
+const FULL_WAREHOUSE_GRID_ROW_LIMIT = 50000;
+
 export function GscDataGrid({
   siteUrl,
   dimension = "query",
@@ -85,7 +88,7 @@ export function GscDataGrid({
   const [selectedQueryPage, setSelectedQueryPage] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pendingNextPageAfterLoad, setPendingNextPageAfterLoad] = useState(false);
-  const [requestedWarehouseRowLimit, setRequestedWarehouseRowLimit] = useState(1000);
+  const [requestedWarehouseRowLimit, setRequestedWarehouseRowLimit] = useState(INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
   const pageSize = 100;
   const stableDimensionFilterGroups = useMemo(
     () => dimensionFilterGroups,
@@ -115,7 +118,7 @@ export function GscDataGrid({
   }, [searchTerm, intentFilter, minClicks, minImpressions, maxPosition, isQuestionOnly, minWords, sortColumn, sortDirection, dimension, dateRange, compareDateRange, isCompareMode]);
 
   useEffect(() => {
-    setRequestedWarehouseRowLimit(1000);
+    setRequestedWarehouseRowLimit(INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
     setPendingNextPageAfterLoad(false);
   }, [siteUrl, dimension, stableDimensionFilterGroups, dateRange, compareDateRange, isCompareMode, refreshKey, useLiveData]);
 
@@ -190,6 +193,25 @@ export function GscDataGrid({
     }
     setPendingNextPageAfterLoad(false);
   }, [currentPage, loading, pendingNextPageAfterLoad, totalPages]);
+
+  useEffect(() => {
+    if (useLiveData || totalRowCount === null) {
+      return;
+    }
+
+    if (hasActiveFilters) {
+      const targetLimit = Math.min(totalRowCount, FULL_WAREHOUSE_GRID_ROW_LIMIT);
+      if (requestedWarehouseRowLimit < targetLimit) {
+        setRequestedWarehouseRowLimit(targetLimit);
+      }
+      return;
+    }
+
+    if (currentPage === 1 && requestedWarehouseRowLimit > INITIAL_WAREHOUSE_GRID_ROW_LIMIT) {
+      setRequestedWarehouseRowLimit(INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
+    }
+  }, [currentPage, hasActiveFilters, requestedWarehouseRowLimit, totalRowCount, useLiveData]);
+
   const isConnectionIssue = error?.startsWith("Your Google data connection needs attention.") ?? false;
   const isWarehousePreparationMessage = Boolean(error && /stored reporting data|breakdown is not available|being prepared/i.test(error));
   const hasCoverage = Boolean(coverage && Number(coverage.expectedDateCount || 0) > 0);
