@@ -21,6 +21,12 @@ import type { UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
 function sendOauthPopupResponse(res: Response, success: boolean, message: string) {
+  const escapedMessage = message
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
   const payload = JSON.stringify({
     source: 'nextgen-seo-google-oauth',
     success,
@@ -42,7 +48,7 @@ function sendOauthPopupResponse(res: Response, success: boolean, message: string
         }
       })();
     </script>
-    <p>${message}</p>
+    <p>${escapedMessage}</p>
   </body>
 </html>`);
 }

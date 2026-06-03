@@ -42,6 +42,48 @@ type GoogleOauthConfig = {
   redirectUri: string;
 };
 
+type GoogleRequestError = Error & {
+  payload?: unknown;
+  status?: number;
+};
+
+function googleNetworkError(error: unknown, action: string) {
+  const cause = error && typeof error === 'object' && 'cause' in error ? (error as { cause?: any }).cause : null;
+  const code = typeof cause?.code === 'string' ? cause.code : '';
+  const details = code ? ` (${code})` : '';
+  const wrapped = new Error(`Google ${action} failed because this server cannot reach Google APIs${details}. Check outbound HTTPS/firewall access from the app server and try again.`) as GoogleRequestError;
+  wrapped.status = 503;
+  wrapped.payload = {
+    error: wrapped.message,
+    code: 'GOOGLE_NETWORK_UNREACHABLE',
+  };
+  return wrapped;
+}
+
+function googleApiError(message: string, status: number, payload: unknown) {
+  const error = new Error(message) as GoogleRequestError;
+  error.status = status;
+  error.payload = payload;
+  return error;
+}
+
+async function fetchGoogleJson<T>(url: string, init: RequestInit, action: string) {
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (error) {
+    throw googleNetworkError(error, action);
+  }
+
+  const data = await response.json().catch(() => null) as T & GoogleTokenResponse;
+  if (!response.ok) {
+    const message = data?.error_description || (data as any)?.error?.message || data?.error || `Google ${action} failed`;
+    throw googleApiError(message, response.status, data || { error: message });
+  }
+
+  return { data, response };
+}
+
 function getSecretMaterial() {
   return process.env.GOOGLE_TOKEN_ENCRYPTION_KEY
     || process.env.GOOGLE_OAUTH_CLIENT_SECRET
@@ -199,14 +241,13 @@ export function buildGoogleOauthUrl(req: Request, userId: string) {
 }
 
 export async function fetchGoogleUserInfo(accessToken: string) {
-  const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+  const { data } = await fetchGoogleJson<GoogleUserInfo>('https://openidconnect.googleapis.com/v1/userinfo', {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
-  });
+  }, 'profile lookup');
 
-  const data = await response.json() as GoogleUserInfo;
-  if (!response.ok || !data.email) {
+  if (!data.email) {
     throw new Error('Failed to read Google account profile.');
   }
 
@@ -223,14 +264,13 @@ export async function exchangeGoogleCodeForTokens(req: Request, code: string) {
     grant_type: 'authorization_code',
   });
 
-  const response = await fetch(GOOGLE_TOKEN_URL, {
+  const { data } = await fetchGoogleJson<GoogleTokenResponse>(GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
-  });
+  }, 'OAuth token exchange');
 
-  const data = await response.json() as GoogleTokenResponse;
-  if (!response.ok || !data.access_token) {
+  if (!data.access_token) {
     throw new Error(data.error_description || data.error || 'Failed to exchange Google OAuth code');
   }
 
@@ -271,14 +311,13 @@ export async function getGoogleAccessTokenForUser(db: AppDatabase, userId: strin
     grant_type: 'refresh_token',
   });
 
-  const response = await fetch(GOOGLE_TOKEN_URL, {
+  const { data } = await fetchGoogleJson<GoogleTokenResponse>(GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
-  });
+  }, 'access token refresh');
 
-  const data = await response.json() as GoogleTokenResponse;
-  if (!response.ok || !data.access_token) {
+  if (!data.access_token) {
     if (data.error === 'invalid_grant') {
       await clearGoogleRefreshToken(db, userId);
     }
@@ -296,23 +335,14 @@ export async function googleApiFetchJson(
   options: RequestInit = {},
 ) {
   const accessToken = await getGoogleAccessTokenForUser(db, userId);
-  const response = await fetch(url, {
+  const { data } = await fetchGoogleJson<any>(url, {
     ...options,
     headers: {
       ...(options.headers || {}),
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    const message = data?.error?.message || data?.error_description || 'Google API request failed';
-    const error = new Error(message) as Error & { status?: number; payload?: unknown };
-    error.status = response.status;
-    error.payload = data;
-    throw error;
-  }
+  }, 'API request');
 
   return data;
 }
