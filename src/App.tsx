@@ -34,6 +34,9 @@ import { canUseRawExports, canUseReconciliation, getPlanPropertyLimit, isMultiSi
 
 type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
 
+const selectedSiteCacheKey = (userId: string) => `selected_site_cache:${userId}`;
+const selectedGa4PropertyCacheKey = (userId: string) => `selected_ga4_property_cache:${userId}`;
+
 const AppContent = lazy(() => import("./components/app/AppContent").then((module) => ({ default: module.AppContent })));
 const OnboardingFlow = lazy(() => import("./components/app/OnboardingFlow").then((module) => ({ default: module.OnboardingFlow })));
 const SettingsDialog = lazy(() => import("./components/app/SettingsDialog").then((module) => ({ default: module.SettingsDialog })));
@@ -61,12 +64,8 @@ function MainApp() {
     const saved = localStorage.getItem('ga4_sites_cache');
     return saved ? JSON.parse(saved) : [];
   })
-  const [selectedSite, setSelectedSite] = useState<string>(() => {
-    return localStorage.getItem('selected_site_cache') || "";
-  })
-  const [selectedGa4Property, setSelectedGa4Property] = useState<string>(() => {
-    return localStorage.getItem('selected_ga4_property_cache') || "";
-  })
+  const [selectedSite, setSelectedSite] = useState("")
+  const [selectedGa4Property, setSelectedGa4Property] = useState("")
   const [initializedSelectionsForUser, setInitializedSelectionsForUser] = useState<string | null>(null)
   const [fetchingSites, setFetchingSites] = useState(false)
   const [isConnectingGoogleData, setIsConnectingGoogleData] = useState(false)
@@ -180,12 +179,22 @@ function MainApp() {
   }, [ga4Sites]);
 
   useEffect(() => {
-    localStorage.setItem('selected_site_cache', selectedSite);
-  }, [selectedSite]);
+    if (!user?.uid || initializedSelectionsForUser !== user.uid) {
+      return;
+    }
+
+    localStorage.setItem(selectedSiteCacheKey(user.uid), selectedSite);
+    localStorage.removeItem('selected_site_cache');
+  }, [initializedSelectionsForUser, selectedSite, user?.uid]);
 
   useEffect(() => {
-    localStorage.setItem('selected_ga4_property_cache', selectedGa4Property);
-  }, [selectedGa4Property]);
+    if (!user?.uid || initializedSelectionsForUser !== user.uid) {
+      return;
+    }
+
+    localStorage.setItem(selectedGa4PropertyCacheKey(user.uid), selectedGa4Property);
+    localStorage.removeItem('selected_ga4_property_cache');
+  }, [initializedSelectionsForUser, selectedGa4Property, user?.uid]);
 
   useEffect(() => {
     if (userProfile?.activatedSiteUrl && !selectedSite) {
@@ -224,8 +233,10 @@ function MainApp() {
       return;
     }
 
-    setSelectedSite((current) => current || userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "");
-    setSelectedGa4Property((current) => current || userProfile.activatedGa4PropertyId || "");
+    const cachedSite = localStorage.getItem(selectedSiteCacheKey(userKey)) || "";
+    const cachedGa4Property = localStorage.getItem(selectedGa4PropertyCacheKey(userKey)) || "";
+    setSelectedSite(cachedSite || userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "");
+    setSelectedGa4Property(cachedGa4Property || userProfile.activatedGa4PropertyId || "");
     setInitializedSelectionsForUser(userKey);
   }, [
     initializedSelectionsForUser,
