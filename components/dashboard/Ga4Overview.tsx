@@ -36,6 +36,12 @@ type ChartPoint = {
   compareEventCount?: number
 }
 
+type WarehouseCoverage = {
+  coveredDateCount?: number
+  expectedDateCount?: number
+  missingDateCount?: number
+}
+
 const formatCompactNumber = (number: number) =>
   new Intl.NumberFormat("en-US", {
     notation: "compact",
@@ -167,6 +173,7 @@ export function Ga4Overview({
   const [compareData, setCompareData] = useState<Ga4DataRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [coverage, setCoverage] = useState<WarehouseCoverage | null>(null)
 
   const [activeMetrics, setActiveMetrics] = useState<Record<MetricKey, boolean>>({
     sessions: true,
@@ -214,6 +221,7 @@ export function Ga4Overview({
         const results = await Promise.all(promises)
         setData(results[0].rows || [])
         setCompareData(results[1]?.rows || [])
+        setCoverage(results[0]?.metadata?.coverage || null)
       } catch (err: any) {
         console.error("Error fetching GA4 stats:", err)
         setError(err.message)
@@ -509,7 +517,27 @@ export function Ga4Overview({
   }
 
   if (chartData.length === 0) {
-    return null
+    const missingDateCount = Number(coverage?.missingDateCount || 0)
+    const expectedDateCount = Number(coverage?.expectedDateCount || 0)
+    const coveredDateCount = Number(coverage?.coveredDateCount || 0)
+
+    return (
+      <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardContent className="flex min-h-[260px] flex-col items-center justify-center px-6 text-center">
+          <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
+            <Info className="h-5 w-5" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">
+            {missingDateCount > 0 ? "GA4 history is not stored for this range yet" : "No GA4 activity found for this range"}
+          </h3>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            {missingDateCount > 0
+              ? `${coveredDateCount.toLocaleString()} / ${expectedDateCount.toLocaleString()} days are ready for this property and workspace site. Open Source data to import the missing days.`
+              : "The selected GA4 property and workspace site have no stored Analytics rows for this date range."}
+          </p>
+        </CardContent>
+      </Card>
+    )
   }
 
   const exportChartCsv = () => {

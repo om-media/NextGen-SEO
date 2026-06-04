@@ -73,10 +73,14 @@ const parseWarehouseJobMetrics = (value: unknown) => {
 
 async function resolveActiveGa4PropertyForSite(db: AppDatabase, ownerId: string, siteUrl: string, propertyId: string) {
   if (!propertyId) return '';
-  const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null }>(
-    'SELECT activatedGa4PropertyId, activatedSiteUrl FROM users WHERE id = ?',
+  const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null; tier?: string | null }>(
+    'SELECT activatedGa4PropertyId, activatedSiteUrl, tier FROM users WHERE id = ?',
     [ownerId],
   );
+  if (user?.tier === 'enterprise') {
+    return propertyId;
+  }
+
   const activeSiteUrl = typeof user?.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
   const activePropertyId = typeof user?.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
   return siteUrl === activeSiteUrl && propertyId === activePropertyId ? propertyId : '';
@@ -320,8 +324,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     metrics: string[],
     dimensionFilter?: any,
   ) => {
-    const whereParts = ['ownerId = ?', 'propertyId = ?', 'date >= ?', 'date <= ?'];
-    const params: unknown[] = [ownerId, propertyId, startDate, endDate];
+    const whereParts = ['ownerId = ?', 'propertyId = ?', 'siteUrl = ?', 'date >= ?', 'date <= ?'];
+    const params: unknown[] = [ownerId, propertyId, siteUrl, startDate, endDate];
     const exactPageFilterValue = getExactPageFilterValue(dimensionFilter);
     if (exactPageFilterValue) {
       whereParts.push('pageKey = ?');
@@ -358,6 +362,38 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       ${groupBy}
       ${orderBy}
     `, params);
+    const expectedDates = eachIsoDate(startDate, endDate);
+    const [coverageRows, jobRows] = await Promise.all([
+      db.all<{ date: string; rowCount: number }>(`
+        SELECT date, COUNT(*) AS rowCount
+        FROM ga4_page_metrics
+        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+        GROUP BY date
+      `, [ownerId, propertyId, siteUrl, startDate, endDate]),
+      db.all<{ jobType: string; propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null }>(`
+        SELECT jobType, propertyId, status, targetStartDate, targetDate
+        FROM warehouse_jobs
+        WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
+          AND jobType IN ('daily-sync', 'core-range-sync')
+          AND status IN ('queued', 'retrying', 'running', 'completed')
+      `, [ownerId, siteUrl, startDate, endDate]),
+    ]);
+    const completedDates = new Set<string>();
+    const activeDates = new Set<string>();
+    for (const job of jobRows) {
+      if (job.propertyId !== propertyId) continue;
+      if (job.status === 'completed') {
+        addJobDatesToSet(completedDates, [job], startDate, endDate);
+      } else {
+        addJobDatesToSet(activeDates, [job], startDate, endDate);
+      }
+    }
+    const coverage = {
+      ...coverageFromRows(expectedDates, coverageRows, completedDates),
+      activeDateCount: activeDates.size,
+      activeJobCount: jobRows.filter((row) => row.propertyId === propertyId && row.status !== 'completed').length,
+      queuedDateCount: activeDates.size,
+    };
 
     return {
       rows: rows.map((row) => ({
@@ -366,7 +402,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         })),
         metricValues: metrics.map((metric) => ({ value: readGa4MetricValue(row, metric) })),
       })),
-      metadata: { source: 'warehouse' },
+      metadata: { coverage, source: 'warehouse' },
     };
   };
 

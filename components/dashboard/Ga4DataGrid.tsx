@@ -624,7 +624,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
                 <TableRow>
                   <TableCell colSpan={metrics.length + 1} className="h-24 text-center text-muted-foreground">
                     {Number(coverage?.missingDateCount || 0) > 0
-                      ? "This Analytics breakdown needs stored history for the selected range."
+                      ? `GA4 ${dimensionLabel.toLowerCase()} history is not stored for this property, site, and date range yet. Open Source data to import the missing days.`
                       : "No data available."}
                   </TableCell>
                 </TableRow>
