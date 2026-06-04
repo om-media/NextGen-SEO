@@ -17,21 +17,24 @@
 </p>
 
 # NextGen SEO
+*v0.1.0-alpha*
 
-NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Search Console, GA4 and Bing featuring technical analysis, rank tracking, and AI-assisted SEO analysis. 
+NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Search Console, GA4 and Bing featuring technical analysis, rank tracking, LLM tracking and AI-assisted SEO analysis. 
 
 Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) data into your own SQLite or PostgreSQL database, keep it long-term, and report from saved history instead of depending on live API calls, export limits, or short retention windows.
 
 ## Features
 
 - **SEO data warehouse**: persist GSC, GA4, Bing, crawl, rank tracking, and workspace-site data in your own database.
-- **Google Search Console dashboards**: analyze queries, pages, countries, query count, historical trends, custom filters, and CSV exports.
+- **Google Search Console dashboards**: analyze queries and query count, pages, countries, historical trends, custom filters, and CSV exports.
 - **GA4 reporting**: review acquisition, page performance, demographics, events, and LLM/referral traffic signals.
 - **Blended SEO analytics**: combine search demand, engagement, crawl evidence, and indexing signals into page-level decisions.
 - **Crawl inventory**: crawl sites, track indexability, canonicals, titles, headings, links, render modes, and crawl freshness.
 - **Rank tracking**: monitor keywords by site, country, device, position, landing page, and movement.
+- **Content anylsis**: monitor and audit your content and it's performance
 - **Bing data support**: bring Bing Webmaster data into the same reporting surface.
 - **AI-assisted analysis**: generate SEO insights and content-audit briefs from connected site evidence.
+- *and many more to come*
 
 ## Tech Stack
 
