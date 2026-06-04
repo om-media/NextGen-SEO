@@ -5,7 +5,12 @@ export type SiteLike = {
 };
 
 function cleanSiteIdentity(url: string) {
-  return url?.replace(/^(https?:\/\/|sc-domain:)/, '').replace(/\/$/, '').toLowerCase() || '';
+  return url
+    ?.trim()
+    .replace(/^(https?:\/\/|sc-domain:)/i, '')
+    .replace(/^www\./i, '')
+    .replace(/\/$/, '')
+    .toLowerCase() || '';
 }
 
 export function findMatchingSite(targetUrl: string, availableSites: SiteLike[], ga4Sites: SiteLike[] = []) {
@@ -35,12 +40,12 @@ export function findMatchingSite(targetUrl: string, availableSites: SiteLike[], 
 
     if (site.displayName) {
       const displayClean = cleanSiteIdentity(site.displayName);
-      if (displayClean.includes(targetClean) || targetClean.includes(displayClean)) {
+      if (displayClean === targetClean) {
         return true;
       }
     }
 
-    return siteClean.includes(targetClean) || targetClean.includes(siteClean);
+    return false;
   }) || null;
 }
 
