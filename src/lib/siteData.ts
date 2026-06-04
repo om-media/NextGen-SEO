@@ -18,7 +18,12 @@ export function isGoogleAuthError(message: string) {
   return (
     message === "UNAUTHORIZED" ||
     message.includes("invalid authentication credentials") ||
-    message.includes("OAuth 2 access token")
+    message.includes("OAuth 2 access token") ||
+    message.includes("cannot reach Google APIs") ||
+    message.includes("ECONNRESET") ||
+    message.includes("EACCES") ||
+    message.includes("ETIMEDOUT") ||
+    message.includes("ENOTFOUND")
   );
 }
 

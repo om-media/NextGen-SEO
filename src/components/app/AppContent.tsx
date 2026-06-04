@@ -49,6 +49,7 @@ type AppContentProps = {
   dataSource: DataSource;
   dateRange: DateRange;
   ga4DashboardTab: Ga4DashboardTab;
+  ga4PropertyId?: string | null;
   ga4Sites: Array<{ siteUrl: string; displayName: string }>;
   ga4UserDimension: Ga4Dimension;
   gscDashboardTab: GscDashboardTab;
@@ -161,6 +162,7 @@ export function AppContent({
   dataSource,
   dateRange,
   ga4DashboardTab,
+  ga4PropertyId,
   ga4Sites,
   ga4UserDimension,
   gscDashboardTab,
@@ -285,7 +287,7 @@ export function AppContent({
             dateRange={dateRange}
             isCompareMode={isCompareMode}
             compareDateRange={compareDateRange}
-            ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+            ga4PropertyId={ga4PropertyId || null}
           />
         </div>
       )}
@@ -389,7 +391,7 @@ export function AppContent({
         <div className="space-y-4">
           <RawDataView
             dateRange={dateRange}
-            ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+            ga4PropertyId={ga4PropertyId || null}
             siteUrl={rawWorkspaceSite}
           />
         </div>
@@ -399,7 +401,7 @@ export function AppContent({
         <div className="space-y-4">
           <ReconciliationView
             dateRange={dateRange}
-            ga4PropertyId={userProfile?.activatedGa4PropertyId || null}
+            ga4PropertyId={ga4PropertyId || null}
             siteUrl={rawWorkspaceSite}
           />
         </div>

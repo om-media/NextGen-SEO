@@ -368,7 +368,30 @@ function MainApp() {
   const [isSavingGa4Property, setIsSavingGa4Property] = useState(false)
   const [pendingGa4Property, setPendingGa4Property] = useState("")
 
+  const normalizeSiteMatchText = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/^sc-domain:/, "")
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "")
+      .replace(/[^a-z0-9]+/g, "");
+
+  const getGa4PropertyForWorkspaceSite = (availableSites: SiteLike[], workspaceSite = selectedSite) => {
+    const siteKey = normalizeSiteMatchText(workspaceSite);
+    if (!siteKey) return "";
+
+    return availableSites.find((site) => {
+      const labelKey = normalizeSiteMatchText(`${site.siteUrl} ${"displayName" in site ? site.displayName || "" : ""}`);
+      return labelKey.includes(siteKey) || siteKey.includes(labelKey);
+    })?.siteUrl || "";
+  };
+
   const getPreferredGa4PropertyId = (availableSites: SiteLike[]) => {
+    const workspaceMatch = getGa4PropertyForWorkspaceSite(availableSites);
+    if (workspaceMatch) {
+      return workspaceMatch;
+    }
+
     const savedWorkspaceDefault = userProfile?.activatedGa4PropertyId || "";
     const preferred = userProfile?.tier === 'enterprise'
       ? selectedGa4Property || savedWorkspaceDefault
@@ -500,13 +523,13 @@ function MainApp() {
             setSessionExpired(true);
           } else if (err.message.includes("Google Analytics Admin API has not been used in project") || err.message.includes("is disabled")) {
             console.error("GA4 API not enabled:", err)
-            setApiError(err.message)
+            setSessionExpired(true)
           } else if (err.message === "Failed to fetch") {
             console.error("Network error fetching GA4 sites:", err)
-            setApiError("Network error: Unable to connect to Google Analytics API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
+            setSessionExpired(true)
           } else {
             console.error("Failed to fetch GA4 sites:", err)
-            setApiError(err.message)
+            setSessionExpired(true)
           }
         })
         .finally(() => setFetchingSites(false))
@@ -876,6 +899,17 @@ function MainApp() {
   }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, ga4Sites, isOnboarding, selectedSite, userProfile]);
 
   useEffect(() => {
+    if (isOnboarding || dataSource !== 'ga4' || accessibleGa4Sites.length === 0) {
+      return;
+    }
+
+    const workspaceMatchedProperty = getGa4PropertyForWorkspaceSite(accessibleGa4Sites);
+    if (workspaceMatchedProperty && selectedGa4Property !== workspaceMatchedProperty) {
+      setSelectedGa4Property(workspaceMatchedProperty);
+    }
+  }, [accessibleGa4Sites, dataSource, isOnboarding, selectedGa4Property, selectedSite]);
+
+  useEffect(() => {
     if (!userProfile || isOnboarding || userProfile.tier === 'enterprise') {
       return;
     }
@@ -1020,6 +1054,7 @@ function MainApp() {
                     dataSource={dataSource}
                     dateRange={dateRange}
                     ga4DashboardTab={ga4DashboardTab}
+                    ga4PropertyId={selectedGa4Property || userProfile?.activatedGa4PropertyId || null}
                     ga4Sites={accessibleGa4Sites}
                     ga4UserDimension={ga4UserDimension}
                     gscDashboardTab={gscDashboardTab}
