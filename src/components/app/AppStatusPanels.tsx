@@ -63,6 +63,9 @@ export function AppStatusPanels({
       (dataSource === "ga4" && ga4SitesCount === 0));
 
   const showDisconnectedBanner =
+    !fetchingSites &&
+    !apiError &&
+    Boolean(selectedSite) &&
     !hasValidSelectedSite &&
     (!googleConnected || sessionExpired) &&
     ((usesGscProperty && gscSitesCount > 0) || (dataSource === "ga4" && ga4SitesCount > 0));
