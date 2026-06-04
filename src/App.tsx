@@ -25,7 +25,6 @@ import type { Ga4DashboardTab, GscDashboardTab } from "./components/app/AppConte
 import { AppHeader } from "./components/app/AppHeader"
 import { AppStatusPanels } from "./components/app/AppStatusPanels"
 import { AppToolbar } from "./components/app/AppToolbar"
-import { DataImportStatusPanel } from "./components/app/DataImportStatusPanel"
 import type { SettingsDraft } from "./components/app/SettingsDialog"
 import { getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
 import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownSites } from "./lib/siteData"
@@ -977,17 +976,6 @@ function MainApp() {
                   onWarehouseCoverageChange={bumpGscSyncVersion}
                   rawDataAvailable={canUseRawExports(userProfile?.tier)}
                   setIsCompareMode={setIsCompareMode}
-                />
-              )}
-
-              {activeMenu === "Dashboard" && (dataSource === "gsc" || dataSource === "blended" || dataSource === "ga4") && selectedSite && (
-                <DataImportStatusPanel
-                  dataSource={dataSource}
-                  dateRange={dateRange}
-                  ga4PropertyId={dataSource === 'ga4' ? selectedGa4Property : userProfile?.activatedGa4PropertyId || null}
-                  onCoverageChange={bumpGscSyncVersion}
-                  refreshKey={gscSyncVersion}
-                  siteUrl={selectedSite}
                 />
               )}
 
