@@ -4,6 +4,7 @@ dist
 .cache
 .git
 .factory
+droid-wiki
 
 .env
 .env.*
@@ -26,3 +27,12 @@ seo_database.sqlite
 dump.sql
 server-startup.log.err
 -w
+
+AGENTS.md
+PRODUCTION_CHECKLIST.md
+docs/*todo*.md
+docs/*competitor*.md
+test-api.js
+test-api.mjs
+test-regex.js
+test-scraper.ts

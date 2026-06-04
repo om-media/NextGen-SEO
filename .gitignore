@@ -1,9 +1,11 @@
 node_modules/
 build/
 dist/
+.server-dist/
 coverage/
 .DS_Store
 *.log
+*.log.*
 .env*
 !.env.example
 !.env.production.example
@@ -17,3 +19,27 @@ coverage/
 *.sqlite-wal
 .aider*
 .tmp/
+
+# Local agent and QA artifacts
+AGENTS.md
+AGENTS.local.md
+.factory/
+.githooks.local/
+qa-*
+qa-results/
+
+# Internal planning/release notes
+PRODUCTION_CHECKLIST.md
+docs/*todo*.md
+docs/*competitor*.md
+droid-wiki/
+
+# Local database exports and scratch files
+*.db.bak
+*.db.corrupt
+dump.sql
+-w
+test-api.js
+test-api.mjs
+test-regex.js
+test-scraper.ts
