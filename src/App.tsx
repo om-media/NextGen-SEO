@@ -378,14 +378,6 @@ function MainApp() {
             setSessionExpired(false)
             setSites(fetchedSites)
             if (fetchedSites.length > 0 && !isOnboarding) {
-              setSelectedSite((current) => getPreferredSiteUrl(
-                current,
-                fetchedSites,
-                userProfile?.unlockedSites || [],
-                userProfile?.tier,
-                ga4Sites as SiteLike[],
-              ) || current)
-              
               // Persist to user profile so they aren't lost on boot if token expires
               if (user && userProfile) {
                 const knownUrls = fetchedSites.map(s => s.siteUrl);
@@ -443,15 +435,6 @@ function MainApp() {
       bingService.getSites()
         .then(fetchedSites => {
           setBingSites(fetchedSites)
-          if (fetchedSites.length > 0 && !isOnboarding) {
-            setSelectedSite((current) => getPreferredSiteUrl(
-              current,
-              fetchedSites,
-              userProfile?.unlockedSites || [],
-              userProfile?.tier,
-              ga4Sites as SiteLike[],
-            ) || current)
-          }
         })
         .catch(err => {
           console.error("Failed to fetch Bing sites:", err)
@@ -765,6 +748,9 @@ function MainApp() {
       : savedGa4Property
         ? ga4SitesWithSavedDefault.filter((site) => site.siteUrl === savedGa4Property.siteUrl)
         : [];
+  const accessibleWorkspaceSites = accessibleGscSites.length > 0
+    ? accessibleGscSites
+    : (userProfile?.unlockedSites || []).map((siteUrl) => ({ siteUrl, permissionLevel: "warehouse" }));
 
   const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
   const currentSelection = dataSource === 'ga4' ? selectedGa4Property : selectedSite;
@@ -801,21 +787,10 @@ function MainApp() {
       if (isOnboarding) {
         if (nextSource === 'ga4') {
           setSelectedGa4Property("");
-        } else {
-          setSelectedSite("");
         }
       } else {
         if (nextSource === 'ga4') {
           setSelectedGa4Property(getPreferredGa4PropertyId(availableSites));
-        } else {
-          const preferred = getPreferredSiteUrl(
-            selectedSite,
-            availableSites,
-            userProfile?.unlockedSites || [],
-            userProfile?.tier,
-            ga4Sites as SiteLike[],
-          );
-          setSelectedSite((current) => preferred || current);
         }
       }
     } else {
@@ -826,45 +801,41 @@ function MainApp() {
   };
 
   useEffect(() => {
-    if (currentSites.length === 0) {
-      if (dataSource === 'ga4') {
-        if (ga4Sites.length > 0) {
-          return;
-        }
-        setSelectedGa4Property("");
-      }
-      return;
-    }
-
     if (isOnboarding) {
       return;
     }
 
-    const currentSelectionIsAccessible = dataSource === 'ga4'
-      ? currentSites.some((site) => site.siteUrl === currentSelection)
-      : Boolean(getPreferredSiteUrl(
-        currentSelection,
-        currentSites,
-        userProfile?.unlockedSites || [],
-        userProfile?.tier,
-        ga4Sites as SiteLike[],
-      ));
-
-    if (!currentSelectionIsAccessible) {
-      if (dataSource === 'ga4') {
-        setSelectedGa4Property(getPreferredGa4PropertyId(currentSites));
-      } else {
-        const preferred = getPreferredSiteUrl(
-          currentSelection,
-          currentSites,
-          userProfile?.unlockedSites || [],
-          userProfile?.tier,
-          ga4Sites as SiteLike[],
-        );
-        setSelectedSite((current) => preferred || current);
+    if (dataSource === 'ga4') {
+      if (currentSites.length === 0) {
+        if (ga4Sites.length > 0) {
+          return;
+        }
+        setSelectedGa4Property("");
+        return;
       }
+
+      if (!currentSites.some((site) => site.siteUrl === currentSelection)) {
+        setSelectedGa4Property(getPreferredGa4PropertyId(currentSites));
+      }
+      return;
     }
-  }, [currentSites, currentSelection, dataSource, ga4Sites, isOnboarding, selectedGa4Property, selectedSite, userProfile?.activatedGa4PropertyId, userProfile?.tier, userProfile?.unlockedSites]);
+
+    if (!userProfile || userProfile.tier === 'enterprise') {
+      return;
+    }
+
+    const selectedSiteIsAccessible = Boolean(selectedSite && userProfile.unlockedSites.includes(selectedSite));
+    if (!selectedSite || !selectedSiteIsAccessible) {
+      const preferred = getPreferredSiteUrl(
+        userProfile.activatedSiteUrl || selectedSite,
+        accessibleWorkspaceSites,
+        userProfile.unlockedSites,
+        userProfile.tier,
+        ga4Sites as SiteLike[],
+      );
+      setSelectedSite((current) => preferred || current);
+    }
+  }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, ga4Sites, isOnboarding, selectedSite, userProfile]);
 
   useEffect(() => {
     if (!userProfile || isOnboarding || userProfile.tier === 'enterprise') {
