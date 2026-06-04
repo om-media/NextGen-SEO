@@ -8,6 +8,7 @@ import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats } from
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import { canAccessSite } from '../accessControl.js';
+import { resolveWorkspaceGa4Property, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
@@ -65,7 +66,11 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       if (!user?.gscRefreshToken) return;
 
       const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
-      const activePropertyId = siteUrl === activeSiteUrl ? propertyId || user.activatedGa4PropertyId || null : null;
+      if (propertyId) {
+        await upsertWorkspaceGa4Mapping(db, { ownerId, propertyId, siteUrl });
+      }
+      const mappedPropertyId = await resolveWorkspaceGa4Property(db, ownerId, siteUrl);
+      const activePropertyId = siteUrl === activeSiteUrl ? propertyId || mappedPropertyId || user.activatedGa4PropertyId || null : mappedPropertyId;
       await queueWarehouseBootstrapJobs(db, { ownerId, propertyId: activePropertyId, siteUrl });
     } catch (err) {
       console.warn('Failed to queue initial warehouse sync', { ownerId, siteUrl, err });
@@ -98,9 +103,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       for (const siteUrl of accessibleSites) {
         await queueInitialCrawlIfNeeded(ownerId, siteUrl, user.tier);
         if (!user.gscRefreshToken) continue;
+        const mappedPropertyId = await resolveWorkspaceGa4Property(db, ownerId, siteUrl);
         await queueWarehouseBootstrapJobs(db, {
           ownerId,
-          propertyId: siteUrl === activeSiteUrl ? user.activatedGa4PropertyId || null : null,
+          propertyId: mappedPropertyId || (siteUrl === activeSiteUrl ? user.activatedGa4PropertyId || null : null),
           siteUrl,
         });
       }
@@ -268,7 +274,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
   });
 
   app.put('/api/users/:id/default-ga4-property', authRequired, requireMatchingParam('id'), async (req, res) => {
-    const { activatedGa4PropertyId, activatedGa4DisplayName } = req.body;
+    const { activatedGa4PropertyId, activatedGa4DisplayName, siteUrl } = req.body;
     if (!isNonEmptyString(activatedGa4PropertyId)) {
       return res.status(400).json({ error: 'Invalid activatedGa4PropertyId' });
     }
@@ -282,17 +288,31 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
 
       await db.run('UPDATE users SET activatedGa4PropertyId = ?, activatedGa4DisplayName = ? WHERE id = ?', [activatedGa4PropertyId, activatedGa4DisplayName || null, req.params.id]);
       const activeSiteUrl = isNonEmptyString(user.activatedSiteUrl) ? user.activatedSiteUrl.trim() : '';
+      const mappedSiteUrl = isNonEmptyString(siteUrl) ? siteUrl.trim() : activeSiteUrl;
+      if (mappedSiteUrl) {
+        if (!(await canAccessSite(db, req.params.id, mappedSiteUrl))) {
+          return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+        }
+        await upsertWorkspaceGa4Mapping(db, {
+          displayName: activatedGa4DisplayName || null,
+          ownerId: req.params.id,
+          propertyId: activatedGa4PropertyId,
+          siteUrl: mappedSiteUrl,
+        });
+      }
       const sitesToBackfill = uniqueSites([
         ...parseStoredSites(user.unlockedSites),
         ...(user.tier === 'enterprise' ? parseStoredSites(user.knownSites) : []),
         ...(activeSiteUrl ? [activeSiteUrl] : []),
+        ...(mappedSiteUrl ? [mappedSiteUrl] : []),
       ]);
       for (const siteUrl of sitesToBackfill) {
         if (!(await canAccessSite(db, req.params.id, siteUrl))) continue;
+        const mappedPropertyId = await resolveWorkspaceGa4Property(db, req.params.id, siteUrl);
         await queueInitialWarehouseSyncIfPossible(
           req.params.id,
           siteUrl,
-          siteUrl === activeSiteUrl ? activatedGa4PropertyId : null,
+          mappedPropertyId || (siteUrl === activeSiteUrl ? activatedGa4PropertyId : null),
         );
       }
       res.json({

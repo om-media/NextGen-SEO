@@ -52,7 +52,7 @@ interface AuthContextType {
   setBingApiKey: (key: string) => Promise<void>;
   completeOnboarding: (activatedSiteUrl: string, activatedGa4Property?: { siteUrl: string; displayName: string } | null) => Promise<void>;
   updateDefaultSite: (activatedSiteUrl: string) => Promise<void>;
-  updateDefaultGa4Property: (activatedGa4PropertyId: string, activatedGa4DisplayName?: string | null) => Promise<void>;
+  updateDefaultGa4Property: (activatedGa4PropertyId: string, activatedGa4DisplayName?: string | null, siteUrl?: string | null) => Promise<void>;
   updateUserProfile: (profile: UserProfileUpdate) => Promise<void>;
 }
 
@@ -408,13 +408,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUserProfile((prev) => prev ? { ...prev, activatedSiteUrl } : prev);
   };
 
-  const updateDefaultGa4Property = async (activatedGa4PropertyId: string, activatedGa4DisplayName?: string | null) => {
+  const updateDefaultGa4Property = async (activatedGa4PropertyId: string, activatedGa4DisplayName?: string | null, siteUrl?: string | null) => {
     if (!user) return;
 
     const response = await authFetch(`/api/users/${user.uid}/default-ga4-property`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activatedGa4PropertyId, activatedGa4DisplayName: activatedGa4DisplayName || null }),
+      body: JSON.stringify({ activatedGa4PropertyId, activatedGa4DisplayName: activatedGa4DisplayName || null, siteUrl: siteUrl || null }),
     });
 
     if (!response.ok) {

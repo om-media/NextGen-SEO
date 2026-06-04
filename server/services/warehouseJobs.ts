@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import type { AppDatabase } from '../database.js';
-import { canAccessSite } from '../accessControl.js';
+import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { canonicalPageKey } from '../reporting/url.js';
+import { resolveWorkspaceGa4Property } from './ga4Mappings.js';
 import { googleApiFetchJson } from './googleAuth.js';
 import { isMultiSitePlan } from '../../shared/plans.js';
 
@@ -572,13 +573,11 @@ async function updateJob(db: AppDatabase, id: string, fields: Partial<WarehouseJ
 
 async function resolveActiveGa4PropertyForSite(db: AppDatabase, job: WarehouseJob) {
   if (!job.propertyId) return null;
-  const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null }>(
-    'SELECT activatedGa4PropertyId, activatedSiteUrl FROM users WHERE id = ?',
-    [job.ownerId],
-  );
-  const activeSiteUrl = typeof user?.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
-  const activePropertyId = typeof user?.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
-  return activeSiteUrl === job.siteUrl && activePropertyId === job.propertyId ? job.propertyId : null;
+  const [siteAllowed, propertyAllowed] = await Promise.all([
+    canAccessSite(db, job.ownerId, job.siteUrl),
+    canAccessGa4Property(db, job.ownerId, job.propertyId),
+  ]);
+  return siteAllowed && propertyAllowed ? job.propertyId : null;
 }
 
 async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
@@ -1129,8 +1128,7 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
           if (!(await canAccessSite(db, user.id, siteUrl))) {
             continue;
           }
-          const activePropertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
-          const propertyId = siteUrl === activeSiteUrl && activePropertyId ? activePropertyId : null;
+          const propertyId = await resolveWorkspaceGa4Property(db, user.id, siteUrl);
           await queueWarehouseSyncJob(db, {
             ownerId: user.id,
             propertyId,

@@ -622,7 +622,7 @@ function MainApp() {
 
     const selectedProperty = ga4Sites.find((site) => site.siteUrl === propertyId);
     try {
-      await updateDefaultGa4Property(propertyId, selectedProperty?.displayName || null);
+      await updateDefaultGa4Property(propertyId, selectedProperty?.displayName || null, selectedSite || null);
     } catch (err) {
       console.warn("Failed to persist default GA4 property:", err);
     }
@@ -641,7 +641,7 @@ function MainApp() {
     });
 
     try {
-      await updateDefaultGa4Property(pendingGa4Property, selectedProperty?.displayName || null);
+      await updateDefaultGa4Property(pendingGa4Property, selectedProperty?.displayName || null, selectedSite || null);
       setSelectedGa4Property(pendingGa4Property);
       toast.success("GA4 property saved", {
         id: saveToast,

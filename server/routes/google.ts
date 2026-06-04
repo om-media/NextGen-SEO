@@ -19,6 +19,7 @@ import {
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import type { UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
+import { resolveWorkspaceGa4Property } from '../services/ga4Mappings.js';
 
 function sendOauthPopupResponse(res: Response, success: boolean, message: string) {
   const escapedMessage = message
@@ -123,8 +124,9 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       ]);
       for (const siteUrl of sitesToBackfill) {
         if (!(await canAccessSite(db, ownerId, siteUrl))) continue;
+        const mappedPropertyId = await resolveWorkspaceGa4Property(db, ownerId, siteUrl);
         const activePropertyId = isNonEmptyString(user?.activatedGa4PropertyId) ? user.activatedGa4PropertyId.trim() : '';
-        const propertyId = siteUrl === activatedSiteUrl && activePropertyId ? activePropertyId : null;
+        const propertyId = mappedPropertyId || (siteUrl === activatedSiteUrl && activePropertyId ? activePropertyId : null);
         const queued = await queueWarehouseBootstrapJobs(db, {
           ownerId,
           propertyId,

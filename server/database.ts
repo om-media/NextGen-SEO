@@ -76,6 +76,15 @@ const commonSchemaSql = `
     createdAt TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS workspace_ga4_mappings (
+    ownerId TEXT NOT NULL,
+    siteUrl TEXT NOT NULL,
+    propertyId TEXT NOT NULL,
+    displayName TEXT,
+    updatedAt TEXT,
+    PRIMARY KEY (ownerId, siteUrl)
+  );
+
   CREATE TABLE IF NOT EXISTS annotations (
     id TEXT PRIMARY KEY,
     userId TEXT,
@@ -369,6 +378,7 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_server_logs_owner_botType ON server_logs(ownerId, siteUrl, botType);
   CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(userId);
+  CREATE INDEX IF NOT EXISTS idx_workspace_ga4_mappings_owner_property ON workspace_ga4_mappings(ownerId, propertyId);
   CREATE INDEX IF NOT EXISTS idx_gsc_site_owner_site_date ON gsc_site_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_query_owner_site_date ON gsc_query_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_query_owner_site_date_query ON gsc_query_metrics(ownerId, siteUrl, date, query);
