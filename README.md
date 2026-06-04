@@ -24,6 +24,7 @@ NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Sea
 
 Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) data into your own SQLite or PostgreSQL database, keep it long-term, and report from saved history instead of depending on live API calls, export limits, or short retention windows.
 <br>
+
 ## Features
 
 - **SEO data warehouse**: persist GSC, GA4, Bing, crawl, rank tracking, and workspace-site data in your own database.
