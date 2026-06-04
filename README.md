@@ -29,7 +29,7 @@ Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) d
 ## Features
 
 - **SEO data warehouse**: persist GSC, GA4, Bing, crawl, rank tracking, and workspace-site data in your own database.
-- **Google Search Console dashboards**: analyze queries and query count, pages, countries, historical trends - custom filters, and CSV exports.
+- **Google Search Console dashboards**: analyze performance, queries and query count, pages, countries, historical trends - custom filters, and CSV exports. No data limits.
 - **GA4 reporting**: review acquisition, page performance, demographics, events, and LLM/referral traffic signals.
 - **Blended Data View**: combine search demand, engagement, crawl evidence, and search signals into page-level decisions (GSC+GA4+Crawl data).
 - **Bing data support**: bring Bing Webmaster data into the same reporting surface.
