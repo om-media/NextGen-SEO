@@ -1,3 +1,5 @@
+<img width="1672" height="941" alt="nextgenseo" src="https://github.com/user-attachments/assets/dee154be-c5b5-4004-ad1f-2c6f8b262a94" />
+
 # NextGen SEO
 
 NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Search Console, GA4 and Bing featuring technical analysis, rank tracking, and AI-assisted SEO analysis. 
