@@ -151,15 +151,18 @@ export function useGscGridData({
   const [data, setData] = useState<GridRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<GscGridCoverage | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadedRowLimit, setLoadedRowLimit] = useState<number | null>(null);
   const [totalRowCount, setTotalRowCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!siteUrl || !dateRange?.from || !dateRange?.to) {
+      setData([]);
+      setError(null);
       setCoverage(null);
       setLoadedRowLimit(null);
       setTotalRowCount(null);
+      setLoading(false);
       return;
     }
 

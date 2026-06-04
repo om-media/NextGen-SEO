@@ -166,7 +166,7 @@ export function Overview({
   const { userProfile } = useAuth()
   const [rawData, setRawData] = useState<any[]>([])
   const [compareRawData, setCompareRawData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
