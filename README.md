@@ -5,7 +5,7 @@ NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Sea
 ## Features
 
 - **SEO data warehouse**: persist GSC, GA4, Bing, crawl, rank tracking, and workspace-site data in your own database.
-- **Google Search Console dashboards**: analyze queries, pages, countries, visible queries, historical trends, filters, and CSV exports.
+- **Google Search Console dashboards**: analyze queries, pages, countries, query count, historical trends, custom filters, and CSV exports.
 - **GA4 reporting**: review acquisition, page performance, demographics, events, and LLM/referral traffic signals.
 - **Blended SEO analytics**: combine search demand, engagement, crawl evidence, and indexing signals into page-level decisions.
 - **Crawl inventory**: crawl sites, track indexability, canonicals, titles, headings, links, render modes, and crawl freshness.
