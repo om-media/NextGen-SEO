@@ -304,12 +304,37 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
     Number(coverage?.activeJobCount || 0) > 0 ||
     Number(coverage?.activeDateCount || 0) > 0 ||
     Number(coverage?.queuedDateCount || 0) > 0;
+  const dimensionLabel = (() => {
+    switch (dimension) {
+      case 'date': return 'Date';
+      case 'pagePath': return 'Page Path';
+      case 'sessionSourceMedium': return 'Source / Medium';
+      case 'country': return 'Country';
+      case 'city': return 'City';
+      case 'region': return 'Region';
+      case 'deviceCategory': return 'Device';
+      case 'browser': return 'Browser';
+      case 'operatingSystem': return 'OS';
+      case 'eventName': return 'Event Name';
+      default: return 'Dimension';
+    }
+  })();
+  const isPreparationError = Boolean(error && /stored history|being prepared|not ready|not available in the stored warehouse/i.test(error));
 
   if (loading && data.length === 0) {
     return (
       <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardContent className="flex items-center justify-center h-64">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <CardContent className="flex min-h-[260px] flex-col items-center justify-center px-6 text-center">
+          <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
+            <Database className="h-5 w-5" />
+          </div>
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            Loading stored Analytics data
+          </div>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Reading the app warehouse for {dimensionLabel.toLowerCase()} metrics on this site and date range.
+          </p>
         </CardContent>
       </Card>
     )
@@ -317,9 +342,17 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
 
   if (error) {
     return (
-      <Card className="rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardContent className="flex flex-col items-center justify-center h-64 text-destructive space-y-4">
-          <div className="text-center">{error}</div>
+      <Card className={`rounded-2xl border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)] ${isPreparationError ? 'border-border' : 'border-destructive/30'}`}>
+        <CardContent className={`flex min-h-[260px] flex-col items-center justify-center px-6 text-center ${isPreparationError ? 'text-muted-foreground' : 'text-destructive'} space-y-4`}>
+          <div className={`rounded-full p-3 ${isPreparationError ? 'bg-secondary text-primary' : 'bg-destructive/10 text-destructive'}`}>
+            {isPreparationError ? <Database className="h-5 w-5" /> : <X className="h-5 w-5" />}
+          </div>
+          <div>
+            <h3 className={`text-lg font-semibold ${isPreparationError ? 'text-foreground' : 'text-destructive'}`}>
+              {isPreparationError ? `Preparing GA4 ${dimensionLabel} report` : 'Could not load Analytics report'}
+            </h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6">{error}</p>
+          </div>
           {error.includes("https://console.developers.google.com") && (
             <a 
               href={error.match(/https:\/\/console\.developers\.google\.com[^\s]*/)?.[0] || "#"} 
@@ -336,19 +369,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
   }
 
   const getDimensionHeader = () => {
-    switch (dimension) {
-      case 'date': return 'Date';
-      case 'pagePath': return 'Page Path';
-      case 'sessionSourceMedium': return 'Source / Medium';
-      case 'country': return 'Country';
-      case 'city': return 'City';
-      case 'region': return 'Region';
-      case 'deviceCategory': return 'Device';
-      case 'browser': return 'Browser';
-      case 'operatingSystem': return 'OS';
-      case 'eventName': return 'Event Name';
-      default: return 'Dimension';
-    }
+    return dimensionLabel
   }
 
   const renderDifference = (current: number, previous: number | undefined, isPercentage: boolean = false, inverse: boolean = false) => {
