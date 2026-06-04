@@ -10,11 +10,17 @@ import type { GscSite } from "../../services/gscService";
 import type { UserProfile } from "../../contexts/AuthContext";
 import { canUseRawExports, canUseReconciliation, isMultiSitePlan } from "@/shared/plans";
 
-const Overview = lazy(() => import("@/components/dashboard/Overview").then((module) => ({ default: module.Overview })));
-const AnnotationsSettings = lazy(() => import("@/components/dashboard/AnnotationsSettings").then((module) => ({ default: module.AnnotationsSettings })));
-const BlendedPagesView = lazy(() => import("@/components/dashboard/BlendedPagesView").then((module) => ({ default: module.BlendedPagesView })));
-const GscDataGrid = lazy(() => import("@/components/dashboard/GscDataGrid").then((module) => ({ default: module.GscDataGrid })));
-const QueryCountView = lazy(() => import("@/components/dashboard/QueryCountView").then((module) => ({ default: module.QueryCountView })));
+const loadOverview = () => import("@/components/dashboard/Overview");
+const loadAnnotationsSettings = () => import("@/components/dashboard/AnnotationsSettings");
+const loadBlendedPagesView = () => import("@/components/dashboard/BlendedPagesView");
+const loadGscDataGrid = () => import("@/components/dashboard/GscDataGrid");
+const loadQueryCountView = () => import("@/components/dashboard/QueryCountView");
+
+const Overview = lazy(() => loadOverview().then((module) => ({ default: module.Overview })));
+const AnnotationsSettings = lazy(() => loadAnnotationsSettings().then((module) => ({ default: module.AnnotationsSettings })));
+const BlendedPagesView = lazy(() => loadBlendedPagesView().then((module) => ({ default: module.BlendedPagesView })));
+const GscDataGrid = lazy(() => loadGscDataGrid().then((module) => ({ default: module.GscDataGrid })));
+const QueryCountView = lazy(() => loadQueryCountView().then((module) => ({ default: module.QueryCountView })));
 const Ga4DataGrid = lazy(() => import("@/components/dashboard/Ga4DataGrid").then((module) => ({ default: module.Ga4DataGrid })));
 const Ga4Overview = lazy(() => import("@/components/dashboard/Ga4Overview").then((module) => ({ default: module.Ga4Overview })));
 const Ga4LlmTraffic = lazy(() => import("@/components/dashboard/Ga4LlmTraffic").then((module) => ({ default: module.Ga4LlmTraffic })));
@@ -80,7 +86,8 @@ function DeferredOverviewGrid(props: {
   useEffect(() => {
     setReady(false);
     props.onLoadingChange?.(true);
-    const timer = window.setTimeout(() => setReady(true), 350);
+    void loadGscDataGrid();
+    const timer = window.setTimeout(() => setReady(true), 100);
     return () => {
       window.clearTimeout(timer);
       props.onLoadingChange?.(false);
@@ -186,6 +193,19 @@ export function AppContent({
   const [isGscOverviewLoading, setIsGscOverviewLoading] = useState(false);
   const [isGscOverviewGridLoading, setIsGscOverviewGridLoading] = useState(false);
   const showGscOverviewLoading = gscDashboardTab === "overview" && (isGscOverviewLoading || isGscOverviewGridLoading);
+
+  useEffect(() => {
+    if (activeMenu !== "Dashboard") return;
+
+    if (dataSource === "gsc") {
+      void loadOverview();
+      void loadGscDataGrid();
+      void loadQueryCountView();
+      void loadAnnotationsSettings();
+    } else if (dataSource === "blended") {
+      void loadBlendedPagesView();
+    }
+  }, [activeMenu, dataSource]);
 
   return (
     <Suspense fallback={<div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">Loading view...</div>}>
