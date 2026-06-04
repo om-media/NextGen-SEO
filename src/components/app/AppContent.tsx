@@ -302,6 +302,18 @@ export function AppContent({
         </div>
       )}
 
+      {!selectedSite && !apiError && dataSource === "ga4" && activeMenu === "Dashboard" && workspaceSiteUrl && (
+        <div className="rounded-2xl border border-border bg-card p-8 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-primary">
+            <Database className="h-5 w-5" />
+          </div>
+          <h3 className="mt-4 text-lg font-semibold tracking-[-0.01em] text-foreground">Map a GA4 property for this site</h3>
+          <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Analytics reports are scoped to the active workspace site. Choose the GA4 property that belongs to this site before the dashboard shows sessions, events, traffic, or user breakdowns.
+          </p>
+        </div>
+      )}
+
       {selectedSite && !apiError && dataSource === "ga4" && ga4Sites.some((site) => site.siteUrl === selectedSite) && activeMenu === "Dashboard" && (
         <Tabs
           value={ga4DashboardTab}

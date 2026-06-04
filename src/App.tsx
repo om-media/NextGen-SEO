@@ -373,17 +373,41 @@ function MainApp() {
       .toLowerCase()
       .replace(/^sc-domain:/, "")
       .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
       .replace(/\/$/, "")
       .replace(/[^a-z0-9]+/g, "");
 
-  const getGa4PropertyForWorkspaceSite = (availableSites: SiteLike[], workspaceSite = selectedSite) => {
-    const siteKey = normalizeSiteMatchText(workspaceSite);
-    if (!siteKey) return "";
+  const getWorkspaceSiteMatchCandidates = (workspaceSite: string) => {
+    const normalized = normalizeSiteMatchText(workspaceSite);
+    if (!normalized) return [];
 
-    return availableSites.find((site) => {
-      const labelKey = normalizeSiteMatchText(`${site.siteUrl} ${"displayName" in site ? site.displayName || "" : ""}`);
-      return labelKey.includes(siteKey) || siteKey.includes(labelKey);
-    })?.siteUrl || "";
+    const host = workspaceSite
+      .toLowerCase()
+      .replace(/^sc-domain:/, "")
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/.*$/, "");
+    const hostParts = host.split(".").filter(Boolean);
+    const registrableName = hostParts.length > 2 && hostParts[hostParts.length - 2] === "co"
+      ? hostParts.slice(0, -2).join("")
+      : hostParts.slice(0, -1).join("");
+
+    return Array.from(new Set([
+      normalized,
+      normalizeSiteMatchText(registrableName),
+    ].filter((candidate) => candidate.length >= 8)));
+  };
+
+  const isGa4PropertyForWorkspaceSite = (site: SiteLike, workspaceSite = selectedSite) => {
+    const candidates = getWorkspaceSiteMatchCandidates(workspaceSite);
+    if (candidates.length === 0) return false;
+
+    const propertyLabel = normalizeSiteMatchText(`${site.siteUrl} ${"displayName" in site ? site.displayName || "" : ""}`);
+    return candidates.some((candidate) => propertyLabel.includes(candidate));
+  };
+
+  const getGa4PropertyForWorkspaceSite = (availableSites: SiteLike[], workspaceSite = selectedSite) => {
+    return availableSites.find((site) => isGa4PropertyForWorkspaceSite(site, workspaceSite))?.siteUrl || "";
   };
 
   const getPreferredGa4PropertyId = (availableSites: SiteLike[]) => {
@@ -809,11 +833,15 @@ function MainApp() {
       : savedGa4Property
         ? ga4SitesWithSavedDefault.filter((site) => site.siteUrl === savedGa4Property.siteUrl)
         : [];
+  const workspaceMatchedGa4Sites = selectedSite
+    ? accessibleGa4Sites.filter((site) => isGa4PropertyForWorkspaceSite(site, selectedSite))
+    : accessibleGa4Sites;
+  const mappedGa4PropertyForWorkspace = getGa4PropertyForWorkspaceSite(accessibleGa4Sites, selectedSite);
   const accessibleWorkspaceSites = accessibleGscSites.length > 0
     ? accessibleGscSites
     : (userProfile?.unlockedSites || []).map((siteUrl) => ({ siteUrl, permissionLevel: "warehouse" }));
 
-  const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
+  const currentSites = dataSource === 'ga4' ? workspaceMatchedGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
   const currentSelection = dataSource === 'ga4' ? selectedGa4Property : selectedSite;
   const showStatusPanels = activeMenu === "Dashboard";
   const showReportToolbar = [
@@ -868,9 +896,6 @@ function MainApp() {
 
     if (dataSource === 'ga4') {
       if (currentSites.length === 0) {
-        if (ga4Sites.length > 0) {
-          return;
-        }
         setSelectedGa4Property("");
         return;
       }
@@ -896,18 +921,18 @@ function MainApp() {
       );
       setSelectedSite((current) => preferred || current);
     }
-  }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, ga4Sites, isOnboarding, selectedSite, userProfile]);
+  }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, isOnboarding, selectedSite, userProfile]);
 
   useEffect(() => {
-    if (isOnboarding || dataSource !== 'ga4' || accessibleGa4Sites.length === 0) {
+    if (isOnboarding || dataSource !== 'ga4' || workspaceMatchedGa4Sites.length === 0) {
       return;
     }
 
-    const workspaceMatchedProperty = getGa4PropertyForWorkspaceSite(accessibleGa4Sites);
+    const workspaceMatchedProperty = getGa4PropertyForWorkspaceSite(workspaceMatchedGa4Sites);
     if (workspaceMatchedProperty && selectedGa4Property !== workspaceMatchedProperty) {
       setSelectedGa4Property(workspaceMatchedProperty);
     }
-  }, [accessibleGa4Sites, dataSource, isOnboarding, selectedGa4Property, selectedSite]);
+  }, [dataSource, isOnboarding, selectedGa4Property, selectedSite, workspaceMatchedGa4Sites]);
 
   useEffect(() => {
     if (!userProfile || isOnboarding || userProfile.tier === 'enterprise') {
@@ -990,7 +1015,7 @@ function MainApp() {
             isConnectingGoogle={isConnectingGoogleData}
             onSignOut={signOut}
             onSwitchDataSource={(nextSource) => {
-              const availableSites = nextSource === 'ga4' ? accessibleGa4Sites : nextSource === 'bing' ? accessibleBingSites : accessibleGscSites;
+              const availableSites = nextSource === 'ga4' ? workspaceMatchedGa4Sites : nextSource === 'bing' ? accessibleBingSites : accessibleGscSites;
               switchDataSource(nextSource, availableSites);
             }}
             selectedSite={currentSelection}
@@ -1008,7 +1033,7 @@ function MainApp() {
                   dataSource={dataSource}
                   dateRange={dateRange}
                   firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
-                  ga4PropertyId={dataSource === 'ga4' ? selectedGa4Property : userProfile?.activatedGa4PropertyId || null}
+                  ga4PropertyId={dataSource === 'ga4' ? selectedGa4Property || null : mappedGa4PropertyForWorkspace || null}
                   gscSyncVersion={gscSyncVersion}
                   isCompareMode={isCompareMode}
                   onCompareFromDateChange={handleCompareFromDateChange}
@@ -1030,7 +1055,7 @@ function MainApp() {
                   dataSource={dataSource}
                   fetchingSites={fetchingSites}
                   fullGa4SitesCount={ga4Sites.length}
-                  ga4SitesCount={accessibleGa4Sites.length}
+                  ga4SitesCount={workspaceMatchedGa4Sites.length}
                   googleConnected={Boolean(userProfile?.googleConnected)}
                   gscSitesCount={accessibleGscSites.length}
                   hasValidSelectedSite={hasValidSelectedSite}
@@ -1054,8 +1079,8 @@ function MainApp() {
                     dataSource={dataSource}
                     dateRange={dateRange}
                     ga4DashboardTab={ga4DashboardTab}
-                    ga4PropertyId={selectedGa4Property || userProfile?.activatedGa4PropertyId || null}
-                    ga4Sites={accessibleGa4Sites}
+                    ga4PropertyId={dataSource === 'ga4' ? selectedGa4Property || null : mappedGa4PropertyForWorkspace || null}
+                    ga4Sites={workspaceMatchedGa4Sites}
                     ga4UserDimension={ga4UserDimension}
                     gscDashboardTab={gscDashboardTab}
                     warehouseRefreshKey={gscSyncVersion}

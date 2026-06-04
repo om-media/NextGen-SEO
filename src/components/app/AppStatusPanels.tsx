@@ -191,7 +191,7 @@ export function AppStatusPanels({
                 <p className="text-sm font-semibold text-primary">Analytics setup needed</p>
                 <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-foreground">Choose your GA4 property</h3>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Your Google account has GA4 properties available, but this workspace does not have one assigned yet. Pick the property that should power Analytics reports here.
+                  Your Google account has GA4 properties available, but none clearly match the active workspace site. Pick the GA4 property for this site so Analytics reports cannot show data from another website.
                 </p>
               </div>
             </div>
