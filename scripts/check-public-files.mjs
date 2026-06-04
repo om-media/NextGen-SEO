@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 
 const mode = process.argv[2] || '--tracked';
+let guardSkipped = false;
 
 const blockedRules = [
   [/^AGENTS\.md$/i, 'local agent instructions'],
@@ -24,6 +25,14 @@ function git(args) {
   return execFileSync('git', args, { encoding: 'utf8' });
 }
 
+function hasGitWorktree() {
+  try {
+    return git(['rev-parse', '--is-inside-work-tree']).trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
 function normalize(path) {
   return path.replace(/\\/g, '/').replace(/^\.\//, '');
 }
@@ -37,6 +46,12 @@ function filesForMode() {
   }
 
   if (mode === '--tracked') {
+    if (!hasGitWorktree()) {
+      console.log('Public file guard skipped: no Git worktree metadata is available.');
+      guardSkipped = true;
+      return [];
+    }
+
     return git(['ls-files'])
       .split(/\r?\n/)
       .filter(Boolean)
@@ -66,4 +81,6 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log('Public file guard passed.');
+if (!guardSkipped) {
+  console.log('Public file guard passed.');
+}
