@@ -1,5 +1,21 @@
 <img width="1672" height="941" alt="nextgenseo" src="https://github.com/user-attachments/assets/dee154be-c5b5-4004-ad1f-2c6f8b262a94" />
 
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.1.0-0f766e?style=for-the-badge" alt="version 0.1.0" />
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-16a34a?style=for-the-badge" alt="license AGPL-3.0" />
+  <img src="https://img.shields.io/badge/react-19-61dafb?style=for-the-badge&logo=react&logoColor=111827" alt="React 19" />
+  <img src="https://img.shields.io/badge/typescript-5-3178c6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/vite-powered-646cff?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
+  <img src="https://img.shields.io/badge/tailwind-v4-38bdf8?style=for-the-badge&logo=tailwindcss&logoColor=111827" alt="Tailwind CSS v4" />
+  <img src="https://img.shields.io/badge/express-api-111827?style=for-the-badge&logo=express&logoColor=white" alt="Express API" />
+  <img src="https://img.shields.io/badge/database-SQLite%20%2B%20PostgreSQL-2563eb?style=for-the-badge&logo=postgresql&logoColor=white" alt="SQLite and PostgreSQL" />
+  <img src="https://img.shields.io/badge/docker-ready-2496ed?style=for-the-badge&logo=docker&logoColor=white" alt="Docker ready" />
+</p>
+
+<p align="center">
+  <strong>Open-source SEO analytics platform with long-term data retention and AI-assisted analysis.</strong>
+</p>
+
 # NextGen SEO
 
 NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Search Console, GA4 and Bing featuring technical analysis, rank tracking, and AI-assisted SEO analysis. 
@@ -157,3 +173,9 @@ To copy existing local SQLite data into PostgreSQL:
 ```bash
 npm run db:migrate:postgres
 ```
+
+## License
+
+NextGen SEO is licensed under the GNU Affero General Public License v3.0.
+
+See the [LICENSE](./LICENSE) file for details.
