@@ -1,6 +1,8 @@
 # NextGen SEO
 
-NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Search Console, GA4 and Bing with technical analysis, rank tracking, and AI-assisted SEO analysis. Built-in data warehouse: sync your data into your own SQLite or PostgreSQL database, keep it long-term, and report from saved history instead of depending on live API calls, export limits, or short retention windows.
+NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Search Console, GA4 and Bing featuring technical analysis, rank tracking, and AI-assisted SEO analysis. 
+
+Built-in data warehouse: No more 16-month limit. Sync your data into your own SQLite or PostgreSQL database, keep it long-term, and report from saved history instead of depending on live API calls, export limits, or short retention windows.
 
 ## Features
 
