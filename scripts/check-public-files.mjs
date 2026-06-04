@@ -19,6 +19,7 @@ const blockedRules = [
   [/^test-api\.(js|mjs)$/i, 'scratch API probe'],
   [/^test-regex\.js$/i, 'scratch regex probe'],
   [/^test-scraper\.ts$/i, 'scratch scraper probe'],
+  [/^firebase-applet-config\.json$/i, 'local Firebase applet config'],
 ];
 
 function git(args) {

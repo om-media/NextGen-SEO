@@ -43,3 +43,4 @@ test-api.js
 test-api.mjs
 test-regex.js
 test-scraper.ts
+firebase-applet-config.json
