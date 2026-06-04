@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { clearSessionCookie, createUserSession, destroySession, hashPassword, readAuthedUser, requireAuth, setSessionCookie, verifyPassword } from '../auth.js';
+import { getInitialRegistrationTier } from '../services/registrationTier.js';
 
 export type UserRow = {
   id: string;
@@ -132,6 +133,7 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
         const id = crypto.randomUUID();
         const passwordHash = hashPassword(password);
         const createdAt = new Date().toISOString();
+        const initialTier = await getInitialRegistrationTier(db);
 
         await db.run(`
           INSERT INTO users (
@@ -146,7 +148,7 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
           null,
           null,
           null,
-          'free',
+          initialTier,
           JSON.stringify([]),
           createdAt,
           null,

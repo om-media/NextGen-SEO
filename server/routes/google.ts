@@ -20,6 +20,7 @@ import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import type { UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { resolveWorkspaceGa4Property } from '../services/ga4Mappings.js';
+import { getInitialRegistrationTier } from '../services/registrationTier.js';
 
 function sendOauthPopupResponse(res: Response, success: boolean, message: string) {
   const escapedMessage = message
@@ -200,6 +201,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
         } else {
           const id = crypto.randomUUID();
           const createdAt = new Date().toISOString();
+          const initialTier = await getInitialRegistrationTier(db);
           await db.run(`
             INSERT INTO users (
               id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd
@@ -213,7 +215,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
             null,
             googleUser.picture || null,
             null,
-            'free',
+            initialTier,
             JSON.stringify([]),
             createdAt,
             null,

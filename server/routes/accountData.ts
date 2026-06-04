@@ -9,6 +9,7 @@ import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import { canAccessSite } from '../accessControl.js';
 import { resolveWorkspaceGa4Property, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
+import { getInitialRegistrationTier } from '../services/registrationTier.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
@@ -157,12 +158,13 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     if (createdAt !== undefined && createdAt !== null && !isNonEmptyString(createdAt)) return res.status(400).json({ error: 'Invalid createdAt' });
     try {
       const id = req.authUser!.uid;
+      const initialTier = await getInitialRegistrationTier(db);
       await db.run(`
         INSERT INTO users (
           id, email, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, activatedGa4PropertyId, activatedGa4DisplayName, billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
-      `, [id, email, name || null, null, avatarUrl || null, null, 'free', JSON.stringify([]), createdAt, null, 0, null, null, null, 'active', null, null, null]);
+      `, [id, email, name || null, null, avatarUrl || null, null, initialTier, JSON.stringify([]), createdAt, null, 0, null, null, null, 'active', null, null, null]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
