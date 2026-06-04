@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { authFetch } from "@/src/lib/authFetch"
 import { format, parseISO } from "date-fns"
-import { ArrowDownIcon, ArrowUpIcon, Download, Loader2 } from "lucide-react"
+import { ArrowDownIcon, ArrowUpIcon, Database, Download, Loader2 } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -174,7 +174,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
     }
 
     return (
-      <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
+      <Card className="rounded-2xl border border-border bg-card shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
         </CardHeader>
@@ -212,6 +212,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
           : errorJobCount > 0
             ? `${errorJobCount} import issue${errorJobCount === 1 ? "" : "s"}`
             : "Report ready"
+  const isPreparationError = Boolean(error && /stored history|being prepared|not ready|warehouse/i.test(error))
 
   if (coverage && activeJobCount > 0 && !data?.source?.rows?.length) {
     return (
@@ -232,13 +233,13 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
   if (loading && !data) {
     return (
       <div className="space-y-6" aria-busy="true">
-        <div className="flex items-center gap-3 rounded-2xl border border-[#E9F0EB] bg-white px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
+        <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
           <span>Loading stored LLM referral data...</span>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, index) => (
-            <Card key={index} className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
+            <Card key={index} className="rounded-2xl border border-border bg-card shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
               <CardHeader className="pb-2">
                 <div className="h-4 w-28 animate-pulse rounded bg-muted" />
               </CardHeader>
@@ -249,19 +250,43 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
           ))}
         </div>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Card className="h-[360px] rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]" />
-          <Card className="h-[360px] rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]" />
+          <Card className="h-[360px] rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]" />
+          <Card className="h-[360px] rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]" />
         </div>
       </div>
     )
   }
 
   if (error && !data) {
-    return <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-5 text-sm text-destructive">{error}</div>
+    return (
+      <Card className={`rounded-2xl border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)] ${isPreparationError ? 'border-border' : 'border-destructive/30'}`}>
+        <CardContent className={`flex min-h-[240px] flex-col items-center justify-center px-6 text-center ${isPreparationError ? 'text-muted-foreground' : 'text-destructive'}`}>
+          <div className={`mb-4 rounded-full p-3 ${isPreparationError ? 'bg-secondary text-primary' : 'bg-destructive/10 text-destructive'}`}>
+            <Database className="h-5 w-5" />
+          </div>
+          <h3 className={`text-lg font-semibold ${isPreparationError ? 'text-foreground' : 'text-destructive'}`}>
+            {isPreparationError ? 'Preparing LLM referral traffic' : 'Could not load LLM referral traffic'}
+          </h3>
+          <p className="mt-2 max-w-2xl text-sm leading-6">{error}</p>
+        </CardContent>
+      </Card>
+    )
   }
 
   if (!data?.totals?.rows || data.totals.rows.length === 0) {
-    return <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-8 text-center text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)]">No LLM referral traffic recorded for this period.</div>
+    return (
+      <Card className="rounded-2xl border border-dashed border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.035)]">
+        <CardContent className="flex min-h-[220px] flex-col items-center justify-center px-6 text-center text-muted-foreground">
+          <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
+            <Database className="h-5 w-5" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">No LLM referral traffic recorded</h3>
+          <p className="mt-2 max-w-2xl text-sm leading-6">
+            Stored Analytics data has no ChatGPT, Perplexity, Copilot, Claude, or similar referral sessions for this date range.
+          </p>
+        </CardContent>
+      </Card>
+    )
   }
 
   const totalsRow = data.totals.rows[0].metricValues
@@ -464,7 +489,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
   return (
     <div className="space-y-6" aria-busy={isWarehouseUpdating}>
       {(isWarehouseUpdating || errorJobCount > 0 || error) && (
-        <div className="flex flex-col gap-2 rounded-2xl border border-[#E9F0EB] bg-white px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_24px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_24px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             {isWarehouseUpdating && !error ? (
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -489,8 +514,8 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
       </div>
 
       <div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="col-span-1 min-w-0 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-          <CardHeader className="flex flex-col gap-3 border-b border-[#E6ECE8] bg-white sm:flex-row sm:items-start sm:justify-between">
+        <Card className="col-span-1 min-w-0 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <CardHeader className="flex flex-col gap-3 border-b border-border bg-card sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle>Traffic metrics by LLM referrer</CardTitle>
               <CardDescription>Displays traffic metrics by LLM referrer.</CardDescription>
@@ -555,8 +580,8 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
           </CardContent>
         </Card>
 
-        <Card className="col-span-1 min-w-0 overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-          <CardHeader className="border-b border-[#E6ECE8] bg-white">
+        <Card className="col-span-1 min-w-0 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+          <CardHeader className="border-b border-border bg-card">
             <CardTitle>LLM Session trend over time</CardTitle>
             <CardDescription>Shows the daily trend of LLM sessions over the selected time period.</CardDescription>
           </CardHeader>
@@ -580,8 +605,8 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
         </Card>
       </div>
 
-      <Card className="overflow-hidden rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardHeader className="flex flex-col gap-3 border-b border-[#E6ECE8] bg-white sm:flex-row sm:items-start sm:justify-between">
+      <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardHeader className="flex flex-col gap-3 border-b border-border bg-card sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle>Landing pages by LLM referrer</CardTitle>
             <CardDescription>Displays landing page performance by LLM referrer.</CardDescription>
