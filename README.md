@@ -16,6 +16,7 @@
   <strong>Open-source SEO analytics platform with long-term data retention and AI-assisted analysis.</strong>
 </p>
 <br>
+
 # NextGen SEO
 *v0.1.0-alpha*
 
@@ -36,6 +37,7 @@ Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) d
 - **AI-assisted analysis**: generate SEO insights and content-audit briefs from connected site evidence.
 - *and many more to come*
 <br>
+
 ## Tech Stack
 
 - React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui
@@ -43,6 +45,7 @@ Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) d
 - SQLite for local development, PostgreSQL for production
 - Docker production image and CI smoke checks
 <br>
+
 ## Run Locally
 
 **Prerequisites:** Node.js 22+
@@ -89,6 +92,7 @@ Health checks:
 - `/api/health` verifies the HTTP process is responding.
 - `/api/ready` verifies the HTTP process can query the database.
 <br>
+
 ## Required Production Environment
 
 Set these before starting with `NODE_ENV=production`:
@@ -153,6 +157,7 @@ npm run verify:production-url -- https://your-app.example.com
 This verifies health, database readiness, SPA serving, security headers, built asset cache headers, and OAuth callback route availability.
 For local Compose smoke tests only, set `PRODUCTION_VERIFY_ALLOW_HTTP=true` when checking `http://127.0.0.1:3010`.
 <br>
+
 ## Data Warehouse Storage
 
 NextGen SEO uses a warehouse-first model. Dashboards and exports should read from stored data wherever possible, so reports stay fast, repeatable, and independent of live provider availability.
@@ -177,6 +182,7 @@ To copy existing local SQLite data into PostgreSQL:
 npm run db:migrate:postgres
 ```
 <br>
+
 ## License
 
 NextGen SEO is licensed under the GNU Affero General Public License v3.0.
