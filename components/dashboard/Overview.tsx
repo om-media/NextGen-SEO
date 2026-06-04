@@ -6,7 +6,7 @@ import { GscApiService } from "@/src/services/gscService"
 import { addDays, differenceInCalendarDays, format, parseISO, startOfWeek, startOfMonth } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
-import { Check, Download, MoreVertical, Info } from "lucide-react"
+import { Check, Database, Download, Loader2, MoreVertical, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Annotation } from "@/src/services/annotationsService"
 import { authFetch } from "@/src/lib/authFetch"
@@ -882,9 +882,13 @@ export function Overview({
               {miniSparkline(metric.key, metric.color)}
             </div>
             <div className="mt-2 flex items-center gap-2 text-xs">
-              {renderMetricCompare(metric)}
+              {isInitialLoading ? (
+                <span className="text-[#647067]">Loading stored data</span>
+              ) : (
+                renderMetricCompare(metric)
+              )}
               <span className="ml-auto rounded-md px-2 py-1 text-xs" style={{ color: metric.color, backgroundColor: `${metric.color}12` }}>
-                {metric.suffix}
+                {isInitialLoading ? "..." : metric.suffix}
               </span>
             </div>
           </button>
@@ -942,6 +946,18 @@ export function Overview({
           {isInitialLoading ? (
             <div className="h-[320px] w-full rounded-2xl bg-background p-6">
               <div className="relative h-full overflow-hidden rounded-xl border border-border bg-card">
+                <div className="absolute left-1/2 top-1/2 z-10 flex w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-2xl border border-border bg-card/95 px-6 py-5 text-center shadow-[0_16px_44px_rgba(15,61,46,0.08)]">
+                  <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-secondary text-primary">
+                    <Database className="h-5 w-5" />
+                  </div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    Loading stored Search Console data
+                  </div>
+                  <p className="mt-2 text-sm leading-5 text-muted-foreground">
+                    Preparing metrics for the selected site and date range.
+                  </p>
+                </div>
                 <div className="absolute inset-x-0 top-[18%] h-px bg-border" />
                 <div className="absolute inset-x-0 top-[42%] h-px bg-border" />
                 <div className="absolute inset-x-0 top-[66%] h-px bg-border" />

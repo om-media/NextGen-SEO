@@ -567,6 +567,23 @@ export function GscDataGrid({
             onSearchTermChange={setSearchTerm}
           />
 
+          {loading && data.length === 0 && (
+            <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-border bg-secondary/40 p-4 text-sm text-muted-foreground sm:flex-row sm:items-center">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-card text-primary shadow-sm">
+                <Database className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 font-semibold text-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  Loading stored {dimension === "query" ? "query" : dimension === "page" ? "page" : "country"} data
+                </div>
+                <p className="mt-1">
+                  Reading the app warehouse for this site and date range. Results will appear here as soon as the stored rows are ready.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-hidden rounded-2xl border border-border bg-card">
             <Table>
               <TableHeader>
