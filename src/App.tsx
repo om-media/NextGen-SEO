@@ -35,6 +35,18 @@ type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
 
 const selectedSiteCacheKey = (userId: string) => `selected_site_cache:${userId}`;
 const selectedGa4PropertyCacheKey = (userId: string) => `selected_ga4_property_cache:${userId}`;
+const gscSitesCacheKey = (userId: string) => `gsc_sites_cache:${userId}`;
+const ga4SitesCacheKey = (userId: string) => `ga4_sites_cache:${userId}`;
+
+function readCachedList<T>(key: string): T[] {
+  try {
+    const saved = localStorage.getItem(key);
+    const parsed = saved ? JSON.parse(saved) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 const AppContent = lazy(() => import("./components/app/AppContent").then((module) => ({ default: module.AppContent })));
 const OnboardingFlow = lazy(() => import("./components/app/OnboardingFlow").then((module) => ({ default: module.OnboardingFlow })));
@@ -54,15 +66,9 @@ function MainApp() {
   const { user, userProfile, loading, signOut, connectGoogleServices, disconnectGoogleServices, unlockSite, setBingApiKey, completeOnboarding, updateDefaultSite, updateDefaultGa4Property, updateUserProfile } = useAuth()
   const isOnboarding = Boolean(userProfile && !userProfile.onboardingCompleted)
   const [settingsInitialTab, setSettingsInitialTab] = useState<"profile" | "plan" | "workspace" | "integrations">("profile")
-  const [sites, setSites] = useState<GscSite[]>(() => {
-    const saved = localStorage.getItem('gsc_sites_cache');
-    return saved ? JSON.parse(saved) : [];
-  })
+  const [sites, setSites] = useState<GscSite[]>([])
   const [bingSites, setBingSites] = useState<BingSite[]>([])
-  const [ga4Sites, setGa4Sites] = useState<{siteUrl: string, displayName: string}[]>(() => {
-    const saved = localStorage.getItem('ga4_sites_cache');
-    return saved ? JSON.parse(saved) : [];
-  })
+  const [ga4Sites, setGa4Sites] = useState<{siteUrl: string, displayName: string}[]>([])
   const [selectedSite, setSelectedSite] = useState("")
   const [selectedGa4Property, setSelectedGa4Property] = useState("")
   const [initializedSelectionsForUser, setInitializedSelectionsForUser] = useState<string | null>(null)
@@ -170,12 +176,22 @@ function MainApp() {
   }, [user?.uid])
 
   useEffect(() => {
-    localStorage.setItem('gsc_sites_cache', JSON.stringify(sites));
-  }, [sites]);
+    if (!user?.uid || initializedSelectionsForUser !== user.uid) {
+      return;
+    }
+
+    localStorage.setItem(gscSitesCacheKey(user.uid), JSON.stringify(sites));
+    localStorage.removeItem('gsc_sites_cache');
+  }, [initializedSelectionsForUser, sites, user?.uid]);
 
   useEffect(() => {
-    localStorage.setItem('ga4_sites_cache', JSON.stringify(ga4Sites));
-  }, [ga4Sites]);
+    if (!user?.uid || initializedSelectionsForUser !== user.uid) {
+      return;
+    }
+
+    localStorage.setItem(ga4SitesCacheKey(user.uid), JSON.stringify(ga4Sites));
+    localStorage.removeItem('ga4_sites_cache');
+  }, [ga4Sites, initializedSelectionsForUser, user?.uid]);
 
   useEffect(() => {
     if (!user?.uid || initializedSelectionsForUser !== user.uid) {
@@ -225,13 +241,35 @@ function MainApp() {
     const userKey = user?.uid || null;
     if (!userKey) {
       setInitializedSelectionsForUser(null);
+      setSites([]);
+      setBingSites([]);
+      setGa4Sites([]);
+      setSelectedSite("");
+      setSelectedGa4Property("");
       return;
     }
 
-    if (!userProfile || initializedSelectionsForUser === userKey) {
+    if (!userProfile) {
+      if (initializedSelectionsForUser && initializedSelectionsForUser !== userKey) {
+        setInitializedSelectionsForUser(null);
+        setSites([]);
+        setBingSites([]);
+        setGa4Sites([]);
+        setSelectedSite("");
+        setSelectedGa4Property("");
+      }
       return;
     }
 
+    if (initializedSelectionsForUser === userKey) {
+      return;
+    }
+
+    setSites(readCachedList<GscSite>(gscSitesCacheKey(userKey)));
+    setBingSites([]);
+    setGa4Sites(readCachedList<{siteUrl: string, displayName: string}>(ga4SitesCacheKey(userKey)));
+    localStorage.removeItem('gsc_sites_cache');
+    localStorage.removeItem('ga4_sites_cache');
     const cachedSite = localStorage.getItem(selectedSiteCacheKey(userKey)) || "";
     const cachedGa4Property = localStorage.getItem(selectedGa4PropertyCacheKey(userKey)) || "";
     setSelectedSite(cachedSite || userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "");
