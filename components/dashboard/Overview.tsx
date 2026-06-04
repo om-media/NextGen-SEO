@@ -6,7 +6,7 @@ import { GscApiService } from "@/src/services/gscService"
 import { addDays, differenceInCalendarDays, format, parseISO, startOfWeek, startOfMonth } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
-import { Check, Download, MoreVertical, Info } from "lucide-react"
+import { Check, Database, Download, Loader2, MoreVertical, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Annotation } from "@/src/services/annotationsService"
 import { authFetch } from "@/src/lib/authFetch"
@@ -953,6 +953,14 @@ export function Overview({
           {isInitialLoading ? (
             <div className="h-[320px] w-full rounded-2xl bg-background p-6">
               <div className="relative h-full overflow-hidden rounded-xl border border-border bg-card">
+                <div className="absolute left-5 top-5 z-10 inline-flex items-center gap-2 rounded-full border border-border bg-card/90 px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                  Loading chart
+                </div>
+                <div className="absolute right-5 top-5 z-10 inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1.5 text-xs font-medium text-primary">
+                  <Database className="h-3.5 w-3.5" />
+                  Stored data
+                </div>
                 <div className="absolute inset-x-0 top-[18%] h-px bg-border" />
                 <div className="absolute inset-x-0 top-[42%] h-px bg-border" />
                 <div className="absolute inset-x-0 top-[66%] h-px bg-border" />
