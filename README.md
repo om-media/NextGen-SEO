@@ -124,6 +124,7 @@ npm run secrets:generate
 ```
 
 Add the exact production callback URI to the Google OAuth client.
+<br>
 
 ## Docker
 
