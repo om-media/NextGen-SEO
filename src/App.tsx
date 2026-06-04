@@ -1012,7 +1012,6 @@ function MainApp() {
               {(activeMenu === "Settings" || activeMenu === "AI Content Auditor" || !( !userProfile?.googleConnected && (((dataSource === 'gsc' || dataSource === 'blended') && sites.length === 0) || (dataSource === 'ga4' && ga4Sites.length === 0) || (dataSource === 'bing' && bingSites.length === 0)) )) && (
                 <Suspense fallback={<DashboardContentFallback />}>
                   <AppContent
-                    key={`${dataSource}-${selectedSite}-${selectedGa4Property}`}
                     activeMenu={activeMenu}
                     annotations={annotations}
                     apiError={apiError}
