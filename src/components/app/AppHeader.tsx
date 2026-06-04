@@ -59,6 +59,14 @@ const DATA_SOURCE_LABELS: Record<DataSource, string> = {
 };
 const DATA_SOURCE_OPTIONS: DataSource[] = ["gsc", "bing", "ga4", "blended"];
 
+function getMenuDisplayLabel(menu: string) {
+  if (menu === "Raw Data") {
+    return "Source Data";
+  }
+
+  return menu;
+}
+
 export function AppHeader({
   activeMenu,
   currentSites,
@@ -91,7 +99,7 @@ export function AppHeader({
       <div className="flex min-w-0 flex-1 items-center gap-3 md:flex-none">
         <SidebarTrigger />
         <div className="min-w-0">
-          <h1 className="truncate text-[15px] font-semibold leading-none">{activeMenu}</h1>
+          <h1 className="truncate text-[15px] font-semibold leading-none">{getMenuDisplayLabel(activeMenu)}</h1>
           <p className="mt-1 hidden text-[11px] font-medium text-muted-foreground sm:block">Live workspace</p>
         </div>
       </div>

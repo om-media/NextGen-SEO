@@ -3,7 +3,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { authFetch } from "@/src/lib/authFetch";
 import { format, parseISO } from "date-fns";
-import { CheckCircle2, Clock3, RefreshCw } from "lucide-react";
+import { CheckCircle2, Clock3, Database, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { DateRange } from "react-day-picker";
 
@@ -163,11 +163,13 @@ export function AppToolbar({
               </button>
               {rawDataAvailable && onOpenRawData && (
                 <button
-                  className="h-9 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
+                  className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
                   onClick={onOpenRawData}
+                  title="Open stored source data for this workspace."
                   type="button"
                 >
-                  Export data
+                  <Database className="h-4 w-4" />
+                  Source data
                 </button>
               )}
             </>

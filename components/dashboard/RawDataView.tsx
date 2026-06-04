@@ -230,7 +230,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
           siteUrl,
           startDate,
         }));
-        exportCsv(`raw-gsc-${gscKind}-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
+        exportCsv(`source-search-console-${gscKind}-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
       } else if (source === "ga4") {
         if (!ga4PropertyId) return;
         const rows = ga4PageKinds.has(ga4Kind)
@@ -252,7 +252,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
               search,
               startDate,
             }));
-        exportCsv(`raw-ga4-${ga4Kind}-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
+        exportCsv(`source-ga4-${ga4Kind}-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
       } else {
         if (crawlKind === "links") {
           const rows = await fetchAllRows((nextOffset) => fetchCrawlLinks({
@@ -262,7 +262,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
             search,
             siteUrl,
           }));
-          exportCsv(`raw-crawl-links-${selectedCrawlJobId || "latest"}.csv`, rows as unknown as Record<string, unknown>[]);
+          exportCsv(`source-crawler-links-${selectedCrawlJobId || "latest"}.csv`, rows as unknown as Record<string, unknown>[]);
         } else {
           const rows = await fetchAllRows((nextOffset) => fetchCrawlPages({
             issue: crawlIssueFilter,
@@ -272,7 +272,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
             search,
             siteUrl,
           }));
-          exportCsv(`raw-crawl-pages-${selectedCrawlJobId || "latest"}.csv`, rows as unknown as Record<string, unknown>[]);
+          exportCsv(`source-crawler-pages-${selectedCrawlJobId || "latest"}.csv`, rows as unknown as Record<string, unknown>[]);
         }
       }
     } catch (err: any) {
