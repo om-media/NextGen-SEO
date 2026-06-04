@@ -545,7 +545,7 @@ function getSectionCopy(activeMenu: string, dataSource: DataSource) {
   if (activeMenu === "Settings") {
     return {
       title: "Manage your workspace",
-      description: "Update profile details, plan access, workspace defaults, and connected data sources.",
+      description: "Update profile details, workspace defaults, and connected data sources.",
     };
   }
 

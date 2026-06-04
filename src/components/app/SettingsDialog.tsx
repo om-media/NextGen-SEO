@@ -9,8 +9,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { CheckCircle2, ExternalLink, Loader2, ShieldAlert } from "lucide-react";
 import type { UserProfile } from "../../contexts/AuthContext";
-import type { BillingConfig } from "../../services/billingService";
-import { getPlanDefinition, getPlanDisplayName, getPlanPropertyLimit, getRemainingPropertySlots } from "../../../shared/plans";
 
 type DataSource = "gsc" | "bing" | "ga4" | "blended";
 
@@ -23,24 +21,19 @@ export type SettingsDraft = {
 };
 
 type SettingsDialogProps = {
-  billingConfig: BillingConfig | null;
   dataSource: DataSource;
   draft: SettingsDraft;
   googleConnected: boolean;
-  initialTab?: "profile" | "plan" | "workspace" | "integrations";
+  initialTab?: "profile" | "workspace" | "integrations";
   isConnectingGoogle: boolean;
   isDisconnectingGoogle: boolean;
-  isOpeningBillingPortal: boolean;
-  isStartingCheckout: boolean;
   isUpdatingDefaultSite: boolean;
   onClose: () => void;
   onConnectGoogle: () => Promise<void>;
   onDisconnectGoogle: () => Promise<void>;
   onDraftChange: (draft: SettingsDraft) => void;
-  onOpenBillingPortal: () => Promise<void>;
   onSave: () => Promise<void>;
   onSetDefaultSite: () => Promise<void>;
-  onStartCheckout: (targetPlan: "pro" | "enterprise") => Promise<void>;
   open: boolean;
   selectedSite: string;
   userEmail?: string | null;
@@ -58,42 +51,20 @@ function updateDraft(
   });
 }
 
-function formatDateLabel(value?: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 export function SettingsDialog({
-  billingConfig,
   dataSource,
   draft,
   googleConnected,
   initialTab = "profile",
   isConnectingGoogle,
   isDisconnectingGoogle,
-  isOpeningBillingPortal,
-  isStartingCheckout,
   isUpdatingDefaultSite,
   onClose,
   onConnectGoogle,
   onDisconnectGoogle,
   onDraftChange,
-  onOpenBillingPortal,
   onSave,
   onSetDefaultSite,
-  onStartCheckout,
   open,
   selectedSite,
   userEmail,
@@ -111,32 +82,20 @@ export function SettingsDialog({
   const avatarFallback = displayName.charAt(0).toUpperCase() || "U";
   const unlockedSites = userProfile?.unlockedSites || [];
   const knownSites = userProfile?.knownSites || [];
-  const planDefinition = getPlanDefinition(userProfile?.tier);
-  const planName = getPlanDisplayName(userProfile?.tier);
-  const propertyLimit = getPlanPropertyLimit(userProfile?.tier);
-  const slotsRemaining = getRemainingPropertySlots(userProfile?.tier, unlockedSites.length);
-  const billingStatus = userProfile?.billingStatus === "trialing" ? "active" : (userProfile?.billingStatus || "active");
-  const periodEndLabel = formatDateLabel(userProfile?.currentPeriodEnd);
   const bingConnected = Boolean(userProfile?.bingConnected);
-  const billingTone = billingStatus === "active"
-    ? "secondary"
-    : billingStatus === "past_due" || billingStatus === "incomplete"
-      ? "destructive"
-      : "outline";
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <DialogContent className="max-h-[88vh] overflow-hidden p-0 sm:max-w-4xl">
         <DialogHeader className="border-b border-border bg-card px-6 py-5">
           <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Manage your profile, workspace defaults, integrations, and billing in one place.</DialogDescription>
+          <DialogDescription>Manage your profile, workspace defaults, and integrations in one place.</DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)} className="flex max-h-[calc(88vh-84px)] flex-col">
           <div className="border-b border-border bg-background px-6 py-4">
-            <TabsList className="grid w-full grid-cols-4 rounded-2xl border border-border bg-card/80 p-1 shadow-sm">
+            <TabsList className="grid w-full grid-cols-3 rounded-2xl border border-border bg-card/80 p-1 shadow-sm">
               <TabsTrigger value="profile" className="rounded-xl data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-sm">Profile</TabsTrigger>
-              <TabsTrigger value="plan" className="rounded-xl data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-sm">Plan</TabsTrigger>
               <TabsTrigger value="workspace" className="rounded-xl data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-sm">Workspace</TabsTrigger>
               <TabsTrigger value="integrations" className="rounded-xl data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-sm">Integrations</TabsTrigger>
             </TabsList>
@@ -187,139 +146,7 @@ export function SettingsDialog({
               </div>
             </TabsContent>
 
-            <TabsContent value="plan" className="mt-0 space-y-5 pt-0">
-              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-muted-foreground">Current plan</p>
-                    <p className="text-3xl font-semibold tracking-tight">{planDefinition.displayName}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {planDefinition.monthlyPriceLabel === "Custom"
-                        ? "Custom pricing and enterprise-scale access."
-                        : `${planDefinition.monthlyPriceLabel}/month with usage-based plan boundaries.`}
-                    </p>
-                  </div>
-                  <Badge variant="secondary">
-                    {propertyLimit === null ? "Unlimited properties" : `${propertyLimit} active propert${propertyLimit === 1 ? "y" : "ies"}`}
-                  </Badge>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">Billing status</p>
-                    <p className="text-sm text-muted-foreground">Plan access and billing issues are surfaced clearly when billing is configured.</p>
-                  </div>
-                  <Badge variant={billingTone}>{billingStatus.replace("_", " ")}</Badge>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl border border-border bg-background px-3 py-3 text-sm">
-                    <p className="font-medium">Plan access</p>
-                    <p className="mt-1 text-muted-foreground">{billingStatus === "active" ? "Active" : billingStatus.replace("_", " ")}</p>
-                  </div>
-                  <div className="rounded-xl border border-border bg-background px-3 py-3 text-sm">
-                    <p className="font-medium">Current period end</p>
-                    <p className="mt-1 text-muted-foreground">{periodEndLabel || "Not billing yet"}</p>
-                  </div>
-                  <div className="rounded-xl border border-border bg-background px-3 py-3 text-sm">
-                    <p className="font-medium">Subscription ID</p>
-                    <p className="mt-1 truncate text-muted-foreground">{userProfile?.subscriptionId || "Pending billing integration"}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-                  <p className="text-sm font-medium">Feature highlights</p>
-                  <div className="mt-3 space-y-2 text-sm text-muted-foreground">
-                    {planDefinition.featureHighlights.map((feature) => (
-                      <div key={feature} className="flex items-start gap-2">
-                        <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
-                        <span>{feature}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-                  <p className="text-sm font-medium">Entitlements</p>
-                  <div className="mt-3 space-y-2 text-sm text-muted-foreground">
-                    <div className="flex items-center justify-between gap-4">
-                      <span>AI insights</span>
-                      <Badge variant="outline">{planDefinition.aiInsights}</Badge>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span>History import</span>
-                      <Badge variant="outline">{planDefinition.warehouseSync}</Badge>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span>Rank tracking</span>
-                      <Badge variant="outline">{planDefinition.rankTracking}</Badge>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span>Property slots</span>
-                      <Badge variant="outline">{propertyLimit === null ? "Unlimited" : propertyLimit}</Badge>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">Billing actions</p>
-                    <p className="text-sm text-muted-foreground">Upgrade or manage billing once your provider integration is configured.</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={() => onStartCheckout("pro")} disabled={isStartingCheckout || !billingConfig?.checkoutConfigured || planName === "Pro" || planName === "Enterprise"}>
-                      {isStartingCheckout ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                      Upgrade to Pro
-                    </Button>
-                    <Button variant="outline" onClick={() => onStartCheckout("enterprise")} disabled={isStartingCheckout || !billingConfig?.checkoutConfigured || planName === "Enterprise"}>
-                      {isStartingCheckout ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                      Contact for Enterprise
-                    </Button>
-                    <Button variant="ghost" onClick={onOpenBillingPortal} disabled={isOpeningBillingPortal || !billingConfig?.portalConfigured}>
-                      {isOpeningBillingPortal ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                      Manage Billing
-                    </Button>
-                  </div>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-3 text-sm">
-                    <p className="font-medium">Checkout</p>
-                    <p className="mt-1 text-muted-foreground">{billingConfig?.checkoutConfigured ? "Configured" : "Not configured yet"}</p>
-                  </div>
-                  <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-3 text-sm">
-                    <p className="font-medium">Billing portal</p>
-                    <p className="mt-1 text-muted-foreground">{billingConfig?.portalConfigured ? "Configured" : "Not configured yet"}</p>
-                  </div>
-                  <div className="rounded-xl border border-[#E6ECE8] bg-[#FBFCFB] px-3 py-3 text-sm">
-                    <p className="font-medium">Webhook sync</p>
-                    <p className="mt-1 text-muted-foreground">{billingConfig?.webhookConfigured ? "Configured" : "Not configured yet"}</p>
-                  </div>
-                </div>
-              </div>
-            </TabsContent>
-
             <TabsContent value="workspace" className="mt-0 space-y-5 pt-0">
-              <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">Plan usage</p>
-                    <p className="text-sm text-muted-foreground">
-                      {propertyLimit === null
-                        ? `${planName} includes unlimited active properties.`
-                        : `You are using ${unlockedSites.length} of ${propertyLimit} property slots on your ${planName} plan.`}
-                    </p>
-                  </div>
-                  <Badge variant={slotsRemaining === 0 ? "destructive" : "secondary"}>
-                    {slotsRemaining === null ? "Unlimited" : `${slotsRemaining} slot${slotsRemaining === 1 ? "" : "s"} left`}
-                  </Badge>
-                </div>
-              </div>
-
               <div className="rounded-2xl border border-[#E6ECE8] bg-white p-5 shadow-sm space-y-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>

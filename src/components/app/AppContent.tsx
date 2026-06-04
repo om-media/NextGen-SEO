@@ -59,7 +59,7 @@ type AppContentProps = {
   onGa4DashboardTabChange: (value: Ga4DashboardTab) => void;
   onGa4UserDimensionChange: (value: Ga4Dimension) => void;
   onGscDashboardTabChange: (value: GscDashboardTab) => void;
-  onOpenSettings: (tab?: "profile" | "plan" | "workspace" | "integrations") => void;
+  onOpenSettings: (tab?: "profile" | "workspace" | "integrations") => void;
   onActivateWorkspaceSite: (siteUrl: string) => Promise<void>;
   onOpenSiteWorkspace: (siteUrl: string, menu: "Dashboard" | "Crawl Inventory" | "Raw Data" | "Reconciliation") => void;
   selectedSite: string;
@@ -433,12 +433,6 @@ export function AppContent({
               description: "Update your display name, company, bio, and avatar image.",
               action: "Edit profile",
               tab: "profile" as const,
-            },
-            {
-              title: "Plan",
-              description: "Review property limits, billing status, and upgrade options.",
-              action: "View plan",
-              tab: "plan" as const,
             },
             {
               title: "Workspace",

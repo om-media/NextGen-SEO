@@ -6,7 +6,6 @@ type DataSource = "gsc" | "bing" | "ga4" | "blended";
 type AppStatusPanelsProps = {
   apiError: string | null;
   bingSitesCount: number;
-  billingStatus?: "trialing" | "active" | "past_due" | "canceled" | "incomplete";
   dataSource: DataSource;
   fetchingSites: boolean;
   fullGa4SitesCount: number;
@@ -17,7 +16,6 @@ type AppStatusPanelsProps = {
   isConnectingGoogle: boolean;
   onConnectGoogle: () => Promise<void>;
   onOpenGa4Setup: () => void;
-  onOpenPlan: () => void;
   selectedSite: string;
   sessionExpired: boolean;
 };
@@ -41,7 +39,6 @@ function renderNoPropertiesMessage(dataSource: DataSource) {
 export function AppStatusPanels({
   apiError,
   bingSitesCount,
-  billingStatus,
   dataSource,
   fetchingSites,
   fullGa4SitesCount,
@@ -52,7 +49,6 @@ export function AppStatusPanels({
   isConnectingGoogle,
   onConnectGoogle,
   onOpenGa4Setup,
-  onOpenPlan,
   selectedSite,
   sessionExpired,
 }: AppStatusPanelsProps) {
@@ -89,8 +85,6 @@ export function AppStatusPanels({
     sourcePropertyCount > 0 &&
     !hasValidSelectedSite &&
       (googleConnected || dataSource === "bing");
-  const showBillingBanner = billingStatus === "past_due" || billingStatus === "incomplete" || billingStatus === "canceled";
-
   if (hasNoSites) {
     return (
       <div className="mt-8 flex flex-col items-center justify-center space-y-6 rounded-2xl border border-border bg-card p-12 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
@@ -124,20 +118,6 @@ export function AppStatusPanels({
 
   return (
     <>
-      {showBillingBanner && (
-        <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-destructive sm:flex-row">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-5 w-5" />
-            <div className="text-sm">
-              <strong>Billing Needs Attention</strong> - Your workspace is on the {String(billingStatus).replace("_", " ")} state. Update your plan settings so upgrades, trial transitions, and property access stay predictable.
-            </div>
-          </div>
-          <Button onClick={onOpenPlan} variant="outline" size="sm" className="shrink-0">
-            View Plan
-          </Button>
-        </div>
-      )}
-
       {showDisconnectedBanner && (
         <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200 sm:flex-row">
           <div className="flex items-center gap-2">

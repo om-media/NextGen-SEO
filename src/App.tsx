@@ -28,7 +28,6 @@ import { AppToolbar } from "./components/app/AppToolbar"
 import type { SettingsDraft } from "./components/app/SettingsDialog"
 import { getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
 import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownSites } from "./lib/siteData"
-import { getBillingConfig, openBillingPortal, startCheckout, type BillingConfig } from "./services/billingService"
 import { canUseRawExports, canUseReconciliation, getPlanPropertyLimit, isMultiSitePlan } from "../shared/plans"
 
 type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
@@ -65,7 +64,7 @@ function DashboardContentFallback() {
 function MainApp() {
   const { user, userProfile, loading, signOut, connectGoogleServices, disconnectGoogleServices, unlockSite, setBingApiKey, completeOnboarding, updateDefaultSite, updateDefaultGa4Property, updateUserProfile } = useAuth()
   const isOnboarding = Boolean(userProfile && !userProfile.onboardingCompleted)
-  const [settingsInitialTab, setSettingsInitialTab] = useState<"profile" | "plan" | "workspace" | "integrations">("profile")
+  const [settingsInitialTab, setSettingsInitialTab] = useState<"profile" | "workspace" | "integrations">("profile")
   const [sites, setSites] = useState<GscSite[]>([])
   const [bingSites, setBingSites] = useState<BingSite[]>([])
   const [ga4Sites, setGa4Sites] = useState<{siteUrl: string, displayName: string}[]>([])
@@ -75,10 +74,7 @@ function MainApp() {
   const [fetchingSites, setFetchingSites] = useState(false)
   const [isConnectingGoogleData, setIsConnectingGoogleData] = useState(false)
   const [isDisconnectingGoogleData, setIsDisconnectingGoogleData] = useState(false)
-  const [isStartingCheckout, setIsStartingCheckout] = useState(false)
-  const [isOpeningBillingPortal, setIsOpeningBillingPortal] = useState(false)
   const [isUpdatingDefaultSite, setIsUpdatingDefaultSite] = useState(false)
-  const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [dataSource, setDataSource] = useState<DataSource>('gsc')
   const [gscSyncVersion, setGscSyncVersion] = useState(0)
@@ -102,7 +98,7 @@ function MainApp() {
   const [gscDashboardTab, setGscDashboardTab] = useState<GscDashboardTab>("overview")
   const [ga4DashboardTab, setGa4DashboardTab] = useState<Ga4DashboardTab>("overview")
 
-  const openSettings = (tab: "profile" | "plan" | "workspace" | "integrations" = "profile") => {
+  const openSettings = (tab: "profile" | "workspace" | "integrations" = "profile") => {
     setSettingsInitialTab(tab)
     setSettingsDraft({
       avatarUrl: userProfile?.avatarUrl || user?.photoURL || "",
@@ -282,24 +278,6 @@ function MainApp() {
     userProfile?.activatedSiteUrl,
     userProfile?.unlockedSites,
   ]);
-
-  useEffect(() => {
-    if (!user) {
-      setBillingConfig(null)
-      return
-    }
-
-    if (!showSettingsModal && !backgroundEffectsReady) {
-      return;
-    }
-
-    getBillingConfig()
-      .then(setBillingConfig)
-      .catch((error) => {
-        console.warn("Failed to load billing config:", error)
-        setBillingConfig(null)
-      })
-  }, [backgroundEffectsReady, showSettingsModal, user])
 
   const [dateRange, setDateRange] = useState<DateRange>({
     from: subDays(new Date(), 30),
@@ -762,54 +740,6 @@ function MainApp() {
     }
   };
 
-  const handleStartCheckout = async (targetPlan: "pro" | "enterprise") => {
-    setIsStartingCheckout(true);
-    const checkoutToast = toast.loading(targetPlan === "enterprise" ? "Preparing enterprise contact flow" : "Preparing checkout", {
-      description: targetPlan === "enterprise"
-        ? "We’re opening the enterprise upgrade path for this workspace."
-        : "We’re opening the upgrade flow for this workspace.",
-    });
-
-    try {
-      const url = await startCheckout(targetPlan);
-      window.open(url, "_blank", "noopener,noreferrer");
-      toast.success(targetPlan === "enterprise" ? "Enterprise flow opened" : "Checkout opened", {
-        id: checkoutToast,
-        description: "Continue the plan change in the newly opened billing window.",
-      });
-    } catch (err: any) {
-      toast.error("Billing flow unavailable", {
-        id: checkoutToast,
-        description: err.message || "We couldn't open billing right now.",
-      });
-    } finally {
-      setIsStartingCheckout(false);
-    }
-  };
-
-  const handleOpenBillingPortal = async () => {
-    setIsOpeningBillingPortal(true);
-    const portalToast = toast.loading("Opening billing portal", {
-      description: "We’re preparing your self-serve billing workspace.",
-    });
-
-    try {
-      const url = await openBillingPortal();
-      window.open(url, "_blank", "noopener,noreferrer");
-      toast.success("Billing portal opened", {
-        id: portalToast,
-        description: "Manage payment methods, invoices, and subscription details in the new tab.",
-      });
-    } catch (err: any) {
-      toast.error("Billing portal unavailable", {
-        id: portalToast,
-        description: err.message || "We couldn't open the billing portal right now.",
-      });
-    } finally {
-      setIsOpeningBillingPortal(false);
-    }
-  };
-
   const savedGa4Property = userProfile?.activatedGa4PropertyId
     ? {
       siteUrl: userProfile.activatedGa4PropertyId,
@@ -983,7 +913,7 @@ function MainApp() {
           isConnectingGoogle={isConnectingGoogleData}
           onComplete={handleFinishOnboarding}
           onConnectGoogle={handleConnectGoogleData}
-          onOpenPlan={() => openSettings("plan")}
+          onOpenPlan={() => openSettings("workspace")}
           onSelectGa4Property={setSelectedGa4Property}
           onSelectSite={setSelectedSite}
           selectedGa4Property={selectedGa4Property}
@@ -1056,7 +986,6 @@ function MainApp() {
                 <AppStatusPanels
                   apiError={apiError}
                   bingSitesCount={bingSites.length}
-                  billingStatus={userProfile?.billingStatus}
                   dataSource={dataSource}
                   fetchingSites={fetchingSites}
                   fullGa4SitesCount={ga4Sites.length}
@@ -1067,7 +996,6 @@ function MainApp() {
                   isConnectingGoogle={isConnectingGoogleData}
                   onConnectGoogle={handleConnectGoogleData}
                   onOpenGa4Setup={() => setShowGa4PropertyDialog(true)}
-                  onOpenPlan={() => openSettings("plan")}
                   selectedSite={currentSelection}
                   sessionExpired={sessionExpired}
                 />
@@ -1118,31 +1046,26 @@ function MainApp() {
         <UnlockSiteDialog
           onClose={() => setShowUnlockModal(false)}
           onConfirm={confirmUnlock}
-          onOpenPlan={() => openSettings("plan")}
+          onOpenWorkspace={() => openSettings("workspace")}
           open={showUnlockModal}
           siteToUnlock={siteToUnlock}
           unlockError={unlockError}
           userProfile={userProfile}
         />
         <SettingsDialog
-          billingConfig={billingConfig}
           dataSource={dataSource}
           googleConnected={Boolean(userProfile?.googleConnected)}
           initialTab={settingsInitialTab}
           isConnectingGoogle={isConnectingGoogleData}
           isDisconnectingGoogle={isDisconnectingGoogleData}
-          isOpeningBillingPortal={isOpeningBillingPortal}
-          isStartingCheckout={isStartingCheckout}
           isUpdatingDefaultSite={isUpdatingDefaultSite}
           onClose={() => setShowSettingsModal(false)}
           onConnectGoogle={handleConnectGoogleData}
           onDisconnectGoogle={handleDisconnectGoogleData}
           draft={settingsDraft}
           onDraftChange={setSettingsDraft}
-          onOpenBillingPortal={handleOpenBillingPortal}
           onSave={handleSaveSettings}
           onSetDefaultSite={handleSetDefaultSite}
-          onStartCheckout={handleStartCheckout}
           open={showSettingsModal}
           selectedSite={selectedSite}
           userEmail={user.email}
