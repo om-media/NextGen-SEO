@@ -767,15 +767,17 @@ function MainApp() {
     ? accessibleGa4Sites.filter((site) => isGa4PropertyForWorkspaceSite(site, selectedSite))
     : accessibleGa4Sites;
   const mappedGa4PropertyForWorkspace = getGa4PropertyForWorkspaceSite(accessibleGa4Sites, selectedSite);
-  const selectedGa4PropertyForWorkspace = workspaceMatchedGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
+  const selectedGa4PropertyForDashboard = accessibleGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
     ? selectedGa4Property
     : "";
+  const activeGa4PropertyId = selectedGa4PropertyForDashboard || mappedGa4PropertyForWorkspace || null;
+  const visibleGa4Sites = dataSource === 'ga4' ? accessibleGa4Sites : workspaceMatchedGa4Sites;
   const accessibleWorkspaceSites = accessibleGscSites.length > 0
     ? accessibleGscSites
     : (userProfile?.unlockedSites || []).map((siteUrl) => ({ siteUrl, permissionLevel: "warehouse" }));
 
-  const currentSites = dataSource === 'ga4' ? workspaceMatchedGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
-  const currentSelection = dataSource === 'ga4' ? selectedGa4PropertyForWorkspace : selectedSite;
+  const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
+  const currentSelection = dataSource === 'ga4' ? selectedGa4PropertyForDashboard : selectedSite;
   const showStatusPanels = activeMenu === "Dashboard";
   const showReportToolbar = [
     "AI Content Auditor",
@@ -857,27 +859,16 @@ function MainApp() {
   }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, isOnboarding, selectedSite, userProfile]);
 
   useEffect(() => {
-    if (isOnboarding || dataSource !== 'ga4' || workspaceMatchedGa4Sites.length === 0) {
-      return;
-    }
-
-    const workspaceMatchedProperty = getGa4PropertyForWorkspaceSite(workspaceMatchedGa4Sites);
-    if (workspaceMatchedProperty && selectedGa4Property !== workspaceMatchedProperty) {
-      setSelectedGa4Property(workspaceMatchedProperty);
-    }
-  }, [dataSource, isOnboarding, selectedGa4Property, selectedSite, workspaceMatchedGa4Sites]);
-
-  useEffect(() => {
     if (!userProfile || isOnboarding || userProfile.tier === 'enterprise') {
       return;
     }
 
     if (userProfile.activatedGa4PropertyId && mappedGa4PropertyForWorkspace === userProfile.activatedGa4PropertyId && selectedGa4Property !== userProfile.activatedGa4PropertyId) {
       setSelectedGa4Property(userProfile.activatedGa4PropertyId);
-    } else if (dataSource === 'ga4' && selectedGa4Property && !selectedGa4PropertyForWorkspace) {
+    } else if (dataSource === 'ga4' && selectedGa4Property && !selectedGa4PropertyForDashboard) {
       setSelectedGa4Property("");
     }
-  }, [dataSource, isOnboarding, mappedGa4PropertyForWorkspace, selectedGa4Property, selectedGa4PropertyForWorkspace, userProfile]);
+  }, [dataSource, isOnboarding, mappedGa4PropertyForWorkspace, selectedGa4Property, selectedGa4PropertyForDashboard, userProfile]);
 
   useEffect(() => {
     if (!showGa4PropertyDialog) {
@@ -950,7 +941,7 @@ function MainApp() {
             isConnectingGoogle={isConnectingGoogleData}
             onSignOut={signOut}
             onSwitchDataSource={(nextSource) => {
-              const availableSites = nextSource === 'ga4' ? workspaceMatchedGa4Sites : nextSource === 'bing' ? accessibleBingSites : accessibleGscSites;
+              const availableSites = nextSource === 'ga4' ? accessibleGa4Sites : nextSource === 'bing' ? accessibleBingSites : accessibleGscSites;
               switchDataSource(nextSource, availableSites);
             }}
             selectedSite={currentSelection}
@@ -968,7 +959,7 @@ function MainApp() {
                   dataSource={dataSource}
                   dateRange={dateRange}
                   firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
-                  ga4PropertyId={dataSource === 'ga4' ? selectedGa4PropertyForWorkspace || null : mappedGa4PropertyForWorkspace || null}
+                  ga4PropertyId={dataSource === 'ga4' ? activeGa4PropertyId : mappedGa4PropertyForWorkspace || null}
                   gscSyncVersion={gscSyncVersion}
                   isCompareMode={isCompareMode}
                   onCompareFromDateChange={handleCompareFromDateChange}
@@ -989,7 +980,7 @@ function MainApp() {
                   dataSource={dataSource}
                   fetchingSites={fetchingSites}
                   fullGa4SitesCount={ga4Sites.length}
-                  ga4SitesCount={workspaceMatchedGa4Sites.length}
+                  ga4SitesCount={visibleGa4Sites.length}
                   googleConnected={Boolean(userProfile?.googleConnected)}
                   gscSitesCount={accessibleGscSites.length}
                   hasValidSelectedSite={hasValidSelectedSite}
@@ -1012,8 +1003,8 @@ function MainApp() {
                     dataSource={dataSource}
                     dateRange={dateRange}
                     ga4DashboardTab={ga4DashboardTab}
-                    ga4PropertyId={dataSource === 'ga4' ? selectedGa4PropertyForWorkspace || null : mappedGa4PropertyForWorkspace || null}
-                    ga4Sites={workspaceMatchedGa4Sites}
+                    ga4PropertyId={dataSource === 'ga4' ? activeGa4PropertyId : mappedGa4PropertyForWorkspace || null}
+                    ga4Sites={visibleGa4Sites}
                     ga4UserDimension={ga4UserDimension}
                     gscDashboardTab={gscDashboardTab}
                     warehouseRefreshKey={gscSyncVersion}
@@ -1025,7 +1016,7 @@ function MainApp() {
                     onActivateWorkspaceSite={unlockSite}
                     onOpenSettings={openSettings}
                     onOpenSiteWorkspace={handleOpenSiteWorkspace}
-                    selectedSite={dataSource === 'ga4' ? selectedGa4PropertyForWorkspace : selectedSite}
+                    selectedSite={dataSource === 'ga4' ? selectedGa4PropertyForDashboard : selectedSite}
                     workspaceSiteUrl={selectedSite}
                     setShowSystemAnnotations={setShowSystemAnnotations}
                     setShowUserAnnotations={setShowUserAnnotations}
