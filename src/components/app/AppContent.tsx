@@ -55,6 +55,7 @@ type AppContentProps = {
   onActivateWorkspaceSite: (siteUrl: string) => Promise<void>;
   onOpenSiteWorkspace: (siteUrl: string, menu: "Dashboard" | "Crawl Inventory" | "Raw Data" | "Reconciliation") => void;
   selectedSite: string;
+  workspaceSiteUrl?: string;
   setShowSystemAnnotations: (value: boolean) => void;
   setShowUserAnnotations: (value: boolean) => void;
   showSystemAnnotations: boolean;
@@ -131,6 +132,7 @@ export function AppContent({
   onOpenSettings,
   onOpenSiteWorkspace,
   selectedSite,
+  workspaceSiteUrl,
   setShowSystemAnnotations,
   setShowUserAnnotations,
   showSystemAnnotations,
@@ -251,20 +253,20 @@ export function AppContent({
             <TabsTrigger value="countries" className={dashboardTabTriggerClass}>Users</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
-            <Ga4Overview siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} annotations={visibleAnnotations} />
-            <Ga4DataGrid siteUrl={selectedSite} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <Ga4Overview siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} annotations={visibleAnnotations} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
           </TabsContent>
           <TabsContent value="events" className="space-y-4">
-            <Ga4DataGrid siteUrl={selectedSite} dimension="eventName" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} metrics={["eventCount", "totalUsers"]} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="eventName" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} metrics={["eventCount", "totalUsers"]} />
           </TabsContent>
           <TabsContent value="pages" className="space-y-4">
-            <Ga4DataGrid siteUrl={selectedSite} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
           </TabsContent>
           <TabsContent value="sources" className="space-y-4">
-            <Ga4DataGrid siteUrl={selectedSite} dimension="sessionSourceMedium" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="sessionSourceMedium" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
           </TabsContent>
           <TabsContent value="countries" className="space-y-4">
-            <Ga4Demographics siteUrl={selectedSite} dateRange={dateRange} />
+            <Ga4Demographics siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} />
             <div className="mt-8 flex items-center justify-between rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
               <div>
                 <h3 className="text-lg font-semibold tracking-[-0.01em] text-foreground">Detailed user data</h3>
@@ -284,14 +286,14 @@ export function AppContent({
                 </SelectContent>
               </Select>
             </div>
-            <Ga4DataGrid siteUrl={selectedSite} dimension={ga4UserDimension} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension={ga4UserDimension} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
           </TabsContent>
         </Tabs>
       )}
 
       {selectedSite && !apiError && dataSource === "ga4" && activeMenu === "LLM Traffic" && ga4Sites.some((site) => site.siteUrl === selectedSite) && (
         <div className="space-y-4">
-          <Ga4LlmTraffic siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+          <Ga4LlmTraffic siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
         </div>
       )}
 

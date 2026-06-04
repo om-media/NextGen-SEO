@@ -145,6 +145,7 @@ function AnnotationReferenceLabel(props: any) {
 
 export function Ga4Overview({
   siteUrl,
+  workspaceSiteUrl,
   dateRange,
   isCompareMode,
   compareDateRange,
@@ -153,6 +154,7 @@ export function Ga4Overview({
   annotations = [],
 }: {
   siteUrl: string
+  workspaceSiteUrl?: string
   dateRange?: DateRange
   isCompareMode?: boolean
   compareDateRange?: DateRange
@@ -196,15 +198,16 @@ export function Ga4Overview({
         const dimensionFilter = filterDimension && filterValue ? { filterDimension, filterValue } : undefined
         const metrics = ["sessions", "totalUsers", "screenPageViews", "bounceRate", "eventCount"]
 
+        const reportOptions = { siteUrl: workspaceSiteUrl }
         const promises = [
-          ga4Service.runReport(siteUrl, startDate, endDate, ["date"], metrics, dimensionFilter),
+          ga4Service.runReport(siteUrl, startDate, endDate, ["date"], metrics, dimensionFilter, reportOptions),
         ]
 
         if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
           const compareStartDate = format(compareDateRange.from, "yyyy-MM-dd")
           const compareEndDate = format(compareDateRange.to, "yyyy-MM-dd")
           promises.push(
-            ga4Service.runReport(siteUrl, compareStartDate, compareEndDate, ["date"], metrics, dimensionFilter),
+            ga4Service.runReport(siteUrl, compareStartDate, compareEndDate, ["date"], metrics, dimensionFilter, reportOptions),
           )
         }
 
@@ -220,7 +223,7 @@ export function Ga4Overview({
     }
 
     fetchData()
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected])
+  }, [siteUrl, workspaceSiteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
     if (!data.length || !dateRange?.from || !dateRange?.to) {

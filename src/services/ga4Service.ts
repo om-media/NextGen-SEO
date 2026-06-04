@@ -18,6 +18,7 @@ export interface Ga4DataRow {
 
 export type Ga4RunReportOptions = {
   allowLive?: boolean;
+  siteUrl?: string | null;
 };
 
 export class Ga4ApiService {
@@ -113,6 +114,7 @@ export class Ga4ApiService {
         metrics,
         dimensionFilter: body.dimensionFilter,
         allowLive: Boolean(options.allowLive),
+        siteUrl: options.siteUrl || undefined,
       })
     });
 

@@ -1037,6 +1037,7 @@ function MainApp() {
                     onOpenSettings={openSettings}
                     onOpenSiteWorkspace={handleOpenSiteWorkspace}
                     selectedSite={dataSource === 'ga4' ? selectedGa4Property : selectedSite}
+                    workspaceSiteUrl={selectedSite}
                     setShowSystemAnnotations={setShowSystemAnnotations}
                     setShowUserAnnotations={setShowUserAnnotations}
                     showSystemAnnotations={showSystemAnnotations}

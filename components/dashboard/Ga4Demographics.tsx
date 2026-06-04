@@ -9,6 +9,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, L
 
 interface Ga4DemographicsProps {
   siteUrl: string;
+  workspaceSiteUrl?: string;
   dateRange?: DateRange;
 }
 
@@ -30,7 +31,7 @@ type WarehouseCoverage = {
   queuedDateCount?: number;
 };
 
-export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
+export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4DemographicsProps) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(false)
@@ -55,7 +56,9 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
             startDate, 
             endDate, 
             [dim.key], 
-            ['sessions']
+            ['sessions'],
+            undefined,
+            { siteUrl: workspaceSiteUrl }
           )
         )
 
@@ -87,7 +90,7 @@ export function Ga4Demographics({ siteUrl, dateRange }: Ga4DemographicsProps) {
     }
 
     fetchData()
-  }, [siteUrl, dateRange, userProfile?.googleConnected, pollKey])
+  }, [siteUrl, workspaceSiteUrl, dateRange, userProfile?.googleConnected, pollKey])
 
   useEffect(() => {
     if (!coverage || loading) return;

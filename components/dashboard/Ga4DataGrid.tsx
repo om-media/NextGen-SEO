@@ -26,6 +26,7 @@ const WAREHOUSED_GA4_DIMENSIONS = new Set([
 
 interface Ga4DataGridProps {
   siteUrl: string;
+  workspaceSiteUrl?: string;
   dateRange?: DateRange;
   dimension?: 'date' | 'pagePath' | 'sessionSourceMedium' | 'country' | 'city' | 'region' | 'deviceCategory' | 'browser' | 'operatingSystem' | 'eventName';
   isCompareMode?: boolean;
@@ -75,7 +76,7 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   window.URL.revokeObjectURL(url);
 }
 
-export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'] }: Ga4DataGridProps) {
+export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'] }: Ga4DataGridProps) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<ExtendedGa4DataRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -117,6 +118,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
         const ga4Service = new Ga4ApiService()
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
+        const reportOptions = { siteUrl: workspaceSiteUrl }
         
         const promises = [
           ga4Service.runReport(
@@ -124,7 +126,9 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
             startDate, 
             endDate, 
             [dimension], 
-            metrics
+            metrics,
+            undefined,
+            reportOptions
           )
         ];
 
@@ -137,7 +141,9 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
                compareStartDate,
                compareEndDate,
                [dimension],
-               metrics
+               metrics,
+               undefined,
+               reportOptions
              )
            )
         }
@@ -199,7 +205,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
     }
 
     fetchData()
-  }, [siteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey])
+  }, [siteUrl, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey])
 
   useEffect(() => {
     if (!coverage || loading) return;
@@ -457,6 +463,7 @@ export function Ga4DataGrid({ siteUrl, dateRange, dimension = 'date', isCompareM
           <div className="p-5">
             <Ga4Overview 
               siteUrl={siteUrl} 
+              workspaceSiteUrl={workspaceSiteUrl}
               dateRange={dateRange} 
               isCompareMode={isCompareMode}
               compareDateRange={compareDateRange}

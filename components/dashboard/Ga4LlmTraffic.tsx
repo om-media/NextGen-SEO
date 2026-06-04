@@ -12,6 +12,7 @@ import { DateRange } from "react-day-picker"
 
 interface Ga4LlmTrafficProps {
   siteUrl: string;
+  workspaceSiteUrl?: string;
   dateRange: DateRange;
   isCompareMode: boolean;
   compareDateRange: DateRange;
@@ -52,7 +53,7 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   window.URL.revokeObjectURL(url)
 }
 
-export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRange }: Ga4LlmTrafficProps) {
+export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSiteUrl, dateRange, isCompareMode, compareDateRange }: Ga4LlmTrafficProps) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<any>(null)
   const [compareData, setCompareData] = useState<any>(null)
@@ -64,7 +65,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
 
   useEffect(() => {
     const propertyId = siteUrl?.startsWith("properties/") ? siteUrl : userProfile?.activatedGa4PropertyId
-    const workspaceSiteUrl = userProfile?.activatedSiteUrl || (!siteUrl?.startsWith("properties/") ? siteUrl : null)
+    const workspaceSiteUrl = explicitWorkspaceSiteUrl || userProfile?.activatedSiteUrl || (!siteUrl?.startsWith("properties/") ? siteUrl : null)
     if (!userProfile?.googleConnected || !propertyId || !workspaceSiteUrl || !dateRange.from || !dateRange.to) {
       setLoading(false)
       setData(null)
@@ -146,7 +147,7 @@ export function Ga4LlmTraffic({ siteUrl, dateRange, isCompareMode, compareDateRa
       isMounted = false
       if (pollTimer) window.clearTimeout(pollTimer)
     }
-  }, [siteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.activatedGa4PropertyId, userProfile?.activatedSiteUrl, userProfile?.googleConnected, pollKey])
+  }, [siteUrl, explicitWorkspaceSiteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.activatedGa4PropertyId, userProfile?.activatedSiteUrl, userProfile?.googleConnected, pollKey])
 
 
   const formatValue = (metric: string, value: string) => {
