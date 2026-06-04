@@ -837,12 +837,15 @@ function MainApp() {
     ? accessibleGa4Sites.filter((site) => isGa4PropertyForWorkspaceSite(site, selectedSite))
     : accessibleGa4Sites;
   const mappedGa4PropertyForWorkspace = getGa4PropertyForWorkspaceSite(accessibleGa4Sites, selectedSite);
+  const selectedGa4PropertyForWorkspace = workspaceMatchedGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
+    ? selectedGa4Property
+    : "";
   const accessibleWorkspaceSites = accessibleGscSites.length > 0
     ? accessibleGscSites
     : (userProfile?.unlockedSites || []).map((siteUrl) => ({ siteUrl, permissionLevel: "warehouse" }));
 
   const currentSites = dataSource === 'ga4' ? workspaceMatchedGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
-  const currentSelection = dataSource === 'ga4' ? selectedGa4Property : selectedSite;
+  const currentSelection = dataSource === 'ga4' ? selectedGa4PropertyForWorkspace : selectedSite;
   const showStatusPanels = activeMenu === "Dashboard";
   const showReportToolbar = [
     "AI Content Auditor",
@@ -939,10 +942,12 @@ function MainApp() {
       return;
     }
 
-    if (userProfile.activatedGa4PropertyId && selectedGa4Property !== userProfile.activatedGa4PropertyId) {
+    if (userProfile.activatedGa4PropertyId && mappedGa4PropertyForWorkspace === userProfile.activatedGa4PropertyId && selectedGa4Property !== userProfile.activatedGa4PropertyId) {
       setSelectedGa4Property(userProfile.activatedGa4PropertyId);
+    } else if (dataSource === 'ga4' && selectedGa4Property && !selectedGa4PropertyForWorkspace) {
+      setSelectedGa4Property("");
     }
-  }, [isOnboarding, selectedGa4Property, userProfile]);
+  }, [dataSource, isOnboarding, mappedGa4PropertyForWorkspace, selectedGa4Property, selectedGa4PropertyForWorkspace, userProfile]);
 
   useEffect(() => {
     if (!showGa4PropertyDialog) {
@@ -1033,7 +1038,7 @@ function MainApp() {
                   dataSource={dataSource}
                   dateRange={dateRange}
                   firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
-                  ga4PropertyId={dataSource === 'ga4' ? selectedGa4Property || null : mappedGa4PropertyForWorkspace || null}
+                  ga4PropertyId={dataSource === 'ga4' ? selectedGa4PropertyForWorkspace || null : mappedGa4PropertyForWorkspace || null}
                   gscSyncVersion={gscSyncVersion}
                   isCompareMode={isCompareMode}
                   onCompareFromDateChange={handleCompareFromDateChange}
@@ -1079,7 +1084,7 @@ function MainApp() {
                     dataSource={dataSource}
                     dateRange={dateRange}
                     ga4DashboardTab={ga4DashboardTab}
-                    ga4PropertyId={dataSource === 'ga4' ? selectedGa4Property || null : mappedGa4PropertyForWorkspace || null}
+                    ga4PropertyId={dataSource === 'ga4' ? selectedGa4PropertyForWorkspace || null : mappedGa4PropertyForWorkspace || null}
                     ga4Sites={workspaceMatchedGa4Sites}
                     ga4UserDimension={ga4UserDimension}
                     gscDashboardTab={gscDashboardTab}
@@ -1092,7 +1097,7 @@ function MainApp() {
                     onActivateWorkspaceSite={unlockSite}
                     onOpenSettings={openSettings}
                     onOpenSiteWorkspace={handleOpenSiteWorkspace}
-                    selectedSite={dataSource === 'ga4' ? selectedGa4Property : selectedSite}
+                    selectedSite={dataSource === 'ga4' ? selectedGa4PropertyForWorkspace : selectedSite}
                     workspaceSiteUrl={selectedSite}
                     setShowSystemAnnotations={setShowSystemAnnotations}
                     setShowUserAnnotations={setShowUserAnnotations}
