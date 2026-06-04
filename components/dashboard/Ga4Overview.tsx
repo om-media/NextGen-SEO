@@ -40,6 +40,9 @@ type WarehouseCoverage = {
   coveredDateCount?: number
   expectedDateCount?: number
   missingDateCount?: number
+  activeDateCount?: number
+  activeJobCount?: number
+  queuedDateCount?: number
 }
 
 const formatCompactNumber = (number: number) =>
@@ -498,11 +501,22 @@ export function Ga4Overview({
     return offsets
   }, [visibleAnnotations])
 
+  const hasActiveWarehouseWork =
+    Number(coverage?.activeJobCount || 0) > 0 ||
+    Number(coverage?.activeDateCount || 0) > 0 ||
+    Number(coverage?.queuedDateCount || 0) > 0
+
   if (loading && data.length === 0) {
     return (
       <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardContent className="flex h-[400px] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <CardContent className="flex h-[400px] flex-col items-center justify-center gap-3 px-6 text-center">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Loading stored Analytics data</h3>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">
+              Reading this property and workspace site from the app warehouse.
+            </p>
+          </div>
         </CardContent>
       </Card>
     )
@@ -528,13 +542,19 @@ export function Ga4Overview({
             <Info className="h-5 w-5" />
           </div>
           <h3 className="text-lg font-semibold text-foreground">
-            {missingDateCount > 0 ? "GA4 history is not stored for this range yet" : "No GA4 activity found for this range"}
+            {missingDateCount > 0 ? "Preparing GA4 history for this range" : "No GA4 activity found for this range"}
           </h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
             {missingDateCount > 0
-              ? `${coveredDateCount.toLocaleString()} / ${expectedDateCount.toLocaleString()} days are ready for this property and workspace site. Open Source data to import the missing days.`
+              ? `${coveredDateCount.toLocaleString()} / ${expectedDateCount.toLocaleString()} days are ready for this property and workspace site. The app is queuing missing days automatically; existing stored rows will appear as soon as they are ready.`
               : "The selected GA4 property and workspace site have no stored Analytics rows for this date range."}
           </p>
+          {hasActiveWarehouseWork && (
+            <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium text-foreground">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              Importing Analytics history
+            </div>
+          )}
         </CardContent>
       </Card>
     )
@@ -559,6 +579,16 @@ export function Ga4Overview({
 
   return (
     <div className="space-y-6">
+      {loading && data.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="font-medium text-foreground">Refreshing Analytics overview</span>
+          </div>
+          <span>Current metrics stay visible while the selected property and site finish loading.</span>
+        </div>
+      )}
+
       {!error && (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           {metricCards.map((metric) => (

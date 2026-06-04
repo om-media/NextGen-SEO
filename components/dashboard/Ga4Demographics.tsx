@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Ga4ApiService } from "@/src/services/ga4Service"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { Loader2 } from "lucide-react"
+import { Database, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts'
@@ -107,9 +107,15 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
 
   if (loading && Object.keys(data).length === 0) {
     return (
-      <Card className="mb-4 rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardContent className="flex items-center justify-center h-64">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <Card className="mb-4 rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardContent className="flex h-64 flex-col items-center justify-center gap-3 px-6 text-center">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Loading stored user breakdowns</h3>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">
+              Reading device, browser, OS, and geography data for this property and site.
+            </p>
+          </div>
         </CardContent>
       </Card>
     )
@@ -117,7 +123,7 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
 
   if (error) {
     return (
-      <Card className="mb-4 rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+      <Card className="mb-4 rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex flex-col items-center justify-center h-48 text-destructive space-y-4">
           <div className="text-center">{error}</div>
         </CardContent>
@@ -147,7 +153,7 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
             {hasActiveWarehouseWork ? (
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
             ) : (
-              <span className="h-2 w-2 rounded-full bg-primary" />
+              <Database className="h-4 w-4 text-primary" />
             )}
             <span className="font-medium text-foreground">
               {hasActiveWarehouseWork ? "Importing Analytics history" : "Analytics breakdown import available"}
@@ -156,7 +162,7 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
               {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days ready
             </span>
           </div>
-          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while the import catches up." : "The import status panel will prepare these breakdowns automatically."}</span>
+          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while the import catches up." : "The app will queue missing stored days automatically."}</span>
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">

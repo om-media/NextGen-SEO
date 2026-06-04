@@ -463,7 +463,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
               {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days ready
             </span>
           </div>
-          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while the import catches up." : "The import status panel will prepare this breakdown automatically."}</span>
+          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while the import catches up." : "The app will queue the missing stored days automatically."}</span>
         </div>
       )}
 
@@ -624,7 +624,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
                 <TableRow>
                   <TableCell colSpan={metrics.length + 1} className="h-24 text-center text-muted-foreground">
                     {Number(coverage?.missingDateCount || 0) > 0
-                      ? `GA4 ${dimensionLabel.toLowerCase()} history is not stored for this property, site, and date range yet. Open Source data to import the missing days.`
+                      ? `GA4 ${dimensionLabel.toLowerCase()} history is being prepared for this property, site, and date range. The app queues missing days automatically.`
                       : "No data available."}
                   </TableCell>
                 </TableRow>
