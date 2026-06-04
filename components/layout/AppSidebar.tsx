@@ -141,19 +141,7 @@ export function AppSidebar({ selectedSite, activeMenu = "Dashboard", onMenuSelec
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="gap-4 p-4">
-        {!isPaidPlan && (
-          <div className="rounded-2xl bg-secondary p-4 text-secondary-foreground shadow-[0_12px_28px_rgba(124,58,237,0.08)]">
-            <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-xl bg-card/70 text-amber-500 shadow-sm">
-              <Crown className="h-4 w-4" />
-            </div>
-            <div className="text-sm font-semibold text-primary">Upgrade to Pro</div>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">Unlock advanced insights, historical data, and AI recommendations.</p>
-            <button className="mt-4 inline-flex h-9 items-center gap-2 rounded-xl bg-card px-3 text-xs font-semibold text-primary shadow-sm transition hover:-translate-y-0.5">
-              Upgrade Now
-              <span aria-hidden="true">-&gt;</span>
-            </button>
-          </div>
-        )}
+    
         {userProfile && (
           <div className="flex flex-col justify-center space-y-3 rounded-2xl border border-border bg-card p-4 shadow-[0_10px_24px_rgba(15,61,46,0.05)]">
             <div className="mb-1 flex items-center justify-between text-xs font-medium text-muted-foreground">
