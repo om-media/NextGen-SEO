@@ -2,8 +2,8 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { authFetch } from "@/src/lib/authFetch";
-import { format, parseISO } from "date-fns";
-import { CheckCircle2, Clock3, Database, RefreshCw } from "lucide-react";
+import { format } from "date-fns";
+import { AlertTriangle, Database, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { DateRange } from "react-day-picker";
 
@@ -99,15 +99,19 @@ export function AppToolbar({
     }
   };
   const toolbarHasActiveImport = Number(toolbarCoverage?.activeJobCount || 0) > 0;
-  const toolbarRangeReady = Boolean(toolbarCoverage && toolbarCoverage.missingDateCount === 0 && toolbarCoverage.errorJobCount === 0);
-  const importButtonDisabled = syncActionState === "queueing" || toolbarHasActiveImport || toolbarRangeReady;
+  const toolbarNeedsDataAttention = Boolean(
+    toolbarCoverage &&
+    (toolbarCoverage.missingDateCount > 0 || toolbarCoverage.errorJobCount > 0),
+  );
+  const showImportControl = syncActionState === "queueing" || toolbarHasActiveImport || toolbarNeedsDataAttention;
+  const importButtonDisabled = syncActionState === "queueing" || toolbarHasActiveImport;
   const importButtonLabel = syncActionState === "queueing"
-    ? "Starting import"
+    ? "Updating data"
     : toolbarHasActiveImport
-      ? "Import running"
-      : toolbarRangeReady
-        ? "Range ready"
-        : "Import missing days";
+      ? "Updating data"
+      : toolbarCoverage?.errorJobCount
+        ? "Retry data update"
+        : "Update data";
 
   return (
     <div className="premium-panel relative overflow-hidden rounded-2xl border border-border px-5 py-4 sm:px-6">
@@ -143,24 +147,22 @@ export function AppToolbar({
                 refreshKey={syncRefreshKey + gscSyncVersion}
                 siteUrl={currentSiteUrl}
               />
-              <button
-                className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
-                disabled={importButtonDisabled}
-                onClick={handleRefreshResults}
-                title={dataSource === "blended"
-                  ? "Import missing Search Console and Analytics days for the selected range."
-                  : dataSource === "ga4"
-                    ? "Import missing Analytics pages and breakdowns for the selected range."
-                    : "Import missing Search Console days for the selected range."}
-                type="button"
-              >
-                {toolbarRangeReady ? (
-                  <CheckCircle2 className="h-4 w-4 text-primary" />
-                ) : (
+              {showImportControl && (
+                <button
+                  className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background disabled:cursor-default disabled:opacity-75"
+                  disabled={importButtonDisabled}
+                  onClick={handleRefreshResults}
+                  title={dataSource === "blended"
+                    ? "Refresh missing Search Console and Analytics days for the selected range."
+                    : dataSource === "ga4"
+                      ? "Refresh missing Analytics pages and breakdowns for the selected range."
+                      : "Refresh missing Search Console days for the selected range."}
+                  type="button"
+                >
                   <RefreshCw className={`h-4 w-4 ${syncActionState === "queueing" || toolbarHasActiveImport ? "animate-spin" : ""}`} />
-                )}
-                {importButtonLabel}
-              </button>
+                  {importButtonLabel}
+                </button>
+              )}
               {rawDataAvailable && onOpenRawData && (
                 <button
                   className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background"
@@ -401,13 +403,9 @@ function GscSyncStatusBadge({
     };
   }, [dataSource, dateRange, ga4PropertyId, onCoverageLoaded, pollKey, refreshKey, siteUrl]);
 
-  const lastMetricDate = coverage?.lastCoveredDate || null;
-  const latestAvailableDate = coverage?.latestAvailableDate || lastMetricDate;
   const activeJobCount = coverage?.activeJobCount || 0;
   const activeDateCount = coverage?.activeDateCount || 0;
   const errorJobCount = coverage?.errorJobCount || 0;
-  const unavailableDateCount = coverage?.unavailableDateCount || 0;
-  const isPartial = Boolean(coverage && coverage.expectedDateCount > 0 && coverage.coveredDateCount < coverage.expectedDateCount);
   const importSource = coverage?.hasGscGaps && coverage.hasGa4Gaps
     ? "Search Console and Analytics"
     : coverage?.hasGa4Gaps
@@ -415,44 +413,22 @@ function GscSyncStatusBadge({
       : coverage?.hasGscGaps
         ? "Search Console"
         : "reporting";
-  const importSourceShort = coverage?.hasGscGaps && coverage.hasGa4Gaps
-    ? "GSC + GA4"
-    : coverage?.hasGa4Gaps
-      ? "GA4"
-      : coverage?.hasGscGaps
-        ? "GSC"
-        : "Data";
-  let label = "Preparing data";
+  let label = "Updating data";
   let statusTitle = "Checking stored reporting coverage for this date range.";
   if (loading) {
-    label = "Checking stored data";
+    return null;
   } else if (activeJobCount > 0) {
     label = activeDateCount > 0
-      ? `${importSourceShort} import: ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}`
-      : `${importSourceShort} import running`;
+      ? `Updating ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}`
+      : "Updating data";
     statusTitle = activeDateCount > 0
       ? `The app is importing ${importSource} data for ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}. Existing dashboard rows stay visible while this finishes.`
       : `The app is importing ${importSource} data. Existing dashboard rows stay visible while this finishes.`;
   } else if (errorJobCount > 0) {
-    label = "Import needs review";
+    label = "Data needs attention";
     statusTitle = `${errorJobCount} data import ${errorJobCount === 1 ? "job needs" : "jobs need"} attention for the selected range.`;
-  } else if (coverage?.hasGscGaps || coverage?.hasGa4Gaps) {
-    label = `Import missing ${importSourceShort}`;
-    statusTitle = `${formatWholeNumber(coverage.missingDateCount)} reportable day${coverage.missingDateCount === 1 ? "" : "s"} need ${importSource} data. The app queues missing warehouse imports automatically; use Import missing days to retry immediately.`;
-  } else if (!lastMetricDate && latestAvailableDate && unavailableDateCount > 0) {
-    label = `Data through ${format(parseISO(latestAvailableDate), "MMM d")}`;
-    statusTitle = `Google Search Console data is delayed by about 2 days. ${unavailableDateCount} recent selected day${unavailableDateCount === 1 ? "" : "s"} will appear when Google publishes them.`;
-  } else if (lastMetricDate) {
-    label = isPartial
-      ? `${coverage?.coveredDateCount}/${coverage?.expectedDateCount} days ready through ${format(parseISO(lastMetricDate), "MMM d")}`
-      : unavailableDateCount > 0 && latestAvailableDate
-        ? `Data through ${format(parseISO(latestAvailableDate), "MMM d")}`
-        : `Data ready through ${format(parseISO(lastMetricDate), "MMM d")}`;
-    statusTitle = isPartial
-      ? `${coverage?.coveredDateCount}/${coverage?.expectedDateCount} reportable days are stored for this range. Missing days will import in the background.`
-      : unavailableDateCount > 0
-        ? `Google Search Console data is delayed by about 2 days. ${unavailableDateCount} recent selected day${unavailableDateCount === 1 ? "" : "s"} will appear when Google publishes them.`
-        : "Stored reporting data covers the selected date range.";
+  } else {
+    return null;
   }
 
   return (
@@ -461,11 +437,9 @@ function GscSyncStatusBadge({
       title={statusTitle}
     >
       {activeJobCount > 0 ? (
-        <RefreshCw className="h-4 w-4 text-primary" />
-      ) : lastMetricDate ? (
-        <CheckCircle2 className="h-4 w-4 text-primary" />
+        <RefreshCw className="h-4 w-4 animate-spin text-primary" />
       ) : (
-        <Clock3 className="h-4 w-4 text-amber-600" />
+        <AlertTriangle className="h-4 w-4 text-amber-600" />
       )}
       <span className="whitespace-nowrap">{label}</span>
     </div>
