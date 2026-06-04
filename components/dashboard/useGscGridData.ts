@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { GscApiService } from "@/src/services/gscService";
-import { authFetch } from "@/src/lib/authFetch";
 import { fetchDataCoverage, type CoverageDataset } from "@/src/services/dataCoverageService";
+import { fetchCachedWarehouseQuery } from "@/src/services/warehouseQueryClient";
 import type { GridDimension, GridRow } from "./gscGridUtils";
 
 type UseGscGridDataParams = {
@@ -32,12 +32,11 @@ async function fetchWarehouseData(
   startDate: string,
   endDate: string,
   rowLimit: number,
+  cacheKeyExtra: string,
   dimensionFilterGroups?: any[],
 ): Promise<{ rows: GridRow[]; totalRowCount?: number }> {
-  const response = await authFetch("/api/warehouse/query", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  const payload = await fetchCachedWarehouseQuery<any>(
+    {
       siteUrl,
       startDate,
       endDate,
@@ -46,14 +45,9 @@ async function fetchWarehouseData(
       includeTotal: true,
       rowLimit,
       startRow: 0,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch warehouse data");
-  }
-
-  const payload = await response.json();
+    },
+    cacheKeyExtra,
+  );
   const allRows = Array.isArray(payload) ? payload : Array.isArray(payload?.rows) ? payload.rows : [];
 
   return {
@@ -209,7 +203,7 @@ export function useGscGridData({
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
           .then((rows) => ({ rows, totalRowCount: rows.length }))
-      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, dimensionFilterGroups);
+      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups);
 
     const comparePromise =
       isCompareMode && compareDateRange?.from && compareDateRange?.to
@@ -219,7 +213,7 @@ export function useGscGridData({
             return shouldUseLiveApi
               ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension], dimensionFilterGroups, true)
                   .then((rows) => ({ rows, totalRowCount: rows.length }))
-              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, dimensionFilterGroups);
+              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups);
           })()
         : Promise.resolve(undefined);
 

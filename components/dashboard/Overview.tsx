@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Check, Database, Download, Loader2, MoreVertical, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Annotation } from "@/src/services/annotationsService"
-import { authFetch } from "@/src/lib/authFetch"
+import { fetchCachedWarehouseQuery } from "@/src/services/warehouseQueryClient"
 
 const formatCompactNumber = (number: number) => {
   return new Intl.NumberFormat('en-US', { 
@@ -252,13 +252,10 @@ export function Overview({
       };
 
       const fetchWarehouseData = async (start: string, end: string) => {
-        const res = await authFetch('/api/warehouse/query', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimensions: getWarehouseDimensions(), dimensionFilterGroups: filterGroups })
-        })
-        if (!res.ok) throw new Error("Failed to fetch warehouse data")
-        const json = await res.json()
+        const json = await fetchCachedWarehouseQuery<any[]>(
+          { siteUrl, startDate: start, endDate: end, dimensions: getWarehouseDimensions(), dimensionFilterGroups: filterGroups },
+          `gsc-overview:${refreshKey}`,
+        )
         return json.map((r: any) => ({
           keys: [r.date],
           clicks: toFiniteNumber(r.clicks),
@@ -272,20 +269,16 @@ export function Overview({
       const fetchWarehouseQueryRows = async (start: string, end: string) => {
         if (!hasQueryMetric) return [];
 
-        const res = await authFetch('/api/warehouse/query', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const json = await fetchCachedWarehouseQuery<any[]>(
+          {
             siteUrl,
             startDate: start,
             endDate: end,
             dimensions: ["date", "page", "query"],
             dimensionFilterGroups: filterGroups,
-          })
-        });
-        if (!res.ok) throw new Error("Failed to fetch warehouse query data");
-
-        const json = await res.json();
+          },
+          `gsc-overview-query-count:${refreshKey}`,
+        );
         return json.map((r: any) => ({
           keys: [r.date, r.query],
           query: r.query,
