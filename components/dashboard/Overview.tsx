@@ -6,7 +6,7 @@ import { GscApiService } from "@/src/services/gscService"
 import { addDays, differenceInCalendarDays, format, parseISO, startOfWeek, startOfMonth } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
-import { Check, Database, Download, Loader2, MoreVertical, Info } from "lucide-react"
+import { Check, Download, MoreVertical, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Annotation } from "@/src/services/annotationsService"
 import { authFetch } from "@/src/lib/authFetch"
@@ -147,6 +147,7 @@ export function Overview({
   compareDateRange,
   annotations = [],
   annotationControls,
+  onLoadingChange,
   refreshKey = 0,
   useLiveData = true
 }: { 
@@ -158,6 +159,7 @@ export function Overview({
   compareDateRange?: DateRange,
   annotations?: Annotation[],
   annotationControls?: ReactNode,
+  onLoadingChange?: (loading: boolean) => void,
   refreshKey?: number,
   useLiveData?: boolean
 }) {
@@ -166,6 +168,11 @@ export function Overview({
   const [compareRawData, setCompareRawData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    onLoadingChange?.(loading);
+    return () => onLoadingChange?.(false);
+  }, [loading, onLoadingChange]);
 
   const [activeMetrics, setActiveMetrics] = useState({
     clicks: true,
@@ -850,30 +857,7 @@ export function Overview({
   };
 
   return (
-    <div className="relative space-y-6">
-      {isInitialLoading && (
-        <div className="absolute inset-0 z-30 flex items-start justify-center rounded-2xl bg-background/70 px-4 pt-5 backdrop-blur-[2px]">
-          <div className="w-full max-w-xl rounded-2xl border border-border bg-card/95 p-5 text-center shadow-[0_24px_70px_rgba(15,61,46,0.16)]">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-secondary text-primary shadow-inner">
-              <div className="relative flex h-9 w-9 items-center justify-center">
-                <span className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
-                <span className="absolute inset-1 rounded-full border border-primary/20" />
-                <Database className="relative h-5 w-5" />
-              </div>
-            </div>
-            <div className="mt-4 flex items-center justify-center gap-2 text-base font-semibold text-foreground">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              Loading stored Search Console data
-            </div>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-              Preparing the metrics and chart for this site and date range. The report will appear here automatically.
-            </p>
-            <div className="mx-auto mt-4 h-2 max-w-sm overflow-hidden rounded-full bg-secondary">
-              <div className="h-full w-1/2 animate-pulse rounded-full bg-primary/70" />
-            </div>
-          </div>
-        </div>
-      )}
+    <div className="space-y-6">
       {!isConnectionIssue && error && (
         <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-sm text-red-600 shadow-[0_10px_24px_rgba(127,29,29,0.05)] dark:border-red-900/50 dark:bg-red-950/35 dark:text-red-200">
           {error}

@@ -45,6 +45,7 @@ export function GscDataGrid({
   showInsights = true,
   titleOverride,
   descriptionOverride,
+  onLoadingChange,
 }: {
   siteUrl: string;
   dimension?: "query" | "page" | "country";
@@ -59,6 +60,7 @@ export function GscDataGrid({
   showInsights?: boolean;
   titleOverride?: string;
   descriptionOverride?: string;
+  onLoadingChange?: (loading: boolean) => void;
 }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [intentFilter, setIntentFilter] = useState("all");
@@ -113,6 +115,11 @@ export function GscDataGrid({
     tier: userProfile?.tier,
     useLiveData,
   });
+
+  useEffect(() => {
+    onLoadingChange?.(loading);
+    return () => onLoadingChange?.(false);
+  }, [loading, onLoadingChange]);
 
   useEffect(() => {
     setCurrentPage(1);

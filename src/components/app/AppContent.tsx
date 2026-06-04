@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import type { DateRange } from "react-day-picker";
+import { Database, Loader2 } from "lucide-react";
 import type { Annotation } from "../../services/annotationsService";
 import type { BingSite } from "../../services/bingService";
 import type { GscSite } from "../../services/gscService";
@@ -69,6 +70,7 @@ function DeferredOverviewGrid(props: {
   compareDateRange: DateRange;
   dateRange: DateRange;
   isCompareMode: boolean;
+  onLoadingChange?: (loading: boolean) => void;
   refreshKey: number;
   selectedSite: string;
   useLiveData: boolean;
@@ -77,9 +79,17 @@ function DeferredOverviewGrid(props: {
 
   useEffect(() => {
     setReady(false);
+    props.onLoadingChange?.(true);
     const timer = window.setTimeout(() => setReady(true), 350);
-    return () => window.clearTimeout(timer);
-  }, [props.compareDateRange, props.dateRange, props.isCompareMode, props.refreshKey, props.selectedSite, props.useLiveData]);
+    return () => {
+      window.clearTimeout(timer);
+      props.onLoadingChange?.(false);
+    };
+  }, [props.compareDateRange, props.dateRange, props.isCompareMode, props.onLoadingChange, props.refreshKey, props.selectedSite, props.useLiveData]);
+
+  useEffect(() => {
+    if (ready) props.onLoadingChange?.(false);
+  }, [props.onLoadingChange, ready]);
 
   if (!ready) {
     return (
@@ -97,8 +107,37 @@ function DeferredOverviewGrid(props: {
       compareDateRange={props.compareDateRange}
       useLiveData={props.useLiveData}
       hideTrackerButton={true}
+      onLoadingChange={props.onLoadingChange}
       refreshKey={props.refreshKey}
     />
+  );
+}
+
+function ReportLoadingOverlay({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[70] flex items-start justify-center bg-background/65 px-4 pt-28 backdrop-blur-[2px]">
+      <div className="w-full max-w-xl rounded-2xl border border-border bg-card/95 p-5 text-center shadow-[0_24px_70px_rgba(15,61,46,0.16)]">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-secondary text-primary shadow-inner">
+          <div className="relative flex h-9 w-9 items-center justify-center">
+            <span className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
+            <span className="absolute inset-1 rounded-full border border-primary/20" />
+            <Database className="relative h-5 w-5" />
+          </div>
+        </div>
+        <div className="mt-4 flex items-center justify-center gap-2 text-base font-semibold text-foreground">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          Loading stored Search Console data
+        </div>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+          Preparing the metrics, chart, and query table for this site and date range. The report will appear here automatically.
+        </p>
+        <div className="mx-auto mt-4 h-2 max-w-sm overflow-hidden rounded-full bg-secondary">
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-primary/70" />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -148,6 +187,9 @@ export function AppContent({
   const canUseMultiSite = isMultiSitePlan(userProfile?.tier);
   const dashboardTabListClass = "w-full justify-start gap-10 rounded-none border-b border-border bg-transparent p-0";
   const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-muted-foreground shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-primary data-active:bg-transparent data-active:text-primary data-active:shadow-none";
+  const [isGscOverviewLoading, setIsGscOverviewLoading] = useState(false);
+  const [isGscOverviewGridLoading, setIsGscOverviewGridLoading] = useState(false);
+  const showGscOverviewLoading = gscDashboardTab === "overview" && (isGscOverviewLoading || isGscOverviewGridLoading);
 
   return (
     <Suspense fallback={<div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">Loading view...</div>}>
@@ -165,13 +207,15 @@ export function AppContent({
             <TabsTrigger value="countries" className={dashboardTabTriggerClass}>Countries</TabsTrigger>
             <TabsTrigger value="query-count" className={dashboardTabTriggerClass}>Visible Queries</TabsTrigger>
           </TabsList>
-          <TabsContent value="overview" className="space-y-4">
+          <TabsContent value="overview" className="relative space-y-4">
+            <ReportLoadingOverlay visible={showGscOverviewLoading} />
             <Overview
               siteUrl={selectedSite}
               dateRange={dateRange}
               isCompareMode={isCompareMode}
               compareDateRange={compareDateRange}
               annotations={visibleAnnotations}
+              onLoadingChange={setIsGscOverviewLoading}
               refreshKey={warehouseRefreshKey}
               useLiveData={useLiveData}
               annotationControls={
@@ -191,6 +235,7 @@ export function AppContent({
               dateRange={dateRange}
               isCompareMode={isCompareMode}
               compareDateRange={compareDateRange}
+              onLoadingChange={setIsGscOverviewGridLoading}
               useLiveData={useLiveData}
               refreshKey={warehouseRefreshKey}
             />
