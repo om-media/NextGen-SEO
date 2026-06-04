@@ -196,7 +196,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
     };
 
     load()
-      .catch((err: any) => setError(err.message || "Failed to load raw rows"))
+      .catch((err: any) => setError(err.message || "Failed to load source rows"))
       .finally(() => setLoading(false));
   }, [crawlIssueFilter, crawlKind, endDate, ga4Kind, ga4PropertyId, gscKind, offset, search, selectedCrawlJobId, siteUrl, source, startDate]);
 
@@ -276,7 +276,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
         }
       }
     } catch (err: any) {
-      setError(err.message || "Failed to export raw rows");
+      setError(err.message || "Failed to export source rows");
     } finally {
       setExporting(false);
     }
@@ -288,9 +288,9 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
       <CardHeader className="border-b border-border">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <CardTitle>Raw data exports</CardTitle>
+            <CardTitle>Source data</CardTitle>
             <CardDescription className="mt-2 max-w-3xl">
-              Export-parity workspace for stored source rows. Use this when you would normally export GSC, GA4, or crawler rows into a spreadsheet.
+              Review and export the stored Search Console, GA4, and crawler records behind each report.
             </CardDescription>
           </div>
           <Button variant="outline" className="rounded-xl" disabled={loading || exporting || page.total === 0} onClick={exportRows}>
@@ -302,15 +302,15 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
       <CardContent className="space-y-5 pt-5">
         <Tabs value={source} onValueChange={(value) => setSource(value as Source)}>
           <TabsList>
-            <TabsTrigger value="gsc">GSC raw</TabsTrigger>
-            <TabsTrigger value="ga4">GA4 raw</TabsTrigger>
-            <TabsTrigger value="crawl">Crawl raw</TabsTrigger>
+            <TabsTrigger value="gsc">Search Console</TabsTrigger>
+            <TabsTrigger value="ga4">GA4</TabsTrigger>
+            <TabsTrigger value="crawl">Crawler</TabsTrigger>
           </TabsList>
 
           <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="relative max-w-xl flex-1">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input className="h-11 rounded-xl pl-10" placeholder="Search raw rows..." value={search} onChange={(event) => setSearch(event.target.value)} />
+              <Input className="h-11 rounded-xl pl-10" placeholder="Search source rows..." value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
             <div className="flex flex-wrap gap-2">
               {source === "gsc" && (
@@ -361,7 +361,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All crawl rows</SelectItem>
+                      <SelectItem value="all">All crawler pages</SelectItem>
                       <SelectItem value="success">200 OK</SelectItem>
                       <SelectItem value="redirect">Redirects</SelectItem>
                       <SelectItem value="error">Errors</SelectItem>
@@ -410,9 +410,9 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading raw rows...</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading source rows...</TableCell></TableRow>
                   ) : gscRows.length === 0 ? (
-                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw GSC rows found.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No Search Console rows found.</TableCell></TableRow>
                   ) : gscRows.map((row, index) => (
                     <TableRow key={`${row.date}-${row.page || ""}-${row.query || ""}-${index}`}>
                       <TableCell>{row.date || "Total"}</TableCell>
@@ -446,11 +446,11 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading raw rows...</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading source rows...</TableCell></TableRow>
                   ) : !ga4PropertyId ? (
                     <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">Assign a GA4 property to this workspace first.</TableCell></TableRow>
                   ) : ga4PageKinds.has(ga4Kind) && ga4Rows.length === 0 ? (
-                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw GA4 rows found.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No GA4 rows found.</TableCell></TableRow>
                   ) : ga4PageKinds.has(ga4Kind) ? ga4Rows.map((row, index) => (
                     <TableRow key={`${row.date}-${row.pageKey}-${index}`}>
                       <TableCell>{row.date || "Total"}</TableCell>
@@ -462,7 +462,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                       <TableCell className="text-right">{formatNumber(row.eventCount)}</TableCell>
                     </TableRow>
                   )) : ga4ReportRows.length === 0 ? (
-                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw GA4 rows found.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No GA4 rows found.</TableCell></TableRow>
                   ) : ga4ReportRows.map((row, index) => (
                     <TableRow key={`${row.dimension}-${row.dimensionValue}-${index}`}>
                       <TableCell>Total</TableCell>
@@ -496,7 +496,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                   {loading ? (
                     <TableRow><TableCell colSpan={6} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading crawl links...</TableCell></TableRow>
                   ) : crawlLinkRows.length === 0 ? (
-                    <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No raw crawl links found.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No crawler links found.</TableCell></TableRow>
                   ) : crawlLinkRows.map((row, index) => (
                     <TableRow key={`${row.fromUrl}-${row.toUrl}-${index}`}>
                       <TableCell className="max-w-[360px] truncate" title={row.fromUrl}>{row.fromUrl}</TableCell>
@@ -522,9 +522,9 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading raw rows...</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading source rows...</TableCell></TableRow>
                   ) : crawlRows.length === 0 ? (
-                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No raw crawl rows found.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No crawler pages found.</TableCell></TableRow>
                   ) : crawlRows.map((row, index) => (
                     <TableRow key={`${row.normalizedUrl}-${index}`}>
                       <TableCell className="max-w-[520px] truncate" title={row.url}>{row.url}</TableCell>
