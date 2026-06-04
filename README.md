@@ -71,6 +71,7 @@ Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) d
    npm run dev
    ```
 <br>
+
 ## Production Build
 
 Production deploys should build both the Vite client and the Express server:
@@ -91,6 +92,7 @@ Health checks:
 
 - `/api/health` verifies the HTTP process is responding.
 - `/api/ready` verifies the HTTP process can query the database.
+
 <br>
 
 ## Required Production Environment
@@ -156,6 +158,7 @@ npm run verify:production-url -- https://your-app.example.com
 
 This verifies health, database readiness, SPA serving, security headers, built asset cache headers, and OAuth callback route availability.
 For local Compose smoke tests only, set `PRODUCTION_VERIFY_ALLOW_HTTP=true` when checking `http://127.0.0.1:3010`.
+
 <br>
 
 ## Data Warehouse Storage
