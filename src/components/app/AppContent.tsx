@@ -199,6 +199,14 @@ export function AppContent({
                 />
               }
             />
+            <GscDataGrid
+              siteUrl={selectedSite}
+              dateRange={dateRange}
+              isCompareMode={isCompareMode}
+              compareDateRange={compareDateRange}
+              useLiveData={useLiveData}
+              refreshKey={warehouseRefreshKey}
+            />
           </TabsContent>
           <TabsContent value="queries" className="space-y-4">
             <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} refreshKey={warehouseRefreshKey} />
