@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nextgen_seo
+      POSTGRES_USER: nextgen_seo
+      POSTGRES_PASSWORD: nextgen_seo_dev_password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nextgen_seo -d nextgen_seo"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-dev-data:

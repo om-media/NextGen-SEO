@@ -169,12 +169,18 @@ For local Compose smoke tests only, set `PRODUCTION_VERIFY_ALLOW_HTTP=true` when
 
 NextGen SEO uses a warehouse-first model. Dashboards and exports should read from stored data wherever possible, so reports stay fast, repeatable, and independent of live provider availability.
 
-Local development falls back to `sqlite.db` by default. For production, use PostgreSQL.
+Local development falls back to `sqlite.db` by default. For production, use PostgreSQL. For realistic warehouse performance testing, use PostgreSQL locally too.
 
-To run on PostgreSQL, set `DATABASE_URL` in `.env.local`:
+Start the local PostgreSQL service:
+
+```bash
+npm run db:postgres:up
+```
+
+Then set `DATABASE_URL` in `.env.local`:
 
 ```env
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/nextgen_seo"
+DATABASE_URL="postgresql://nextgen_seo:nextgen_seo_dev_password@localhost:5432/nextgen_seo"
 ```
 
 Then start the app normally:
@@ -188,6 +194,15 @@ To copy existing local SQLite data into PostgreSQL:
 ```bash
 npm run db:migrate:postgres
 ```
+
+The health endpoints expose the active database backend without exposing credentials:
+
+```bash
+curl http://localhost:3000/api/health
+curl http://localhost:3000/api/ready
+```
+
+Both responses include `database.dialect`, which should be `postgres` when `DATABASE_URL` is set.
 <br>
 
 ## License

@@ -17,6 +17,8 @@
     "verify:docker": "node scripts/verify-docker-smoke.mjs",
     "verify:production-url": "node scripts/verify-production-url.mjs",
     "secrets:generate": "node scripts/generate-production-secrets.mjs",
+    "db:postgres:up": "docker compose -f docker-compose.postgres.yml up -d",
+    "db:postgres:down": "docker compose -f docker-compose.postgres.yml down",
     "db:migrate:postgres": "tsx --tsconfig tsconfig.server.json scripts/migrate-sqlite-to-postgres.ts",
     "start": "node .server-dist/server.js"
   },
