@@ -103,7 +103,7 @@ export function GscDataGrid({
     hideTrackerButton,
     siteUrl,
   });
-  const { coverage, data, error, isRowLimited, loading, rowLimit, totalRowCount } = useGscGridData({
+  const { coverage, data, error, isRowLimited, loading, totalRowCount } = useGscGridData({
     compareDateRange,
     dateRange,
     dimension,
@@ -510,7 +510,6 @@ export function GscDataGrid({
             onAiDialogOpenChange={setIsAiDialogOpen}
             onExport={handleExport}
             onGenerateInsights={handleGenerateInsights}
-            rowLimit={isRowLimited ? rowLimit : null}
             rowCount={sortedData.length}
             showActions={showHeaderActions}
             totalRowCount={shouldShowTotalRowCount ? totalRowCount : null}

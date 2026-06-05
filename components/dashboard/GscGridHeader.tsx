@@ -17,7 +17,6 @@ type GscGridHeaderProps = {
   onExport: () => void;
   onGenerateInsights: () => Promise<void>;
   rowCount: number;
-  rowLimit?: number | null;
   showActions?: boolean;
   totalRowCount?: number | null;
   titleOverride?: string;
@@ -36,13 +35,11 @@ export function GscGridHeader({
   onExport,
   onGenerateInsights,
   rowCount,
-  rowLimit,
   showActions = true,
   totalRowCount,
   titleOverride,
 }: GscGridHeaderProps) {
   const hasWarehouseTotal = typeof totalRowCount === "number" && Number.isFinite(totalRowCount);
-  const isLimitedPreview = Boolean(rowLimit && hasWarehouseTotal && totalRowCount > rowCount);
   const titleCount = hasWarehouseTotal ? totalRowCount : rowCount;
   const titleCountSuffix = hasWarehouseTotal ? " total" : "";
   const dimensionLabel = dimension === "query" ? "queries" : getGridTitle(dimension).toLowerCase().replace(/^top\s+/, "");
@@ -56,11 +53,6 @@ export function GscGridHeader({
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           {description}
-          {isLimitedPreview && (
-            <span className="ml-1">
-              Showing the top {rowCount.toLocaleString()} rows in this table for fast loading.
-            </span>
-          )}
         </p>
       </div>
 
