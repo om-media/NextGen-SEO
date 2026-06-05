@@ -17,6 +17,12 @@ type TableMigration = {
   conflictColumns: string[];
 };
 
+const POSTGRES_MAX_PARAMETERS = 60_000;
+const configuredBatchSize = Number(process.env.POSTGRES_MIGRATION_BATCH_SIZE || 1000);
+const DEFAULT_BATCH_SIZE = Number.isFinite(configuredBatchSize) && configuredBatchSize > 0
+  ? Math.floor(configuredBatchSize)
+  : 1000;
+
 const migrations: TableMigration[] = [
   { table: 'projects', conflictColumns: ['id'] },
   { table: 'filters', conflictColumns: ['id'] },
@@ -44,22 +50,36 @@ function getSqliteColumns(db: Database.Database, table: string) {
   return db.prepare(`PRAGMA table_info(${table})`).all().map((row: any) => String(row.name));
 }
 
+function quoteSqliteIdentifier(identifier: string) {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
 function quoteIdentifier(identifier: string) {
   return `"${identifier.toLowerCase().replace(/"/g, '""')}"`;
 }
 
-function buildUpsertSql(table: string, columns: string[], conflictColumns: string[]) {
-  const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ');
+function getBatchSize(columnCount: number) {
+  if (columnCount <= 0) return 1;
+  const maxByParameterLimit = Math.max(1, Math.floor(POSTGRES_MAX_PARAMETERS / columnCount));
+  return Math.max(1, Math.min(DEFAULT_BATCH_SIZE, maxByParameterLimit));
+}
+
+function buildBatchUpsertSql(table: string, columns: string[], conflictColumns: string[], rowCount: number) {
   const insertColumns = columns.map(quoteIdentifier).join(', ');
   const conflictTarget = conflictColumns.map(quoteIdentifier).join(', ');
   const updateColumns = columns.filter((column) => !conflictColumns.includes(column));
   const updateClause = updateColumns.length > 0
     ? `DO UPDATE SET ${updateColumns.map((column) => `${quoteIdentifier(column)} = EXCLUDED.${quoteIdentifier(column)}`).join(', ')}`
     : 'DO NOTHING';
+  const values = Array.from({ length: rowCount }, (_, rowIndex) => {
+    const offset = rowIndex * columns.length;
+    const placeholders = columns.map((_, columnIndex) => `$${offset + columnIndex + 1}`).join(', ');
+    return `(${placeholders})`;
+  }).join(', ');
 
   return `
     INSERT INTO ${quoteIdentifier(table)} (${insertColumns})
-    VALUES (${placeholders})
+    VALUES ${values}
     ON CONFLICT (${conflictTarget}) ${updateClause}
   `;
 }
@@ -71,22 +91,46 @@ async function migrateTable(pool: pg.Pool, sqlite: Database.Database, migration:
     return;
   }
 
-  const rows = sqlite.prepare(`SELECT ${columns.join(', ')} FROM ${migration.table}`).all();
-  if (rows.length === 0) {
+  const rowCount = sqlite.prepare(`SELECT COUNT(*) AS count FROM ${quoteSqliteIdentifier(migration.table)}`).get() as { count: number };
+  const totalRows = Number(rowCount.count || 0);
+  if (totalRows === 0) {
     console.log(`[skip] ${migration.table}: no rows`);
     return;
   }
 
-  const sql = buildUpsertSql(migration.table, columns, migration.conflictColumns);
+  const batchSize = getBatchSize(columns.length);
+  const selectSql = `SELECT ${columns.map(quoteSqliteIdentifier).join(', ')} FROM ${quoteSqliteIdentifier(migration.table)}`;
+  const iterator = sqlite.prepare(selectSql).iterate() as Iterable<Record<string, unknown>>;
   const client = await pool.connect();
+  const startedAt = Date.now();
+  let migratedRows = 0;
+  let batch: Record<string, unknown>[] = [];
+
+  const flush = async () => {
+    if (batch.length === 0) return;
+    const sql = buildBatchUpsertSql(migration.table, columns, migration.conflictColumns, batch.length);
+    const values = batch.flatMap((row) => columns.map((column) => row[column]));
+    await client.query(sql, values);
+    migratedRows += batch.length;
+    batch = [];
+
+    if (migratedRows % (batchSize * 10) === 0 || migratedRows === totalRows) {
+      const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.log(`[progress] ${migration.table}: ${migratedRows}/${totalRows} rows in ${seconds}s`);
+    }
+  };
 
   try {
     await client.query('BEGIN');
-    for (const row of rows as Record<string, unknown>[]) {
-      await client.query(sql, columns.map((column) => row[column]));
+    for (const row of iterator) {
+      batch.push(row);
+      if (batch.length >= batchSize) {
+        await flush();
+      }
     }
+    await flush();
     await client.query('COMMIT');
-    console.log(`[ok] ${migration.table}: migrated ${rows.length} rows`);
+    console.log(`[ok] ${migration.table}: migrated ${migratedRows} rows`);
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
