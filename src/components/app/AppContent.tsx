@@ -193,8 +193,7 @@ export function AppContent({
   const dashboardTabListClass = "w-full justify-start gap-10 rounded-none border-b border-border bg-transparent p-0";
   const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-muted-foreground shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-primary data-active:bg-transparent data-active:text-primary data-active:shadow-none";
   const [isGscOverviewLoading, setIsGscOverviewLoading] = useState(false);
-  const [isGscOverviewGridLoading, setIsGscOverviewGridLoading] = useState(false);
-  const showGscOverviewLoading = gscDashboardTab === "overview" && (isGscOverviewLoading || isGscOverviewGridLoading);
+  const showGscOverviewLoading = gscDashboardTab === "overview" && isGscOverviewLoading;
 
   useEffect(() => {
     if (activeMenu !== "Dashboard") return;
@@ -253,7 +252,6 @@ export function AppContent({
               dateRange={dateRange}
               isCompareMode={isCompareMode}
               compareDateRange={compareDateRange}
-              onLoadingChange={setIsGscOverviewGridLoading}
               useLiveData={useLiveData}
               refreshKey={warehouseRefreshKey}
             />

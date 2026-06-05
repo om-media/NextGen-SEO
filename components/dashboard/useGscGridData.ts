@@ -34,6 +34,7 @@ async function fetchWarehouseData(
   rowLimit: number,
   cacheKeyExtra: string,
   dimensionFilterGroups?: any[],
+  signal?: AbortSignal,
 ): Promise<{ rows: GridRow[]; totalRowCount?: number }> {
   const payload = await fetchCachedWarehouseQuery<any>(
     {
@@ -47,6 +48,7 @@ async function fetchWarehouseData(
       startRow: 0,
     },
     cacheKeyExtra,
+    { signal },
   );
   const allRows = Array.isArray(payload) ? payload : Array.isArray(payload?.rows) ? payload.rows : [];
 
@@ -107,6 +109,10 @@ function isGoogleAuthError(message: string) {
   return message === "UNAUTHORIZED" || message.includes("invalid authentication credentials") || message.includes("OAuth 2 access token") || message.includes("GOOGLE_NOT_CONNECTED");
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 function getFriendlyGscError(message: string) {
   if (message === "WAREHOUSE_UNSUPPORTED_DIMENSION") {
     return "This Search Console breakdown is not available from stored reporting data yet.";
@@ -161,6 +167,7 @@ export function useGscGridData({
     }
 
     let cancelled = false;
+    const abortController = new AbortController();
     setLoading(true);
     setError(null);
 
@@ -210,7 +217,7 @@ export function useGscGridData({
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
           .then((rows) => ({ rows, totalRowCount: rows.length }))
-      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups);
+      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups, abortController.signal);
 
     const comparePromise =
       isCompareMode && compareDateRange?.from && compareDateRange?.to
@@ -220,7 +227,7 @@ export function useGscGridData({
             return shouldUseLiveApi
               ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension], dimensionFilterGroups, true)
                   .then((rows) => ({ rows, totalRowCount: rows.length }))
-              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups);
+              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups, abortController.signal);
           })()
         : Promise.resolve(undefined);
 
@@ -296,7 +303,7 @@ export function useGscGridData({
         }
       })
       .catch((err: Error) => {
-        if (cancelled) return;
+        if (cancelled || isAbortError(err)) return;
         const friendlyMessage = getFriendlyGscError(err.message);
         if (friendlyMessage === err.message) {
           console.error("Failed to fetch GSC data:", err);
@@ -311,6 +318,7 @@ export function useGscGridData({
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
   }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, refreshKey, rowLimit, siteUrl, tier, useLiveData]);
 

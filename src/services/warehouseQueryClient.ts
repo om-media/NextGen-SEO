@@ -39,10 +39,29 @@ function trimCache() {
   }
 }
 
-export async function fetchCachedWarehouseQuery<T = unknown>(body: Record<string, unknown>, cacheKeyExtra = ""): Promise<T> {
+export async function fetchCachedWarehouseQuery<T = unknown>(
+  body: Record<string, unknown>,
+  cacheKeyExtra = "",
+  options: { signal?: AbortSignal } = {},
+): Promise<T> {
   trimCache();
 
   const key = `${cacheKeyExtra}:${stableStringify(body)}`;
+  if (options.signal) {
+    const response = await authFetch("/api/warehouse/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch warehouse data");
+    }
+
+    return response.json() as Promise<T>;
+  }
+
   const cached = warehouseQueryCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.promise as Promise<T>;

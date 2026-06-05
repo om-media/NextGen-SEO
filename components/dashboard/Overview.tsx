@@ -86,6 +86,9 @@ const toFiniteNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const isAbortError = (error: unknown) =>
+  error instanceof DOMException && error.name === "AbortError";
+
 type MetricKey = "clicks" | "impressions" | "ctr" | "queries" | "position";
 
 const getAnnotationLabel = (annotation: Annotation) =>
@@ -216,6 +219,8 @@ export function Overview({
       return;
     }
 
+      let cancelled = false
+      const abortController = new AbortController()
       setLoading(true)
       const gscService = new GscApiService(null, userProfile?.tier || 'free')
       
@@ -255,6 +260,7 @@ export function Overview({
         const json = await fetchCachedWarehouseQuery<any[]>(
           { siteUrl, startDate: start, endDate: end, dimensions: getWarehouseDimensions(), dimensionFilterGroups: filterGroups },
           `gsc-overview:${refreshKey}`,
+          { signal: abortController.signal },
         )
         return json.map((r: any) => ({
           keys: [r.date],
@@ -278,6 +284,7 @@ export function Overview({
             dimensionFilterGroups: filterGroups,
           },
           `gsc-overview-query-count:${refreshKey}`,
+          { signal: abortController.signal },
         );
         return json.map((r: any) => ({
           keys: [r.date, r.query],
@@ -378,14 +385,17 @@ export function Overview({
 
       primaryPromise
         .then(async (primaryRows) => {
+          if (cancelled) return
           const primaryQueryRows = await primaryQueryCountPromise.catch((err) => {
             console.warn("Failed to fetch query counts for GSC overview; continuing without the query metric.", err);
             return [];
           });
+          if (cancelled) return
           setRawData(mergeQueryCounts(primaryRows, primaryQueryRows))
           setError(null)
 
           if (!comparePromise) {
+            if (cancelled) return
             setCompareRawData([])
             return
           }
@@ -397,6 +407,7 @@ export function Overview({
               return { ok: false as const, error: err }
             })
 
+          if (cancelled) return
           if (!compareResult.ok || !compareResult.compareRows) {
             setCompareRawData([])
             return
@@ -407,9 +418,11 @@ export function Overview({
             return [];
           });
 
+          if (cancelled) return
           setCompareRawData(mergeQueryCounts(compareResult.compareRows, compareQueryRows))
         })
         .catch(err => {
+          if (cancelled || isAbortError(err)) return
           const friendlyMessage = getFriendlyOverviewError(err.message)
           if (friendlyMessage === err.message) {
             console.error("Failed to fetch GSC overview data:", err)
@@ -417,8 +430,15 @@ export function Overview({
           setError(friendlyMessage)
         })
         .finally(() => {
-          setLoading(false)
+          if (!cancelled) {
+            setLoading(false)
+          }
         })
+
+      return () => {
+        cancelled = true
+        abortController.abort()
+      }
   }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, refreshKey, userProfile?.googleConnected, userProfile?.tier, useLiveData])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
