@@ -41,6 +41,7 @@ export function GscDataGrid({
   refreshKey = 0,
   hideTrackerButton = false,
   dimensionFilterGroups,
+  includeTotalRowCount = true,
   showHeaderActions = true,
   showInsights = true,
   titleOverride,
@@ -56,6 +57,7 @@ export function GscDataGrid({
   refreshKey?: number;
   hideTrackerButton?: boolean;
   dimensionFilterGroups?: any[];
+  includeTotalRowCount?: boolean;
   showHeaderActions?: boolean;
   showInsights?: boolean;
   titleOverride?: string;
@@ -108,6 +110,7 @@ export function GscDataGrid({
     dateRange,
     dimension,
     dimensionFilterGroups: stableDimensionFilterGroups,
+    includeTotalRowCount,
     isCompareMode,
     refreshKey,
     rowLimit: requestedWarehouseRowLimit,

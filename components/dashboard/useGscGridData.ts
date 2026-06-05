@@ -11,6 +11,7 @@ type UseGscGridDataParams = {
   dateRange?: DateRange;
   dimension: GridDimension;
   dimensionFilterGroups?: any[];
+  includeTotalRowCount?: boolean;
   isCompareMode?: boolean;
   refreshKey?: number;
   rowLimit?: number;
@@ -35,6 +36,7 @@ async function fetchWarehouseData(
   cacheKeyExtra: string,
   dimensionFilterGroups?: any[],
   signal?: AbortSignal,
+  includeTotal = true,
 ): Promise<{ rows: GridRow[]; totalRowCount?: number }> {
   const payload = await fetchCachedWarehouseQuery<any>(
     {
@@ -43,7 +45,7 @@ async function fetchWarehouseData(
       endDate,
       dimensions: [dimension],
       dimensionFilterGroups,
-      includeTotal: true,
+      includeTotal,
       rowLimit,
       startRow: 0,
     },
@@ -141,6 +143,7 @@ export function useGscGridData({
   dateRange,
   dimension,
   dimensionFilterGroups,
+  includeTotalRowCount = true,
   isCompareMode,
   refreshKey = 0,
   rowLimit = INITIAL_WAREHOUSE_GRID_ROW_LIMIT,
@@ -217,7 +220,7 @@ export function useGscGridData({
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
           .then((rows) => ({ rows, totalRowCount: rows.length }))
-      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups, abortController.signal);
+      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups, abortController.signal, includeTotalRowCount);
 
     const comparePromise =
       isCompareMode && compareDateRange?.from && compareDateRange?.to
@@ -227,7 +230,7 @@ export function useGscGridData({
             return shouldUseLiveApi
               ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension], dimensionFilterGroups, true)
                   .then((rows) => ({ rows, totalRowCount: rows.length }))
-              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups, abortController.signal);
+              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups, abortController.signal, includeTotalRowCount);
           })()
         : Promise.resolve(undefined);
 
@@ -320,7 +323,7 @@ export function useGscGridData({
       cancelled = true;
       abortController.abort();
     };
-  }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, refreshKey, rowLimit, siteUrl, tier, useLiveData]);
+  }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, includeTotalRowCount, isCompareMode, refreshKey, rowLimit, siteUrl, tier, useLiveData]);
 
   return {
     coverage,

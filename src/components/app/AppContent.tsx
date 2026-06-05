@@ -97,6 +97,25 @@ function ReportLoadingOverlay({ visible }: { visible: boolean }) {
   );
 }
 
+function OverviewDetailFallback() {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.04)]">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-primary">
+          <Database className="h-4 w-4" />
+        </div>
+        <div>
+          <div className="flex items-center gap-2 font-semibold text-foreground">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            Loading query details
+          </div>
+          <p className="mt-0.5">Preparing the table below the chart.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getVisibleAnnotations(annotations: Annotation[], showSystemAnnotations: boolean, showUserAnnotations: boolean) {
   return annotations.filter(
     (annotation) =>
@@ -199,14 +218,19 @@ export function AppContent({
                 />
               }
             />
-            <GscDataGrid
-              siteUrl={selectedSite}
-              dateRange={dateRange}
-              isCompareMode={isCompareMode}
-              compareDateRange={compareDateRange}
-              useLiveData={useLiveData}
-              refreshKey={warehouseRefreshKey}
-            />
+            <Suspense fallback={<OverviewDetailFallback />}>
+              <GscDataGrid
+                siteUrl={selectedSite}
+                dateRange={dateRange}
+                isCompareMode={isCompareMode}
+                compareDateRange={compareDateRange}
+                useLiveData={useLiveData}
+                refreshKey={warehouseRefreshKey}
+                includeTotalRowCount={false}
+                titleOverride="Top Search Queries"
+                descriptionOverride="Review the strongest stored queries for this date range."
+              />
+            </Suspense>
           </TabsContent>
           <TabsContent value="queries" className="space-y-4">
             <GscDataGrid siteUrl={selectedSite} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} useLiveData={useLiveData} refreshKey={warehouseRefreshKey} />

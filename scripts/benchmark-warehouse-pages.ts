@@ -121,6 +121,29 @@ async function main() {
     `, [candidate.ownerId, candidate.siteUrl, candidate.startDate, candidate.endDate]));
 
     console.log(`topRows: ${topRows.length}`);
+
+    const queryCount = await timed('distinct query count', () => db.get<{ total: number }>(`
+      SELECT COUNT(DISTINCT query) AS total
+      FROM gsc_query_metrics
+      WHERE ownerId = ? AND siteUrl = ? AND date BETWEEN ? AND ? AND query <> ''
+    `, [candidate.ownerId, candidate.siteUrl, candidate.startDate, candidate.endDate]));
+
+    console.log(`queries: ${numberValue(queryCount?.total)}`);
+
+    const topQueries = await timed('top queries query', () => db.all(`
+      SELECT query,
+             SUM(clicks) AS clicks,
+             SUM(impressions) AS impressions,
+             CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END AS ctr,
+             CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END AS position
+      FROM gsc_query_metrics
+      WHERE ownerId = ? AND siteUrl = ? AND date BETWEEN ? AND ? AND query <> ''
+      GROUP BY query
+      ORDER BY clicks DESC, impressions DESC
+      LIMIT 1000
+    `, [candidate.ownerId, candidate.siteUrl, candidate.startDate, candidate.endDate]));
+
+    console.log(`topQueries: ${topQueries.length}`);
   } finally {
     await db.close?.();
   }
