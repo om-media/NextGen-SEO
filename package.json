@@ -20,6 +20,7 @@
     "db:postgres:up": "docker compose -f docker-compose.postgres.yml up -d",
     "db:postgres:down": "docker compose -f docker-compose.postgres.yml down",
     "db:migrate:postgres": "tsx --tsconfig tsconfig.server.json scripts/migrate-sqlite-to-postgres.ts",
+    "benchmark:warehouse:pages": "tsx --tsconfig tsconfig.server.json scripts/benchmark-warehouse-pages.ts",
     "start": "node .server-dist/server.js"
   },
   "dependencies": {
