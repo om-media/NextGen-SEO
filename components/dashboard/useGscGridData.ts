@@ -160,6 +160,7 @@ export function useGscGridData({
       return;
     }
 
+    let cancelled = false;
     setLoading(true);
     setError(null);
 
@@ -200,6 +201,12 @@ export function useGscGridData({
             return null;
           });
 
+    coveragePromise.then((nextCoverage) => {
+      if (!cancelled) {
+        setCoverage(nextCoverage);
+      }
+    });
+
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
           .then((rows) => ({ rows, totalRowCount: rows.length }))
@@ -237,11 +244,11 @@ export function useGscGridData({
 
     primaryPromise
       .then(async (primaryResult) => {
+        if (cancelled) return;
         const primaryRows = primaryResult.rows;
         const primaryTotalRowCount = primaryResult.totalRowCount ?? primaryRows.length;
         setLoadedRowLimit(shouldUseLiveApi ? null : rowLimit);
         setTotalRowCount(primaryTotalRowCount);
-        setCoverage(await coveragePromise);
         let rowsWithPageQueryCounts = primaryRows;
 
         if (dimension === "page") {
@@ -264,7 +271,9 @@ export function useGscGridData({
         }
 
         if (!isCompareMode || !comparePromise) {
-          setData(rowsWithPageQueryCounts);
+          if (!cancelled) {
+            setData(rowsWithPageQueryCounts);
+          }
           return;
         }
 
@@ -276,23 +285,33 @@ export function useGscGridData({
           });
 
         if (!compareResult.ok || !compareResult.compareRows) {
-          setData(primaryRows);
+          if (!cancelled) {
+            setData(primaryRows);
+          }
           return;
         }
 
-        setData(mergeCompareRows(rowsWithPageQueryCounts, compareResult.compareRows));
+        if (!cancelled) {
+          setData(mergeCompareRows(rowsWithPageQueryCounts, compareResult.compareRows));
+        }
       })
       .catch((err: Error) => {
+        if (cancelled) return;
         const friendlyMessage = getFriendlyGscError(err.message);
         if (friendlyMessage === err.message) {
           console.error("Failed to fetch GSC data:", err);
         }
         setError(friendlyMessage);
-        coveragePromise.then(setCoverage);
       })
       .finally(() => {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, isCompareMode, refreshKey, rowLimit, siteUrl, tier, useLiveData]);
 
   return {

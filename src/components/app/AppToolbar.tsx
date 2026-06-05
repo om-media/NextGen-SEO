@@ -240,7 +240,6 @@ function GscSyncStatusBadge({
   const [coverage, setCoverage] = useState<ToolbarCoverageSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [pollKey, setPollKey] = useState(0);
-  const autoImportKeys = useRef(new Set<string>());
   const lastCoverageSnapshot = useRef<{
     activeJobCount: number;
     coveredDateCount: number;
@@ -377,50 +376,6 @@ function GscSyncStatusBadge({
               missingDateCount: nextCoverage.missingDateCount,
             };
 
-            const shouldAutoImport =
-              range &&
-              nextCoverage.missingDateCount > 0 &&
-              nextCoverage.activeJobCount === 0 &&
-              nextCoverage.errorJobCount === 0 &&
-              (dataSource === "gsc" || dataSource === "blended" || dataSource === "ga4");
-            const autoImportKey = shouldAutoImport
-              ? [
-                dataSource,
-                siteUrl,
-                ga4PropertyId || "",
-                range.startDate,
-                range.endDate,
-                nextCoverage.missingDateCount,
-              ].join("|")
-              : "";
-
-            if (shouldAutoImport && autoImportKey && !autoImportKeys.current.has(autoImportKey)) {
-              autoImportKeys.current.add(autoImportKey);
-              authFetch("/api/warehouse/jobs/missing", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  endDate: range.endDate,
-                  maxDates: 720,
-                  propertyId: dataSource === "blended" || dataSource === "ga4" ? ga4PropertyId || undefined : undefined,
-                  siteUrl,
-                  startDate: range.startDate,
-                }),
-              })
-                .then(async (response) => {
-                  if (!response.ok) {
-                    const error = await response.json().catch(() => null);
-                    throw new Error(error?.error || "Failed to queue missing warehouse sync jobs");
-                  }
-                  if (!cancelled) {
-                    onCoverageProgress?.();
-                    setPollKey((key) => key + 1);
-                  }
-                })
-                .catch((error) => {
-                  console.warn("Failed to auto-queue missing warehouse sync jobs", error);
-                });
-            }
           }
 
           if (activeJobCount > 0) {
