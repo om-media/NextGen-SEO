@@ -940,9 +940,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const insertMany = db.transaction(async (metrics: any[]) => {
         for (const date of datesToReplace) {
           await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [ownerId, siteUrl, date]);
+          await db.run('DELETE FROM gsc_page_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [ownerId, siteUrl, date]);
         }
+        const affectedDates = new Set<string>(datesToReplace);
         for (const row of metrics) {
           const date = row.keys[0];
+          affectedDates.add(date);
           const page = row.keys[1] || '';
           const pageKey = canonicalPageKey(page, siteUrl);
           const query = row.keys[2] || '';
@@ -956,6 +959,33 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               ctr=excluded.ctr,
               position=excluded.position
           `, [ownerId, siteUrl, date, page, pageKey, query, row.clicks, row.impressions, row.ctr, row.position]);
+        }
+        for (const date of affectedDates) {
+          await db.run('DELETE FROM gsc_page_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [ownerId, siteUrl, date]);
+          await db.run(`
+            INSERT INTO gsc_page_metrics (ownerId, siteUrl, date, page, pageKey, clicks, impressions, ctr, position, queryCount)
+            SELECT
+              ownerId,
+              siteUrl,
+              date,
+              MIN(page) AS page,
+              COALESCE(NULLIF(pageKey, ''), page) AS pageKey,
+              SUM(clicks) AS clicks,
+              SUM(impressions) AS impressions,
+              CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END AS ctr,
+              CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END AS position,
+              COUNT(DISTINCT query) AS queryCount
+            FROM gsc_page_query_metrics
+            WHERE ownerId = ? AND siteUrl = ? AND date = ? AND COALESCE(NULLIF(pageKey, ''), page) <> ''
+            GROUP BY ownerId, siteUrl, date, COALESCE(NULLIF(pageKey, ''), page)
+            ON CONFLICT(ownerId, siteUrl, date, pageKey) DO UPDATE SET
+              page=excluded.page,
+              clicks=excluded.clicks,
+              impressions=excluded.impressions,
+              ctr=excluded.ctr,
+              position=excluded.position,
+              queryCount=excluded.queryCount
+          `, [ownerId, siteUrl, date]);
         }
       });
       const rowsToInsert = Array.isArray(rows) ? rows : [];
@@ -1856,6 +1886,46 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ${orderClause}
           LIMIT @limit OFFSET @offset
         `, params);
+      } else if (hasPage && !hasQuery && !hasPageFilter) {
+        if (shouldIncludeTotal) {
+          totalRowCount = await getTotalRowCount('gsc_page_metrics', 'pageKey', "AND pageKey <> ''");
+        }
+        rows = await db.all<any>(`
+          SELECT MIN(page) AS page,
+                 COALESCE(NULLIF(pageKey, ''), MIN(page)) AS pageKey,
+                 SUM(clicks) as clicks,
+                 SUM(impressions) as impressions,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
+          FROM gsc_page_metrics
+          ${whereClause}
+            AND pageKey <> ''
+          GROUP BY pageKey
+          ORDER BY clicks DESC, impressions DESC
+          LIMIT @limit OFFSET @offset
+        `, params);
+        if (rows.length === 0) {
+          if (shouldIncludeTotal) {
+            totalRowCount = await getTotalRowCount(
+              'gsc_page_query_metrics',
+              "COALESCE(NULLIF(pageKey, ''), page)",
+            );
+          }
+          rows = await db.all<any>(`
+            SELECT MIN(page) AS page,
+                   COALESCE(NULLIF(pageKey, ''), page) AS pageKey,
+                   COUNT(DISTINCT query) as queryCount,
+                   SUM(clicks) as clicks,
+                   SUM(impressions) as impressions,
+                   CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                   CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
+            FROM gsc_page_query_metrics
+            ${whereClause}
+            GROUP BY COALESCE(NULLIF(pageKey, ''), page)
+            ORDER BY clicks DESC, impressions DESC
+            LIMIT @limit OFFSET @offset
+          `, params);
+        }
       } else if (hasPage || (hasQuery && hasPageFilter)) {
         if (shouldIncludeTotal) {
           totalRowCount = await getTotalRowCount(

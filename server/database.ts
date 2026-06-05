@@ -145,6 +145,20 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, siteUrl, date, page, query)
   );
 
+  CREATE TABLE IF NOT EXISTS gsc_page_metrics (
+    ownerId TEXT,
+    siteUrl TEXT,
+    date TEXT,
+    page TEXT,
+    pageKey TEXT,
+    clicks INTEGER,
+    impressions INTEGER,
+    ctr REAL,
+    position REAL,
+    queryCount INTEGER,
+    PRIMARY KEY (ownerId, siteUrl, date, pageKey)
+  );
+
   CREATE TABLE IF NOT EXISTS ga4_page_metrics (
     ownerId TEXT,
     propertyId TEXT,
@@ -388,6 +402,8 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_page_date ON gsc_page_query_metrics(ownerId, siteUrl, page, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_pagekey_date ON gsc_page_query_metrics(ownerId, siteUrl, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_date_pagekey ON gsc_page_query_metrics(ownerId, siteUrl, date, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_owner_site_date_key ON gsc_page_metrics(ownerId, siteUrl, date, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_owner_site_key_date ON gsc_page_metrics(ownerId, siteUrl, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_key ON ga4_page_metrics(ownerId, propertyId, date, pageKey);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_key_date ON ga4_page_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_path ON ga4_page_metrics(ownerId, propertyId, date, pagePath);
@@ -915,6 +931,45 @@ async function backfillGscPageKeys(db: AppDatabase) {
   }
 }
 
+async function backfillGscPageMetrics(db: AppDatabase) {
+  if (process.env.RUN_LEGACY_GSC_PAGE_METRICS_BACKFILL !== 'true') {
+    return;
+  }
+
+  const existing = await db.get<{ count: number }>('SELECT COUNT(*) AS count FROM gsc_page_metrics');
+  if (Number(existing?.count || 0) > 0) {
+    return;
+  }
+
+  await db.run(`
+    INSERT INTO gsc_page_metrics (ownerId, siteUrl, date, page, pageKey, clicks, impressions, ctr, position, queryCount)
+    SELECT
+      ownerId,
+      siteUrl,
+      date,
+      MIN(page) AS page,
+      COALESCE(NULLIF(pageKey, ''), page) AS pageKey,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END AS ctr,
+      CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END AS position,
+      COUNT(DISTINCT query) AS queryCount
+    FROM gsc_page_query_metrics
+    WHERE COALESCE(NULLIF(pageKey, ''), page) <> ''
+    GROUP BY ownerId, siteUrl, date, COALESCE(NULLIF(pageKey, ''), page)
+    ON CONFLICT(ownerId, siteUrl, date, pageKey) DO UPDATE SET
+      page=excluded.page,
+      clicks=excluded.clicks,
+      impressions=excluded.impressions,
+      ctr=excluded.ctr,
+      position=excluded.position,
+      queryCount=excluded.queryCount
+  `);
+
+  const updated = await db.get<{ count: number }>('SELECT COUNT(*) AS count FROM gsc_page_metrics');
+  console.log(`[db] Backfilled ${Number(updated?.count || 0)} legacy GSC page summary rows`);
+}
+
 export async function initializeDatabase(): Promise<AppDatabase> {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 
@@ -926,6 +981,7 @@ export async function initializeDatabase(): Promise<AppDatabase> {
     const db = new PostgresAppDatabase(pool);
     await applyPostgresMigrations(db);
     await backfillGscPageKeys(db);
+    await backfillGscPageMetrics(db);
     console.log('[db] Connected to PostgreSQL');
     return db;
   }
@@ -934,6 +990,7 @@ export async function initializeDatabase(): Promise<AppDatabase> {
   applySqliteMigrations(sqlite);
   const db = new SqliteAppDatabase(sqlite);
   await backfillGscPageKeys(db);
+  await backfillGscPageMetrics(db);
   console.log('[db] Connected to local SQLite');
   return db;
 }

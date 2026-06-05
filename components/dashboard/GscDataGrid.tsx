@@ -698,6 +698,7 @@ export function GscDataGrid({
                     const key = row.keys[0];
                     const intent = dimension === "query" ? classifyIntent(key, siteUrl) : null;
                     const pageDisplay = dimension === "page" ? formatPageCell(key) : null;
+                    const hasExactQueryCount = typeof row.queryCount === "number" && Number.isFinite(row.queryCount);
 
                     return (
                       <TableRow
@@ -793,9 +794,9 @@ export function GscDataGrid({
                                 setSelectedRowKey(null);
                               }}
                             >
-                              {(row.queryCount || 0).toLocaleString()}
+                              {hasExactQueryCount ? row.queryCount!.toLocaleString() : "View"}
                             </Button>
-                            {renderDifference(row.queryCount || 0, row.compareQueryCount)}
+                            {hasExactQueryCount && renderDifference(row.queryCount || 0, row.compareQueryCount)}
                           </TableCell>
                         )}
                         <TableCell className="text-right">

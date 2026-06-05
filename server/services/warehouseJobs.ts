@@ -207,10 +207,12 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
   const insertSiteSql = 'INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?)';
   const insertQuerySql = 'INSERT INTO gsc_query_metrics (ownerId, siteUrl, date, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
   const insertPageQuerySql = 'INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, pageKey, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+  const insertPageSql = 'INSERT INTO gsc_page_metrics (ownerId, siteUrl, date, page, pageKey, clicks, impressions, ctr, position, queryCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
   const insertCountrySql = 'INSERT INTO gsc_country_metrics (ownerId, siteUrl, date, country, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
   const insertSite = prepareWarehouseStatement(db, insertSiteSql);
   const insertQuery = prepareWarehouseStatement(db, insertQuerySql);
   const insertPageQuery = prepareWarehouseStatement(db, insertPageQuerySql);
+  const insertPage = prepareWarehouseStatement(db, insertPageSql);
   const insertCountry = prepareWarehouseStatement(db, insertCountrySql);
   const apiStartedAt = Date.now();
   const [siteRows, queryRows, pageQueryRows, countryRows] = await Promise.all([
@@ -226,6 +228,7 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
   const countryRowsByDate = groupRowsByDate(countryRows);
 
   const writeStartedAt = Date.now();
+  let pageSummaryRowsSynced = 0;
   for (const date of eachIsoDate(startDate, endDate)) {
     const dateSiteRows = siteRowsByDate.get(date) || [];
     const dateQueryRows = queryRowsByDate.get(date) || [];
@@ -236,6 +239,7 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
       await db.run('DELETE FROM gsc_site_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
       await db.run('DELETE FROM gsc_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
       await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
+      await db.run('DELETE FROM gsc_page_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
       await db.run('DELETE FROM gsc_country_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
 
       for (const row of dateSiteRows) {
@@ -251,6 +255,48 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
           insertPageQuery,
           insertPageQuerySql,
           [job.ownerId, job.siteUrl, date, page, canonicalPageKey(page, job.siteUrl), row.keys?.[2] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)],
+        );
+      }
+      const pageSummaries = new Map<string, { clicks: number; impressions: number; page: string; pageKey: string; queries: Set<string>; weightedPosition: number }>();
+      for (const row of datePageQueryRows) {
+        const page = row.keys?.[1] || '';
+        const pageKey = canonicalPageKey(page, job.siteUrl);
+        if (!pageKey) continue;
+        const summary = pageSummaries.get(pageKey) || {
+          clicks: 0,
+          impressions: 0,
+          page,
+          pageKey,
+          queries: new Set<string>(),
+          weightedPosition: 0,
+        };
+        const clicks = toNumber(row.clicks);
+        const impressions = toNumber(row.impressions);
+        summary.clicks += clicks;
+        summary.impressions += impressions;
+        summary.weightedPosition += toNumber(row.position) * impressions;
+        if (row.keys?.[2]) summary.queries.add(row.keys[2]);
+        if (!summary.page) summary.page = page;
+        pageSummaries.set(pageKey, summary);
+      }
+      for (const summary of pageSummaries.values()) {
+        pageSummaryRowsSynced += 1;
+        await runWarehouseStatement(
+          db,
+          insertPage,
+          insertPageSql,
+          [
+            job.ownerId,
+            job.siteUrl,
+            date,
+            summary.page,
+            summary.pageKey,
+            summary.clicks,
+            summary.impressions,
+            summary.impressions > 0 ? summary.clicks / summary.impressions : 0,
+            summary.impressions > 0 ? summary.weightedPosition / summary.impressions : 0,
+            summary.queries.size,
+          ],
         );
       }
       if (dateCountryRows.length === 0) {
@@ -276,6 +322,7 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
 
   const rows = {
     gscCountry: countryRows.length,
+    gscPage: pageSummaryRowsSynced,
     gscPageQuery: pageQueryRows.length,
     gscQuery: queryRows.length,
     gscSite: siteRows.length,

@@ -26,6 +26,7 @@ const migrations: TableMigration[] = [
   { table: 'gsc_site_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date'] },
   { table: 'gsc_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
   { table: 'gsc_page_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'page', 'query'] },
+  { table: 'gsc_page_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'pageKey'] },
   { table: 'warehouse_sync_status', conflictColumns: ['ownerId', 'siteUrl'] },
   { table: 'tracked_keywords', conflictColumns: ['id'] },
   { table: 'keyword_rankings', conflictColumns: ['keywordId', 'date'] },

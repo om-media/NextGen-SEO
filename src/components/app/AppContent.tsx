@@ -73,54 +73,6 @@ type AppContentProps = {
   userProfile: UserProfile | null;
 };
 
-function DeferredOverviewGrid(props: {
-  compareDateRange: DateRange;
-  dateRange: DateRange;
-  isCompareMode: boolean;
-  onLoadingChange?: (loading: boolean) => void;
-  refreshKey: number;
-  selectedSite: string;
-  useLiveData: boolean;
-}) {
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    setReady(false);
-    props.onLoadingChange?.(true);
-    void loadGscDataGrid();
-    const timer = window.setTimeout(() => setReady(true), 100);
-    return () => {
-      window.clearTimeout(timer);
-      props.onLoadingChange?.(false);
-    };
-  }, [props.compareDateRange, props.dateRange, props.isCompareMode, props.onLoadingChange, props.refreshKey, props.selectedSite, props.useLiveData]);
-
-  useEffect(() => {
-    if (ready) props.onLoadingChange?.(false);
-  }, [props.onLoadingChange, ready]);
-
-  if (!ready) {
-    return (
-      <div className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_28px_rgba(15,61,46,0.04)]">
-        Preparing query table...
-      </div>
-    );
-  }
-
-  return (
-    <GscDataGrid
-      siteUrl={props.selectedSite}
-      dateRange={props.dateRange}
-      isCompareMode={props.isCompareMode}
-      compareDateRange={props.compareDateRange}
-      useLiveData={props.useLiveData}
-      hideTrackerButton={true}
-      onLoadingChange={props.onLoadingChange}
-      refreshKey={props.refreshKey}
-    />
-  );
-}
-
 function ReportLoadingOverlay({ visible }: { visible: boolean }) {
   if (!visible) return null;
 
@@ -246,14 +198,6 @@ export function AppContent({
                   setShowUserAnnotations={setShowUserAnnotations}
                 />
               }
-            />
-            <DeferredOverviewGrid
-              selectedSite={selectedSite}
-              dateRange={dateRange}
-              isCompareMode={isCompareMode}
-              compareDateRange={compareDateRange}
-              useLiveData={useLiveData}
-              refreshKey={warehouseRefreshKey}
             />
           </TabsContent>
           <TabsContent value="queries" className="space-y-4">
