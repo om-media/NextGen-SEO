@@ -53,6 +53,9 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
   app.get('/api/health', (_req, res) => {
     res.json({
       ok: true,
+      database: {
+        dialect: db.dialect,
+      },
       timestamp: new Date().toISOString(),
     });
   });
@@ -62,6 +65,9 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
       await db.get('SELECT 1 AS ok');
       res.json({
         ok: true,
+        database: {
+          dialect: db.dialect,
+        },
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
