@@ -452,18 +452,31 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
 
     const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
+    const datesToQueue = missingDates.filter((date) => !activeDates.has(date));
+    const queuedJobs = [];
+    for (const chunk of chunkAscendingDates(datesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
+      const job = await queueWarehouseGa4DimensionRangeJob(db, {
+        endDate: chunk.endDate,
+        ownerId,
+        propertyId,
+        siteUrl,
+        startDate: chunk.startDate,
+      });
+      queuedJobs.push(job);
+      addJobDatesToSet(activeDates, [job], startDate, effectiveEndDate);
+    }
 
     return {
       activeDateCount: activeDates.size,
-      activeJobCount: activeJobs.length,
+      activeJobCount: activeJobs.length + queuedJobs.length,
       coveredDateCount: Math.min(coveredDates.size, expectedDates.length),
       dimension: warehouseDimension,
       errorJobCount: jobRows.filter((row) => row.status === 'error').length,
       expectedDateCount: expectedDates.length,
       latestAvailableDate,
       missingDateCount: missingDates.length,
-      queued: 0,
-      queuedDateCount: 0,
+      queued: queuedJobs.length,
+      queuedDateCount: datesToQueue.length,
       skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
     };
   };
@@ -794,6 +807,20 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
       const coveredDates = new Set(coveredRows.map((row) => row.date));
       addJobDatesToSet(coveredDates, completedJobs, startDate, effectiveEndDate);
+      const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
+      const datesToQueue = missingDates.filter((date) => !activeDates.has(date));
+      const queuedJobs = [];
+      for (const chunk of chunkAscendingDates(datesToQueue, LLM_RANGE_JOB_DAYS)) {
+        const job = await queueWarehouseLlmRangeJob(db, {
+          endDate: chunk.endDate,
+          ownerId,
+          propertyId,
+          siteUrl,
+          startDate: chunk.startDate,
+        });
+        queuedJobs.push(job);
+        addJobDatesToSet(activeDates, [job], startDate, effectiveEndDate);
+      }
       const coveredDateCount = coveredDates.size;
       const totals = sourceRows.reduce((acc, row) => {
         const sessions = toFiniteNumber(readField(row, 'sessions'));
@@ -813,13 +840,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
       return res.json({
         coverage: {
-          activeJobCount,
+          activeJobCount: activeJobCount + queuedJobs.length,
           activeDateCount: activeDates.size,
           coveredDateCount: Math.min(coveredDateCount, expectedDates.length),
           errorJobCount: llmJobRows.filter((row) => row.status === 'error').length,
           expectedDateCount: expectedDates.length,
           latestAvailableDate,
-          missingDateCount: Math.max(expectedDates.length - coveredDateCount, 0),
+          missingDateCount: missingDates.length,
+          queued: queuedJobs.length,
+          queuedDateCount: datesToQueue.length,
           skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
         },
         daily: {

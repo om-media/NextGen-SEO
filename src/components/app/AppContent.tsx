@@ -8,7 +8,6 @@ import type { Annotation } from "../../services/annotationsService";
 import type { BingSite } from "../../services/bingService";
 import type { GscSite } from "../../services/gscService";
 import type { UserProfile } from "../../contexts/AuthContext";
-import { canUseRawExports, canUseReconciliation, isMultiSitePlan } from "@/shared/plans";
 
 const loadOverview = () => import("@/components/dashboard/Overview");
 const loadAnnotationsSettings = () => import("@/components/dashboard/AnnotationsSettings");
@@ -157,10 +156,7 @@ export function AppContent({
   userProfile,
 }: AppContentProps) {
   const visibleAnnotations = getVisibleAnnotations(annotations, showSystemAnnotations, showUserAnnotations);
-  const isUnlockedSite = (siteUrl: string) =>
-    userProfile?.tier === "enterprise" || Boolean(userProfile?.unlockedSites.includes(siteUrl));
   const rawWorkspaceSite = userProfile?.activatedSiteUrl || (!selectedSite.startsWith("properties/") ? selectedSite : "");
-  const canUseMultiSite = isMultiSitePlan(userProfile?.tier);
   const dashboardTabListClass = "w-full justify-start gap-10 rounded-none border-b border-border bg-transparent p-0";
   const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-muted-foreground shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-primary data-active:bg-transparent data-active:text-primary data-active:shadow-none";
   const [isGscOverviewLoading, setIsGscOverviewLoading] = useState(false);
@@ -182,7 +178,7 @@ export function AppContent({
   return (
     <Suspense fallback={<div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">Loading view...</div>}>
     <>
-      {selectedSite && !apiError && dataSource === "gsc" && sites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
+      {selectedSite && !apiError && dataSource === "gsc" && sites.some((site) => site.siteUrl === selectedSite) && activeMenu === "Dashboard" && (
         <Tabs
           value={gscDashboardTab}
           onValueChange={(value) => onGscDashboardTabChange(value as GscDashboardTab)}
@@ -247,7 +243,7 @@ export function AppContent({
         </Tabs>
       )}
 
-      {selectedSite && !apiError && dataSource === "blended" && sites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
+      {selectedSite && !apiError && dataSource === "blended" && sites.some((site) => site.siteUrl === selectedSite) && activeMenu === "Dashboard" && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.04)]">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Blended page decisions</p>
@@ -266,7 +262,7 @@ export function AppContent({
         </div>
       )}
 
-      {selectedSite && !apiError && dataSource === "bing" && userProfile?.bingConnected && bingSites.some((site) => site.siteUrl === selectedSite) && isUnlockedSite(selectedSite) && activeMenu === "Dashboard" && (
+      {selectedSite && !apiError && dataSource === "bing" && userProfile?.bingConnected && bingSites.some((site) => site.siteUrl === selectedSite) && activeMenu === "Dashboard" && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
             <h3 className="mb-1 text-lg font-semibold tracking-[-0.01em] text-foreground">Bing Webmaster Tools data</h3>
@@ -346,25 +342,25 @@ export function AppContent({
         </div>
       )}
 
-      {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Rank Tracker" && (
+      {selectedSite && !apiError && activeMenu === "Rank Tracker" && (
         <div className="space-y-4">
           <RankTrackerView siteUrl={selectedSite} />
         </div>
       )}
 
-      {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Server Logs" && (
+      {selectedSite && !apiError && activeMenu === "Server Logs" && (
         <div className="space-y-4">
           <LogAnalyzerView siteUrl={selectedSite} dateRange={dateRange} />
         </div>
       )}
 
-      {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Page Indexing" && (
+      {selectedSite && !apiError && activeMenu === "Page Indexing" && (
         <div className="space-y-4">
           <PageIndexingView siteUrl={selectedSite} dateRange={dateRange} isLive={useLiveData} />
         </div>
       )}
 
-      {selectedSite && !apiError && isUnlockedSite(selectedSite) && activeMenu === "Crawl Inventory" && (
+      {selectedSite && !apiError && activeMenu === "Crawl Inventory" && (
         <div className="space-y-4">
           <CrawlInventoryView
             siteUrl={selectedSite}
@@ -373,7 +369,7 @@ export function AppContent({
         </div>
       )}
 
-      {rawWorkspaceSite && !apiError && isUnlockedSite(rawWorkspaceSite) && activeMenu === "Raw Data" && canUseRawExports(userProfile?.tier) && (
+      {rawWorkspaceSite && !apiError && activeMenu === "Raw Data" && (
         <div className="space-y-4">
           <RawDataView
             dateRange={dateRange}
@@ -383,7 +379,7 @@ export function AppContent({
         </div>
       )}
 
-      {rawWorkspaceSite && !apiError && isUnlockedSite(rawWorkspaceSite) && activeMenu === "Reconciliation" && canUseReconciliation(userProfile?.tier) && (
+      {rawWorkspaceSite && !apiError && activeMenu === "Reconciliation" && (
         <div className="space-y-4">
           <ReconciliationView
             dateRange={dateRange}
@@ -393,7 +389,7 @@ export function AppContent({
         </div>
       )}
 
-      {!apiError && activeMenu === "Sites" && canUseMultiSite && (
+      {!apiError && activeMenu === "Sites" && (
         <div className="space-y-4">
           <WorkspaceSitesView onActivateSite={onActivateWorkspaceSite} onOpenSite={onOpenSiteWorkspace} />
         </div>
@@ -435,7 +431,7 @@ export function AppContent({
       )}
 
       {activeMenu === "AI Content Auditor" && (
-        rawWorkspaceSite && !apiError && isUnlockedSite(rawWorkspaceSite) ? (
+        rawWorkspaceSite && !apiError ? (
           <AIContentAuditorView dateRange={dateRange} siteUrl={rawWorkspaceSite} useLiveData={useLiveData} />
         ) : null
       )}

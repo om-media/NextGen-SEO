@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertCircle, Bell, Loader2, Lock, LogOut, Settings2 } from "lucide-react";
+import { AlertCircle, Bell, Loader2, LogOut, Settings2 } from "lucide-react";
 import type { AppUser, UserProfile } from "../../contexts/AuthContext";
 import type { SiteLike } from "../../lib/siteSelection";
 import { ThemeToggle } from "./ThemeToggle";
@@ -188,19 +188,11 @@ export function AppHeader({
                 align="start"
                 className={dataSource === "ga4" ? "max-w-[min(26rem,calc(100vw-2rem))] border-border/80 shadow-xl" : "border-border/80 shadow-xl"}
               >
-                {currentSites.map((site) => {
-                  const isUnlocked = dataSource === "ga4"
-                    ? true
-                    : userProfile?.tier === "enterprise" || userProfile?.unlockedSites.includes(site.siteUrl);
-                  return (
-                    <SelectItem key={site.siteUrl} value={site.siteUrl}>
-                      <div className="flex min-w-0 items-center justify-between w-full gap-2">
-                        <span className="min-w-0 truncate">{getSiteDisplayName(site)}</span>
-                        {!isUnlocked && <Lock className="h-3 w-3 text-muted-foreground ml-2" />}
-                      </div>
-                    </SelectItem>
-                  );
-                })}
+                {currentSites.map((site) => (
+                  <SelectItem key={site.siteUrl} value={site.siteUrl}>
+                    <span className="min-w-0 truncate">{getSiteDisplayName(site)}</span>
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

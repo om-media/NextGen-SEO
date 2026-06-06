@@ -28,7 +28,6 @@ import { AppToolbar } from "./components/app/AppToolbar"
 import type { SettingsDraft } from "./components/app/SettingsDialog"
 import { getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
 import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownSites } from "./lib/siteData"
-import { canUseRawExports, canUseReconciliation, getPlanPropertyLimit, isMultiSitePlan } from "../shared/plans"
 
 type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
 
@@ -50,7 +49,6 @@ function readCachedList<T>(key: string): T[] {
 const AppContent = lazy(() => import("./components/app/AppContent").then((module) => ({ default: module.AppContent })));
 const OnboardingFlow = lazy(() => import("./components/app/OnboardingFlow").then((module) => ({ default: module.OnboardingFlow })));
 const SettingsDialog = lazy(() => import("./components/app/SettingsDialog").then((module) => ({ default: module.SettingsDialog })));
-const UnlockSiteDialog = lazy(() => import("./components/app/UnlockSiteDialog").then((module) => ({ default: module.UnlockSiteDialog })));
 const Ga4PropertyDialog = lazy(() => import("./components/app/Ga4PropertyDialog").then((module) => ({ default: module.Ga4PropertyDialog })));
 
 function DashboardContentFallback() {
@@ -130,12 +128,6 @@ function MainApp() {
     setGa4DashboardTab("overview")
   }, [dataSource, selectedSite])
 
-  useEffect(() => {
-    if ((activeMenu === "Sites" && !isMultiSitePlan(userProfile?.tier)) || (activeMenu === "Raw Data" && !canUseRawExports(userProfile?.tier)) || (activeMenu === "Reconciliation" && !canUseReconciliation(userProfile?.tier))) {
-      setActiveMenu("Dashboard");
-    }
-  }, [activeMenu, userProfile?.tier])
-
   const fetchAnnotations = async () => {
     if (user?.uid) {
        try {
@@ -212,26 +204,6 @@ function MainApp() {
       setSelectedSite(userProfile.activatedSiteUrl);
     }
   }, [selectedSite, userProfile?.activatedSiteUrl]);
-
-  useEffect(() => {
-    if (!userProfile || isOnboarding || userProfile.tier === 'enterprise' || !selectedSite) {
-      return;
-    }
-
-    const selectedSiteStillUnlocked = Boolean(getPreferredSiteUrl(
-      selectedSite,
-      userProfile.unlockedSites.map((siteUrl) => ({ siteUrl })),
-      userProfile.unlockedSites,
-      userProfile.tier,
-      ga4Sites as SiteLike[],
-    ));
-
-    if (selectedSiteStillUnlocked) {
-      return;
-    }
-
-    setSelectedSite(userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "");
-  }, [ga4Sites, isOnboarding, selectedSite, userProfile]);
 
   useEffect(() => {
     const userKey = user?.uid || null;
@@ -339,9 +311,6 @@ function MainApp() {
     }
   }
 
-  const [showUnlockModal, setShowUnlockModal] = useState(false)
-  const [siteToUnlock, setSiteToUnlock] = useState<string | null>(null)
-  const [unlockError, setUnlockError] = useState<string | null>(null)
   const [showGa4PropertyDialog, setShowGa4PropertyDialog] = useState(false)
   const [isSavingGa4Property, setIsSavingGa4Property] = useState(false)
   const [pendingGa4Property, setPendingGa4Property] = useState("")
@@ -388,23 +357,21 @@ function MainApp() {
     return availableSites.find((site) => isGa4PropertyForWorkspaceSite(site, workspaceSite))?.siteUrl || "";
   };
 
-  const getPreferredGa4PropertyId = (availableSites: SiteLike[]) => {
+  const getPreferredGa4PropertyId = (availableSites: SiteLike[], currentPreference = selectedGa4Property) => {
+    if (currentPreference && availableSites.some((site) => site.siteUrl === currentPreference)) {
+      return currentPreference;
+    }
+    const savedWorkspaceDefault = userProfile?.activatedGa4PropertyId || "";
+    if (savedWorkspaceDefault && availableSites.some((site) => site.siteUrl === savedWorkspaceDefault)) {
+      return savedWorkspaceDefault;
+    }
+
     const workspaceMatch = getGa4PropertyForWorkspaceSite(availableSites);
     if (workspaceMatch) {
       return workspaceMatch;
     }
 
-    const savedWorkspaceDefault = userProfile?.activatedGa4PropertyId || "";
-    const preferred = userProfile?.tier === 'enterprise'
-      ? selectedGa4Property || savedWorkspaceDefault
-      : savedWorkspaceDefault;
-    if (!preferred) {
-      return "";
-    }
-
-    return availableSites.some((site) => site.siteUrl === preferred) || preferred === userProfile?.activatedGa4PropertyId
-      ? preferred
-      : "";
+    return availableSites[0]?.siteUrl || "";
   };
 
   useEffect(() => {
@@ -516,7 +483,7 @@ function MainApp() {
             setSessionExpired(false)
             setGa4Sites(fetchedSites)
           if (fetchedSites.length > 0 && !isOnboarding) {
-            setSelectedGa4Property(getPreferredGa4PropertyId(fetchedSites))
+            setSelectedGa4Property((current) => getPreferredGa4PropertyId(fetchedSites, current))
           }
         })
         .catch(err => {
@@ -541,40 +508,7 @@ function MainApp() {
   }, [backgroundEffectsReady, dataSource, isOnboarding, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
-    if (!userProfile) return;
-    
-    const isUnlocked = userProfile.tier === 'enterprise' || userProfile.unlockedSites.includes(siteUrl);
-    
-    if (isUnlocked) {
-      setSelectedSite(siteUrl);
-      return;
-    }
-
-    const limit = getPlanPropertyLimit(userProfile.tier);
-    
-    if (limit === null || userProfile.unlockedSites.length < limit) {
-      // They can unlock it
-      setSiteToUnlock(siteUrl);
-      setShowUnlockModal(true);
-      setUnlockError(null);
-    } else {
-      // Reached limit
-      setSiteToUnlock(siteUrl);
-      setShowUnlockModal(true);
-      setUnlockError(`You have reached the maximum number of sites (${limit}) for your ${userProfile.tier} tier.`);
-    }
-  };
-
-  const confirmUnlock = async () => {
-    if (!siteToUnlock) return;
-    try {
-      await unlockSite(siteToUnlock);
-      setSelectedSite(siteToUnlock);
-      setShowUnlockModal(false);
-      setSiteToUnlock(null);
-    } catch (err: any) {
-      setUnlockError(err.message);
-    }
+    setSelectedSite(siteUrl);
   };
 
   const handleSaveSettings = async () => {
@@ -749,20 +683,9 @@ function MainApp() {
   const ga4SitesWithSavedDefault = savedGa4Property && !ga4Sites.some((site) => site.siteUrl === savedGa4Property.siteUrl)
     ? [savedGa4Property, ...ga4Sites]
     : ga4Sites;
-  const accessibleGscSites =
-    userProfile?.tier === 'enterprise'
-      ? sites
-      : sites.filter((site) => userProfile?.unlockedSites.includes(site.siteUrl));
-  const accessibleBingSites =
-    userProfile?.tier === 'enterprise'
-      ? bingSites
-      : bingSites.filter((site) => userProfile?.unlockedSites.includes(site.siteUrl));
-  const accessibleGa4Sites =
-    userProfile?.tier === 'enterprise'
-      ? ga4SitesWithSavedDefault
-      : savedGa4Property
-        ? ga4SitesWithSavedDefault.filter((site) => site.siteUrl === savedGa4Property.siteUrl)
-        : [];
+  const accessibleGscSites = sites;
+  const accessibleBingSites = bingSites;
+  const accessibleGa4Sites = ga4SitesWithSavedDefault;
   const workspaceMatchedGa4Sites = selectedSite
     ? accessibleGa4Sites.filter((site) => isGa4PropertyForWorkspaceSite(site, selectedSite))
     : accessibleGa4Sites;
@@ -788,17 +711,7 @@ function MainApp() {
     "Reconciliation",
     "Server Logs",
   ].includes(activeMenu);
-  const hasValidSelectedSite = currentSites.some((site) => {
-    if (site.siteUrl !== currentSelection) {
-      return false;
-    }
-
-    if (dataSource === 'ga4') {
-      return true;
-    }
-
-    return userProfile?.tier === 'enterprise' || Boolean(userProfile?.unlockedSites.includes(site.siteUrl));
-  });
+  const hasValidSelectedSite = currentSites.some((site) => site.siteUrl === currentSelection);
 
   const switchDataSource = (nextSource: DataSource, availableSites: SiteLike[]) => {
     if (dataSource === nextSource) {
@@ -814,7 +727,7 @@ function MainApp() {
         }
       } else {
         if (nextSource === 'ga4') {
-          setSelectedGa4Property(getPreferredGa4PropertyId(availableSites));
+          setSelectedGa4Property((current) => getPreferredGa4PropertyId(availableSites, current));
         }
       }
     } else {
@@ -836,17 +749,16 @@ function MainApp() {
       }
 
       if (!currentSites.some((site) => site.siteUrl === currentSelection)) {
-        setSelectedGa4Property(getPreferredGa4PropertyId(currentSites));
+        setSelectedGa4Property((current) => getPreferredGa4PropertyId(currentSites, current));
       }
       return;
     }
 
-    if (!userProfile || userProfile.tier === 'enterprise') {
+    if (!userProfile) {
       return;
     }
 
-    const selectedSiteIsAccessible = Boolean(selectedSite && userProfile.unlockedSites.includes(selectedSite));
-    if (!selectedSite || !selectedSiteIsAccessible) {
+    if (!selectedSite || !currentSites.some((site) => site.siteUrl === selectedSite)) {
       const preferred = getPreferredSiteUrl(
         userProfile.activatedSiteUrl || selectedSite,
         accessibleWorkspaceSites,
@@ -859,7 +771,7 @@ function MainApp() {
   }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, isOnboarding, selectedSite, userProfile]);
 
   useEffect(() => {
-    if (!userProfile || isOnboarding || userProfile.tier === 'enterprise') {
+    if (!userProfile || isOnboarding) {
       return;
     }
 
@@ -904,7 +816,6 @@ function MainApp() {
           isConnectingGoogle={isConnectingGoogleData}
           onComplete={handleFinishOnboarding}
           onConnectGoogle={handleConnectGoogleData}
-          onOpenPlan={() => openSettings("workspace")}
           onSelectGa4Property={setSelectedGa4Property}
           onSelectSite={setSelectedSite}
           selectedGa4Property={selectedGa4Property}
@@ -968,7 +879,7 @@ function MainApp() {
                   onOpenRawData={() => setActiveMenu("Raw Data")}
                   onToDateChange={handleToDateChange}
                   onWarehouseCoverageChange={bumpGscSyncVersion}
-                  rawDataAvailable={canUseRawExports(userProfile?.tier)}
+                  rawDataAvailable={true}
                   setIsCompareMode={setIsCompareMode}
                 />
               )}
@@ -1034,15 +945,6 @@ function MainApp() {
       </div>
 
       <Suspense fallback={null}>
-        <UnlockSiteDialog
-          onClose={() => setShowUnlockModal(false)}
-          onConfirm={confirmUnlock}
-          onOpenWorkspace={() => openSettings("workspace")}
-          open={showUnlockModal}
-          siteToUnlock={siteToUnlock}
-          unlockError={unlockError}
-          userProfile={userProfile}
-        />
         <SettingsDialog
           dataSource={dataSource}
           googleConnected={Boolean(userProfile?.googleConnected)}

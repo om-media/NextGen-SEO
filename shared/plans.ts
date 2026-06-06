@@ -92,7 +92,8 @@ export function getPlanDisplayName(tier: PlanTier | null | undefined) {
 }
 
 export function getPlanPropertyLimit(tier: PlanTier | null | undefined) {
-  return getPlanDefinition(tier).propertyLimit;
+  void tier;
+  return null;
 }
 
 export function getPlanPropertyLimitLabel(tier: PlanTier | null | undefined) {
@@ -101,17 +102,14 @@ export function getPlanPropertyLimitLabel(tier: PlanTier | null | undefined) {
 }
 
 export function getRemainingPropertySlots(tier: PlanTier | null | undefined, unlockedCount: number) {
-  const limit = getPlanPropertyLimit(tier);
-  if (limit === null) {
-    return null;
-  }
-
-  return Math.max(limit - unlockedCount, 0);
+  void tier;
+  void unlockedCount;
+  return null;
 }
 
 export function isMultiSitePlan(tier: PlanTier | null | undefined) {
-  const limit = getPlanPropertyLimit(tier);
-  return limit === null || limit > 1;
+  void tier;
+  return true;
 }
 
 export function getPlanCrawlLimits(tier: PlanTier | null | undefined) {
@@ -119,9 +117,11 @@ export function getPlanCrawlLimits(tier: PlanTier | null | undefined) {
 }
 
 export function canUseRawExports(tier: PlanTier | null | undefined) {
-  return getPlanDefinition(tier).crawl.allowRawExports;
+  void tier;
+  return true;
 }
 
 export function canUseReconciliation(tier: PlanTier | null | undefined) {
-  return getPlanDefinition(tier).crawl.allowReconciliation;
+  void tier;
+  return true;
 }
