@@ -47,19 +47,8 @@ export async function fetchCachedWarehouseQuery<T = unknown>(
   trimCache();
 
   const key = `${cacheKeyExtra}:${stableStringify(body)}`;
-  if (options.signal) {
-    const response = await authFetch("/api/warehouse/query", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch warehouse data");
-    }
-
-    return response.json() as Promise<T>;
+  if (options.signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
   }
 
   const cached = warehouseQueryCache.get(key);

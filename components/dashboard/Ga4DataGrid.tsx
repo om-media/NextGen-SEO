@@ -582,7 +582,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
         {loading && data.length > 0 && (
           <div className="flex items-center space-x-2 text-sm text-muted-foreground mb-4">
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span>Updating data...</span>
+            <span>Refreshing stored data...</span>
           </div>
         )}
         <div className="relative overflow-hidden rounded-2xl border border-border bg-card">

@@ -75,7 +75,8 @@ const DAILY_SCHEDULER_MS = 60 * 60 * 1000;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 8, 1, 24);
-const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, 720, 1, 720);
+export const SEARCH_CONSOLE_HISTORY_DAYS = 486;
+const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, SEARCH_CONSOLE_HISTORY_DAYS, 1, SEARCH_CONSOLE_HISTORY_DAYS);
 export const CORE_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_CORE_RANGE_JOB_DAYS, 120, 7, 365);
 const GSC_ROW_LIMIT = 25_000;
 const GSC_MAX_PAGES_PER_DATASET = 200;
@@ -627,11 +628,54 @@ async function resolveActiveGa4PropertyForSite(db: AppDatabase, job: WarehouseJo
   return siteAllowed && propertyAllowed ? job.propertyId : null;
 }
 
+async function hasRequiredCoreWarehouseRows(
+  db: AppDatabase,
+  job: Pick<WarehouseJob, 'ownerId' | 'propertyId' | 'siteUrl'>,
+  startDate: string,
+  endDate: string,
+  effectivePropertyId?: string | null,
+) {
+  const expectedDays = eachIsoDate(startDate, endDate).length;
+  if (expectedDays === 0) return false;
+  const propertyId = effectivePropertyId || job.propertyId || '';
+
+  const [siteRows, queryRows, pageQueryRows, ga4Rows] = await Promise.all([
+    db.get<{ count: number }>(`
+      SELECT COUNT(DISTINCT date) AS count
+      FROM gsc_site_metrics
+      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+    `, [job.ownerId, job.siteUrl, startDate, endDate]),
+    db.get<{ count: number }>(`
+      SELECT COUNT(DISTINCT date) AS count
+      FROM gsc_query_metrics
+      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+    `, [job.ownerId, job.siteUrl, startDate, endDate]),
+    db.get<{ count: number }>(`
+      SELECT COUNT(DISTINCT date) AS count
+      FROM gsc_page_query_metrics
+      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+    `, [job.ownerId, job.siteUrl, startDate, endDate]),
+    propertyId
+      ? db.get<{ count: number }>(`
+        SELECT COUNT(DISTINCT date) AS count
+        FROM ga4_page_metrics
+        WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+      `, [job.ownerId, propertyId, startDate, endDate])
+      : Promise.resolve({ count: expectedDays }),
+  ]);
+
+  return Number(siteRows?.count || 0) >= expectedDays
+    && Number(queryRows?.count || 0) >= expectedDays
+    && Number(pageQueryRows?.count || 0) >= expectedDays
+    && Number(ga4Rows?.count || 0) >= expectedDays;
+}
+
 async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
   const totalStartedAt = Date.now();
   let syncResult = emptySyncResult();
   const jobStartDate = job.targetStartDate || job.targetDate;
   const jobEndDate = job.targetDate;
+  let syncedStartDate = jobStartDate;
   const propertyId = await resolveActiveGa4PropertyForSite(db, job);
   const scopedJob = propertyId === job.propertyId ? job : { ...job, propertyId };
   if (job.jobType === 'ga4-llm-range-sync') {
@@ -641,8 +685,43 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
   } else if (job.jobType === 'ga4-llm-sync') {
     syncResult = propertyId ? await syncGa4LlmDate(db, scopedJob) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
   } else if (job.jobType === 'core-range-sync') {
-    const gscResult = await syncGscRange(db, job, jobStartDate, jobEndDate);
-    const ga4Result = propertyId ? await syncGa4PageRange(db, scopedJob, jobStartDate, jobEndDate) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    const importStartDate = maxIsoDate(jobStartDate, earliestSearchConsoleReportingDate());
+    if (importStartDate > jobEndDate) {
+      await updateJob(db, job.id, {
+        completedAt: nowIso(),
+        lastError: null,
+        lockedAt: null,
+        metricsJson: JSON.stringify({
+          days: 0,
+          skippedReason: 'outside-search-console-history-window',
+          source: 'core',
+          totalMs: elapsedMs(totalStartedAt),
+        }),
+        rowsSynced: 0,
+        status: 'superseded',
+      });
+      return;
+    }
+    syncedStartDate = importStartDate;
+    const alreadyStored = await hasRequiredCoreWarehouseRows(db, job, importStartDate, jobEndDate, propertyId);
+    if (alreadyStored) {
+      await updateJob(db, job.id, {
+        completedAt: nowIso(),
+        lastError: null,
+        lockedAt: null,
+        metricsJson: JSON.stringify({
+          days: eachIsoDate(importStartDate, jobEndDate).length,
+          skippedReason: 'already-warehoused',
+          source: 'core',
+          totalMs: elapsedMs(totalStartedAt),
+        }),
+        rowsSynced: 0,
+        status: 'superseded',
+      });
+      return;
+    }
+    const gscResult = await syncGscRange(db, job, importStartDate, jobEndDate);
+    const ga4Result = propertyId ? await syncGa4PageRange(db, scopedJob, importStartDate, jobEndDate) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
     syncResult = combineSyncResults([gscResult, ga4Result], {
       phases: {
         ga4Pages: {
@@ -658,6 +737,21 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
       },
       source: 'core',
     });
+  } else if (job.jobType === 'daily-sync' && jobEndDate < earliestSearchConsoleReportingDate()) {
+    await updateJob(db, job.id, {
+      completedAt: nowIso(),
+      lastError: null,
+      lockedAt: null,
+      metricsJson: JSON.stringify({
+        days: 0,
+        skippedReason: 'outside-search-console-history-window',
+        source: 'daily',
+        totalMs: elapsedMs(totalStartedAt),
+      }),
+      rowsSynced: 0,
+      status: 'superseded',
+    });
+    return;
   } else {
     const gscResult = await syncGscDate(db, job);
     const ga4Result = propertyId ? await syncGa4Date(db, scopedJob) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
@@ -682,7 +776,7 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
     ...(syncResult.metrics || {}),
     apiMs: syncResult.apiMs,
     completedAt,
-    days: eachIsoDate(jobStartDate, jobEndDate).length,
+    days: eachIsoDate(syncedStartDate, jobEndDate).length,
     jobType: job.jobType,
     propertyIncluded: Boolean(propertyId),
     rows: syncResult.rows,
@@ -698,7 +792,7 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
        earliestSyncDate=CASE WHEN warehouse_sync_status.earliestSyncDate IS NULL OR excluded.earliestSyncDate < warehouse_sync_status.earliestSyncDate THEN excluded.earliestSyncDate ELSE warehouse_sync_status.earliestSyncDate END,
        status=excluded.status,
        lastUpdated=excluded.lastUpdated`,
-    [job.ownerId, job.siteUrl, jobEndDate, jobStartDate, 'synced', nowIso()],
+    [job.ownerId, job.siteUrl, jobEndDate, syncedStartDate, 'synced', nowIso()],
   );
   await updateJob(db, job.id, { completedAt, lastError: null, lockedAt: null, metricsJson, rowsSynced: syncResult.rowsSynced, status: 'completed' });
 }
@@ -776,6 +870,7 @@ const eachIsoDate = (startDate: string, endDate: string) => {
 
 const minIsoDate = (a: string, b: string) => (a <= b ? a : b);
 const maxIsoDate = (a: string, b: string) => (a >= b ? a : b);
+const earliestSearchConsoleReportingDate = () => toIsoDate(addDays(addDays(new Date(), -2), -(SEARCH_CONSOLE_HISTORY_DAYS - 1)));
 
 const jobDatesWithin = (
   job: { targetDate?: string | null; targetStartDate?: string | null },
@@ -798,7 +893,7 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   if (!startDate || !endDate) return [];
 
   const propertyId = input.propertyId || '';
-  const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, jobRows] = await Promise.all([
+  const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, jobRows] = await Promise.all([
     db.all<{ date: string }>(`
       SELECT date
       FROM gsc_site_metrics
@@ -814,12 +909,6 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
     db.all<{ date: string }>(`
       SELECT date
       FROM gsc_page_query_metrics
-      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
-      GROUP BY date
-    `, [input.ownerId, input.siteUrl, startDate, endDate]),
-    db.all<{ date: string }>(`
-      SELECT date
-      FROM gsc_country_metrics
       WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
       GROUP BY date
     `, [input.ownerId, input.siteUrl, startDate, endDate]),
@@ -844,18 +933,13 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
   const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
   const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
-  const gscCountryDates = new Set(gscCountryRows.map((row) => row.date));
   const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
   const anyCoreJobDates = new Set<string>();
-  const activeCoreJobDates = new Set<string>();
   const matchingPropertyJobDates = new Set<string>();
 
   for (const row of jobRows) {
     for (const date of jobDatesWithin(row, startDate, endDate)) {
       anyCoreJobDates.add(date);
-      if (['queued', 'retrying', 'running'].includes(row.status)) {
-        activeCoreJobDates.add(date);
-      }
       if (propertyId && row.propertyId === propertyId) {
         matchingPropertyJobDates.add(date);
       }
@@ -864,10 +948,8 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
 
   return dates.filter((date) => {
     const needsExistingGsc = !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date);
-    const needsGscCountry = !gscCountryDates.has(date);
     const needsGa4 = Boolean(propertyId && !ga4PageDates.has(date));
     return (needsExistingGsc && !anyCoreJobDates.has(date))
-      || (needsGscCountry && !activeCoreJobDates.has(date))
       || (needsGa4 && !matchingPropertyJobDates.has(date));
   });
 }
@@ -972,6 +1054,53 @@ async function supersedeLegacyCoreDailyJobs(db: AppDatabase) {
        WHERE ownerId = ? AND siteUrl = ? AND jobType = 'daily-sync'
          AND status IN ('queued', 'retrying')`,
       [supersededAt, supersededAt, scope.ownerId, scope.siteUrl],
+    );
+  }
+}
+
+async function supersedeObsoleteCoreRangeJobs(db: AppDatabase) {
+  const jobs = await db.all<WarehouseJob>(`
+    SELECT *
+    FROM warehouse_jobs
+    WHERE jobType = 'core-range-sync'
+      AND status IN ('queued', 'retrying')
+      AND targetDate IS NOT NULL
+    ORDER BY updatedAt ASC
+    LIMIT 500
+  `);
+  if (jobs.length === 0) return;
+
+  const supersededAt = nowIso();
+  for (const job of jobs) {
+    const startDate = job.targetStartDate || job.targetDate;
+    const endDate = job.targetDate;
+    const importStartDate = maxIsoDate(startDate, earliestSearchConsoleReportingDate());
+    if (importStartDate > endDate) {
+      await db.run(
+        `UPDATE warehouse_jobs
+         SET status = 'superseded', lockedAt = NULL, completedAt = ?, updatedAt = ?, lastError = NULL,
+             metricsJson = ?
+         WHERE id = ? AND status IN ('queued', 'retrying')`,
+        [
+          supersededAt,
+          supersededAt,
+          JSON.stringify({ days: 0, skippedReason: 'outside-search-console-history-window', source: 'core' }),
+          job.id,
+        ],
+      );
+      continue;
+    }
+
+    const expectedDays = eachIsoDate(importStartDate, endDate).length;
+    if (expectedDays === 0) continue;
+
+    if (!(await hasRequiredCoreWarehouseRows(db, job, importStartDate, endDate))) continue;
+
+    await db.run(
+      `UPDATE warehouse_jobs
+       SET status = 'superseded', lockedAt = NULL, completedAt = ?, updatedAt = ?, lastError = NULL
+       WHERE id = ? AND status IN ('queued', 'retrying')`,
+      [supersededAt, supersededAt, job.id],
     );
   }
 }
@@ -1100,6 +1229,7 @@ export function startWarehouseJobWorker(db: AppDatabase) {
       await recoverJobs(db);
       await supersedeLegacyCoreDailyJobs(db);
       await supersedeLegacyLlmDailyJobs(db);
+      await supersedeObsoleteCoreRangeJobs(db);
       for (let i = 0; i < JOBS_PER_TICK; i += 1) {
         const job = await claimJob(db);
         if (!job) break;

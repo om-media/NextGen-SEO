@@ -27,6 +27,12 @@ function toFiniteNumber(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function toOptionalFiniteNumber(value: unknown) {
+  if (value === undefined || value === null) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
 async function fetchWarehouseData(
   siteUrl: string,
   dimension: GridDimension,
@@ -37,6 +43,7 @@ async function fetchWarehouseData(
   dimensionFilterGroups?: any[],
   signal?: AbortSignal,
   includeTotal = true,
+  totalOnly = false,
 ): Promise<{ rows: GridRow[]; totalRowCount?: number }> {
   const payload = await fetchCachedWarehouseQuery<any>(
     {
@@ -48,6 +55,7 @@ async function fetchWarehouseData(
       includeTotal,
       rowLimit,
       startRow: 0,
+      totalOnly,
     },
     cacheKeyExtra,
     { signal },
@@ -63,7 +71,7 @@ async function fetchWarehouseData(
     position: toFiniteNumber(row.position),
     queryCount: row.queryCount === undefined ? undefined : toFiniteNumber(row.queryCount),
     })).filter((row: GridRow) => typeof row.keys?.[0] === "string" && row.keys[0].length > 0),
-    totalRowCount: Array.isArray(payload) ? undefined : toFiniteNumber(payload?.totalRowCount),
+    totalRowCount: Array.isArray(payload) ? undefined : toOptionalFiniteNumber(payload?.totalRowCount),
   };
 }
 
@@ -113,6 +121,14 @@ function isGoogleAuthError(message: string) {
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function isWarehouseTotalPending(
+  useLiveData: boolean,
+  includeTotalRowCount: boolean,
+  dimensionFilterGroups?: any[],
+) {
+  return !useLiveData && includeTotalRowCount && !dimensionFilterGroups?.length;
 }
 
 function getFriendlyGscError(message: string) {
@@ -217,10 +233,12 @@ export function useGscGridData({
       }
     });
 
+    const shouldDeferWarehouseTotal = isWarehouseTotalPending(shouldUseLiveApi, includeTotalRowCount, dimensionFilterGroups);
+
     const primaryPromise = shouldUseLiveApi
       ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
           .then((rows) => ({ rows, totalRowCount: rows.length }))
-      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups, abortController.signal, includeTotalRowCount);
+      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups, abortController.signal, !shouldDeferWarehouseTotal);
 
     const comparePromise =
       isCompareMode && compareDateRange?.from && compareDateRange?.to
@@ -230,7 +248,7 @@ export function useGscGridData({
             return shouldUseLiveApi
               ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension], dimensionFilterGroups, true)
                   .then((rows) => ({ rows, totalRowCount: rows.length }))
-              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups, abortController.signal, includeTotalRowCount);
+              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups, abortController.signal, !shouldDeferWarehouseTotal);
           })()
         : Promise.resolve(undefined);
 
@@ -259,6 +277,31 @@ export function useGscGridData({
         const primaryTotalRowCount = primaryResult.totalRowCount ?? primaryRows.length;
         setLoadedRowLimit(shouldUseLiveApi ? null : rowLimit);
         setTotalRowCount(primaryTotalRowCount);
+
+        if (shouldDeferWarehouseTotal) {
+          void fetchWarehouseData(
+            siteUrl,
+            dimension,
+            startDate,
+            endDate,
+            1,
+            `gsc-grid-total:${refreshKey}`,
+            dimensionFilterGroups,
+            abortController.signal,
+            true,
+            true,
+          )
+            .then((result) => {
+              if (!cancelled && typeof result.totalRowCount === "number") {
+                setTotalRowCount(result.totalRowCount);
+              }
+            })
+            .catch((err: Error) => {
+              if (!cancelled && !isAbortError(err)) {
+                console.warn("GSC warehouse total count failed; continuing with loaded rows.", err);
+              }
+            });
+        }
         let rowsWithPageQueryCounts = primaryRows;
 
         if (dimension === "page") {

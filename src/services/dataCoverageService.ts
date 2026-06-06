@@ -34,8 +34,10 @@ export type DataCoverageResponse = {
   };
   dateRange: {
     endDate: string;
+    earliestAvailableDate?: string;
     latestAvailableDate?: string;
     requestedEndDate?: string;
+    requestedStartDate?: string;
     startDate: string;
     totalDays: number;
     unavailableDateCount?: number;

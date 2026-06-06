@@ -85,7 +85,7 @@ export function AppToolbar({
             body: JSON.stringify({
               endDate: range.endDate,
               propertyId: reportingGa4PropertyId || undefined,
-              maxDates: 720,
+              maxDates: 486,
               siteUrl: currentSiteUrl,
               startDate: range.startDate,
             }),
@@ -106,9 +106,9 @@ export function AppToolbar({
   const showImportControl = syncActionState === "queueing" || toolbarHasActiveImport || toolbarNeedsDataAttention;
   const importButtonDisabled = syncActionState === "queueing" || toolbarHasActiveImport;
   const importButtonLabel = syncActionState === "queueing"
-    ? "Updating data"
+    ? "Queueing update"
     : toolbarHasActiveImport
-      ? "Updating data"
+      ? "Syncing in background"
       : toolbarCoverage?.errorJobCount
         ? "Retry data update"
         : "Update data";
@@ -293,7 +293,6 @@ function GscSyncStatusBadge({
                 status.gsc.site,
                 status.gsc.query,
                 status.gsc.pageQuery,
-                status.gsc.country,
               ] : []),
               ...(includeGa4Pages ? [status.ga4.pages] : []),
               ...(includeGa4Dimensions ? [status.ga4.dimensions] : []),
@@ -305,7 +304,6 @@ function GscSyncStatusBadge({
               Number(status?.gsc?.site?.missingDateCount || 0),
               Number(status?.gsc?.query?.missingDateCount || 0),
               Number(status?.gsc?.pageQuery?.missingDateCount || 0),
-              Number(status?.gsc?.country?.missingDateCount || 0),
             ) : 0;
             const ga4MissingDateCount = status?.ga4?.enabled
               ? Math.max(
@@ -414,14 +412,12 @@ function GscSyncStatusBadge({
       : coverage?.hasGscGaps
         ? "Search Console"
         : "reporting";
-  let label = "Updating data";
+  let label = "Syncing in background";
   let statusTitle = "Checking stored reporting coverage for this date range.";
   if (loading) {
     return null;
   } else if (activeJobCount > 0) {
-    label = activeDateCount > 0
-      ? `Updating ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}`
-      : "Updating data";
+    label = "Syncing in background";
     statusTitle = activeDateCount > 0
       ? `The app is importing ${importSource} data for ${formatWholeNumber(activeDateCount)} day${activeDateCount === 1 ? "" : "s"}. Existing dashboard rows stay visible while this finishes.`
       : `The app is importing ${importSource} data. Existing dashboard rows stay visible while this finishes.`;
