@@ -4,7 +4,6 @@ import { requireAuth } from '../auth.js';
 import { canonicalPageKey } from '../reporting/url.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString } from '../validation.js';
-import { canUseReconciliation } from '../../shared/plans.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 
 type SourceState = 'present' | 'missing';
@@ -194,10 +193,6 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
-      if (!canUseReconciliation(user?.tier)) {
-        return res.status(403).json({ error: 'Reconciliation is available on paid plans.' });
-      }
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }

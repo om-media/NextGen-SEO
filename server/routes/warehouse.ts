@@ -12,7 +12,6 @@ import {
 } from '../validation.js';
 import { canonicalPageKey } from '../reporting/url.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
-import { canUseRawExports } from '../../shared/plans.js';
 import {
   CORE_RANGE_JOB_DAYS,
   GA4_DIMENSION_RANGE_JOB_DAYS,
@@ -2341,10 +2340,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
-      if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
-      }
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
@@ -2453,10 +2448,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
-      if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
-      }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
       }
@@ -2535,54 +2526,54 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
-      if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
-      }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
       }
 
-      const dimensionFilter = search
-        ? {
-            filter: {
-              fieldName: dimension,
-              stringFilter: {
-                matchType: 'CONTAINS',
-                value: search,
-              },
-            },
-          }
-        : undefined;
-
-      const report = await fetchLiveGa4Report(
-        ownerId,
-        propertyId,
-        startDate,
-        endDate,
-        [dimension],
-        ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
-        dimensionFilter,
-        { limit, offset },
-      );
-
-      const rows = (Array.isArray(report?.rows) ? report.rows : []).map((row: any) => ({
-        bounceRate: toFiniteNumber(row.metricValues?.[3]?.value),
-        dimension,
-        dimensionValue: row.dimensionValues?.[0]?.value || '',
-        eventCount: toFiniteNumber(row.metricValues?.[4]?.value),
-        pageViews: toFiniteNumber(row.metricValues?.[2]?.value),
-        sessions: toFiniteNumber(row.metricValues?.[0]?.value),
-        totalUsers: toFiniteNumber(row.metricValues?.[1]?.value),
-      }));
+      const where = search ? 'AND LOWER(dimensionValue) LIKE ?' : '';
+      const params: unknown[] = search
+        ? [ownerId, propertyId, dimension, startDate, endDate, `%${search.toLowerCase()}%`]
+        : [ownerId, propertyId, dimension, startDate, endDate];
+      const total = await db.get<any>(`
+        SELECT COUNT(*) AS total
+        FROM (
+          SELECT dimensionValue
+          FROM ga4_dimension_metrics
+          WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
+          GROUP BY dimensionValue
+        ) dimension_rows
+      `, params);
+      const rows = await db.all<any>(`
+        SELECT
+          dimension,
+          dimensionValue,
+          SUM(sessions) AS sessions,
+          SUM(totalUsers) AS totalUsers,
+          SUM(pageViews) AS pageViews,
+          CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
+          SUM(eventCount) AS eventCount
+        FROM ga4_dimension_metrics
+        WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
+        GROUP BY dimension, dimensionValue
+        ORDER BY sessions DESC, pageViews DESC, eventCount DESC
+        LIMIT ? OFFSET ?
+      `, [...params, limit, offset]);
 
       return res.json({
         page: {
           limit,
           offset,
-          total: toFiniteNumber(report?.rowCount ?? rows.length),
+          total: toFiniteNumber(readField(total, 'total')),
         },
-        rows,
+        rows: rows.map((row) => ({
+          bounceRate: toFiniteNumber(row.bounceRate),
+          dimension,
+          dimensionValue: readField(row, 'dimensionValue') || '',
+          eventCount: toFiniteNumber(row.eventCount),
+          pageViews: toFiniteNumber(row.pageViews),
+          sessions: toFiniteNumber(row.sessions),
+          totalUsers: toFiniteNumber(row.totalUsers),
+        })),
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Failed to load raw GA4 report rows' });
