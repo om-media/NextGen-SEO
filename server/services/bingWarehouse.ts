@@ -1,6 +1,5 @@
 import type { AppDatabase } from '../database.js';
 import { canAccessSite } from '../accessControl.js';
-import { isMultiSitePlan } from '../../shared/plans.js';
 
 const BING_DAILY_SCHEDULER_MS = 60 * 60 * 1000;
 const BING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -146,15 +145,11 @@ export function startBingDailyScheduler(db: AppDatabase) {
         if (typeof user.activatedSiteUrl === 'string' && user.activatedSiteUrl.trim()) {
           sites.add(user.activatedSiteUrl.trim());
         }
-        if (isMultiSitePlan(user.tier)) {
-          for (const site of parseStringArray(user.unlockedSites)) {
-            sites.add(site.trim());
-          }
+        for (const site of parseStringArray(user.unlockedSites)) {
+          sites.add(site.trim());
         }
-        if (user.tier === 'enterprise') {
-          for (const site of parseStringArray(user.knownSites)) {
-            sites.add(site.trim());
-          }
+        for (const site of parseStringArray(user.knownSites)) {
+          sites.add(site.trim());
         }
 
         for (const siteUrl of sites) {

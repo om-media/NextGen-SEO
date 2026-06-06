@@ -3,8 +3,8 @@ import type { AppDatabase } from '../database.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { canonicalPageKey } from '../reporting/url.js';
 import { resolveWorkspaceGa4Property } from './ga4Mappings.js';
+import { refreshGscMonthlySummariesForRange } from './gscMonthlySummaries.js';
 import { googleApiFetchJson } from './googleAuth.js';
-import { isMultiSitePlan } from '../../shared/plans.js';
 
 type WarehouseJob = {
   attemptCount: number | null;
@@ -320,6 +320,12 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
     })();
   }
   const writeMs = elapsedMs(writeStartedAt);
+  await refreshGscMonthlySummariesForRange(db, {
+    endDate,
+    ownerId: job.ownerId,
+    siteUrl: job.siteUrl,
+    startDate,
+  });
 
   const rows = {
     gscCountry: countryRows.length,
@@ -1290,15 +1296,11 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
         if (activeSiteUrl) {
           sites.add(activeSiteUrl);
         }
-        if (isMultiSitePlan(user.tier)) {
-          for (const site of parseStringArray(user.unlockedSites)) {
-            sites.add(site.trim());
-          }
+        for (const site of parseStringArray(user.unlockedSites)) {
+          sites.add(site.trim());
         }
-        if (user.tier === 'enterprise') {
-          for (const site of parseStringArray(user.knownSites)) {
-            sites.add(site.trim());
-          }
+        for (const site of parseStringArray(user.knownSites)) {
+          sites.add(site.trim());
         }
 
         for (const siteUrl of sites) {

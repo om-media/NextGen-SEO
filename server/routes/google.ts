@@ -121,7 +121,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       const sitesToBackfill = uniqueSites([
         ...parseStringArray(user?.unlockedSites),
         ...(activatedSiteUrl ? [activatedSiteUrl] : []),
-        ...(user?.tier === 'enterprise' ? parseStringArray(user?.knownSites) : []),
+        ...parseStringArray(user?.knownSites),
       ]);
       for (const siteUrl of sitesToBackfill) {
         if (!(await canAccessSite(db, ownerId, siteUrl))) continue;
