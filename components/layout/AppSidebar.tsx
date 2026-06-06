@@ -11,11 +11,10 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { BarChart3, LayoutDashboard, Settings, Sparkles, Bot, Target, Server, FileSearch, Globe2, PanelsTopLeft } from "lucide-react"
-import { useAuth } from "@/src/contexts/AuthContext"
-import { isMultiSitePlan } from "@/shared/plans"
 
 const baseItems = [
   { title: "Dashboard", icon: LayoutDashboard },
+  { title: "Sites", icon: PanelsTopLeft },
   { title: "Rank Tracker", icon: Target },
   { title: "Server Logs", icon: Server },
   { title: "Page Indexing", icon: FileSearch },
@@ -26,12 +25,6 @@ const baseItems = [
 ]
 
 export function AppSidebar({ activeMenu = "Dashboard", onMenuSelect }: { selectedSite?: string, activeMenu?: string, onMenuSelect?: (menu: string) => void }) {
-  const { userProfile } = useAuth()
-  const canUseMultiSite = isMultiSitePlan(userProfile?.tier)
-  const items = canUseMultiSite
-    ? [baseItems[0], { title: "Sites", icon: PanelsTopLeft }, ...baseItems.slice(1)]
-    : baseItems
-
   return (
     <Sidebar className="w-[240px] border-r border-border bg-background">
       <SidebarHeader className="p-4">
@@ -52,7 +45,7 @@ export function AppSidebar({ activeMenu = "Dashboard", onMenuSelect }: { selecte
           <SidebarGroupLabel className="px-3 text-[12px] font-semibold normal-case tracking-normal text-muted-foreground">Analytics</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {baseItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     isActive={activeMenu === item.title}

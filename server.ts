@@ -23,7 +23,8 @@ const getSyncJobKey = (ownerId: string, siteUrl: string) => `${ownerId}:${siteUr
 async function startServer() {
   const PORT = Number(process.env.PORT || 3000);
   const db = await initializeDatabase();
-  const app = buildApp({ db, upload, syncJobs, getSyncJobKey });
+  const startWorkers = process.env.START_BACKGROUND_WORKERS !== 'false';
+  const app = buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers });
   await attachFrontend(app);
 
   const server = app.listen(PORT, '0.0.0.0', () => {

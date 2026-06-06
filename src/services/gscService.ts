@@ -1,4 +1,5 @@
 import { authFetch } from "../lib/authFetch";
+import { fetchCachedWarehouseQuery } from "./warehouseQueryClient";
 
 export interface GscSite {
   siteUrl: string;
@@ -79,10 +80,8 @@ export class GscApiService {
 
         while (hasMore) {
           const fetchLimit = maxRowsPerRequest;
-          const response = await authFetch('/api/warehouse/query', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const rows = await fetchCachedWarehouseQuery<GscSearchAnalyticsRow[]>(
+            {
               siteUrl,
               startDate,
               endDate,
@@ -90,14 +89,9 @@ export class GscApiService {
               dimensionFilterGroups,
               rowLimit: fetchLimit,
               startRow,
-            })
-          });
-
-          if (!response.ok) {
-            throw new Error('Warehouse query failed');
-          }
-
-          const rows = await response.json();
+            },
+            "gsc-service",
+          );
           const pageRows = Array.isArray(rows) ? rows : [];
           warehouseRows.push(...pageRows);
           hasMore = pageRows.length === fetchLimit;

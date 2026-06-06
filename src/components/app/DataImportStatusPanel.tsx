@@ -96,7 +96,6 @@ function getDatasetStats(coverage: DataCoverageResponse | null, dataSource: Data
       coverage.gsc.site,
       coverage.gsc.query,
       coverage.gsc.pageQuery,
-      coverage.gsc.country,
     );
   }
 
@@ -236,7 +235,7 @@ export function DataImportStatusPanel({
     setError(null);
     queueMissingCoverageSync({
       endDate: range.endDate,
-      maxDates: 720,
+      maxDates: 486,
       propertyId: dataSource === "blended" || dataSource === "ga4" ? ga4PropertyId : null,
       siteUrl,
       startDate: range.startDate,
@@ -336,7 +335,7 @@ export function DataImportStatusPanel({
     try {
       await queueMissingCoverageSync({
         endDate: range.endDate,
-        maxDates: 720,
+        maxDates: 486,
         propertyId: dataSource === "blended" || dataSource === "ga4" ? ga4PropertyId : null,
         siteUrl,
         startDate: range.startDate,

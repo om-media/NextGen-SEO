@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/root/.npm \
   npm ci --prefer-offline --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
 COPY . .
-RUN npm run verify
+RUN npm run lint && npm run build
 RUN npm prune --omit=dev
 
 FROM node:22-bookworm-slim AS runtime

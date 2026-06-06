@@ -471,6 +471,8 @@ const camelCaseColumns: Record<string, string> = {
   earliestmetricdate: 'earliestMetricDate',
   lastmetricdate: 'lastMetricDate',
   metricdaycount: 'metricDayCount',
+  rowcount: 'rowCount',
+  totalrowcount: 'totalRowCount',
   querycount: 'queryCount',
   propertyid: 'propertyId',
   pagepath: 'pagePath',
