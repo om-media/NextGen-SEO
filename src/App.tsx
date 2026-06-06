@@ -604,7 +604,7 @@ function MainApp() {
       throw new Error("Choose a property to activate first.");
     }
 
-    const isUnlocked = userProfile?.tier === 'enterprise' || userProfile?.unlockedSites.includes(selectedSite);
+    const isUnlocked = userProfile?.unlockedSites.includes(selectedSite) || userProfile?.knownSites?.includes(selectedSite);
     if (!isUnlocked) {
       await unlockSite(selectedSite);
     }
@@ -775,12 +775,10 @@ function MainApp() {
       return;
     }
 
-    if (userProfile.activatedGa4PropertyId && mappedGa4PropertyForWorkspace === userProfile.activatedGa4PropertyId && selectedGa4Property !== userProfile.activatedGa4PropertyId) {
-      setSelectedGa4Property(userProfile.activatedGa4PropertyId);
-    } else if (dataSource === 'ga4' && selectedGa4Property && !selectedGa4PropertyForDashboard) {
+    if (dataSource === 'ga4' && selectedGa4Property && !selectedGa4PropertyForDashboard) {
       setSelectedGa4Property("");
     }
-  }, [dataSource, isOnboarding, mappedGa4PropertyForWorkspace, selectedGa4Property, selectedGa4PropertyForDashboard, userProfile]);
+  }, [dataSource, isOnboarding, selectedGa4Property, selectedGa4PropertyForDashboard]);
 
   useEffect(() => {
     if (!showGa4PropertyDialog) {

@@ -3,7 +3,7 @@ import type { AppDatabase } from '../database.js';
 import { requireAuth, requireMatchingParam } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
-import { getPlanCrawlLimits, getPlanPropertyLimit } from '../../shared/plans.js';
+import { getPlanCrawlLimits } from '../../shared/plans.js';
 import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
@@ -135,12 +135,6 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         delete user.gscRefreshToken;
         delete user.bingApiKey;
 
-        const limit = getPlanPropertyLimit(user.tier);
-        if (limit !== null && user.unlockedSites.length > limit) {
-          user.unlockedSites = user.unlockedSites.slice(0, limit);
-          await db.run('UPDATE users SET unlockedSites = ? WHERE id = ?', [JSON.stringify(user.unlockedSites), req.params.id]);
-        }
-
         res.json(user);
       } else {
         res.status(404).json({ error: 'User not found' });
@@ -218,15 +212,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       let unlockedSites = uniqueSites(parseStoredSites(user.unlockedSites));
 
       if (onboardingCompleted && activatedSiteUrl) {
-        const limit = getPlanPropertyLimit(user.tier);
-
         if (!Boolean(user.onboardingCompleted)) {
-          unlockedSites = limit === null ? [activatedSiteUrl] : [activatedSiteUrl].slice(0, limit);
+          unlockedSites = [activatedSiteUrl];
         } else if (!unlockedSites.includes(activatedSiteUrl)) {
           unlockedSites = [activatedSiteUrl, ...unlockedSites];
-          if (limit !== null) {
-            unlockedSites = unlockedSites.slice(0, limit);
-          }
         }
       }
 
@@ -304,7 +293,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       }
       const sitesToBackfill = uniqueSites([
         ...parseStoredSites(user.unlockedSites),
-        ...(user.tier === 'enterprise' ? parseStoredSites(user.knownSites) : []),
+        ...parseStoredSites(user.knownSites),
         ...(activeSiteUrl ? [activeSiteUrl] : []),
         ...(mappedSiteUrl ? [mappedSiteUrl] : []),
       ]);
@@ -336,10 +325,6 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
 
       const unlockedSites = uniqueSites(parseStoredSites(user.unlockedSites));
       if (!unlockedSites.includes(siteUrl)) {
-        const limit = getPlanPropertyLimit(user.tier);
-        if (limit !== null && unlockedSites.length >= limit) {
-          return res.status(403).json({ error: `Your current plan allows ${limit} active site${limit === 1 ? '' : 's'}. Upgrade to activate more sites.` });
-        }
         unlockedSites.push(siteUrl);
         await db.run('UPDATE users SET unlockedSites = ? WHERE id = ?', [JSON.stringify(unlockedSites), req.params.id]);
       }

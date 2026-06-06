@@ -121,16 +121,6 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
     )
   }
 
-  if (error) {
-    return (
-      <Card className="mb-4 rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
-        <CardContent className="flex flex-col items-center justify-center h-48 text-destructive space-y-4">
-          <div className="text-center">{error}</div>
-        </CardContent>
-      </Card>
-    )
-  }
-
   const shouldShowCoverage =
     coverage &&
     Number(coverage.expectedDateCount || 0) > 0 &&
@@ -144,25 +134,39 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
     Number(coverage?.activeJobCount || 0) > 0 ||
     Number(coverage?.activeDateCount || 0) > 0 ||
     Number(coverage?.queuedDateCount || 0) > 0;
+  const isPreparationError = Boolean(error && /stored history|being prepared|not ready|not available in the stored warehouse|warehouse/i.test(error));
+  const hasAnyRows = Object.values(data).some((rows) => Array.isArray(rows) && rows.length > 0);
+
+  if (error && !isPreparationError) {
+    return (
+      <Card className="mb-4 rounded-2xl border border-destructive/30 bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
+        <CardContent className="flex h-48 flex-col items-center justify-center space-y-4 px-6 text-center text-destructive">
+          <div>{error}</div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <div className="mb-4 space-y-4">
-      {shouldShowCoverage && (
+      {(shouldShowCoverage || (isPreparationError && !hasAnyRows)) && (
         <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            {hasActiveWarehouseWork ? (
+            {hasActiveWarehouseWork || isPreparationError ? (
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
             ) : (
               <Database className="h-4 w-4 text-primary" />
             )}
             <span className="font-medium text-foreground">
-              {hasActiveWarehouseWork ? "Importing Analytics history" : "Analytics breakdown import available"}
+              {hasActiveWarehouseWork || isPreparationError ? "Preparing Analytics breakdowns" : "Analytics breakdown import available"}
             </span>
-            <span>
-              {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days ready
-            </span>
+            {coverage && (
+              <span>
+                {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days ready
+              </span>
+            )}
           </div>
-          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while the import catches up." : "The app will queue missing stored days automatically."}</span>
+          <span>{hasAnyRows ? "Existing rows stay visible while the import catches up." : "Stored rows will appear here as soon as they are ready."}</span>
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">

@@ -85,17 +85,11 @@ const completedJobIncludedProperty = (row: { metricsJson?: string | null; status
 
 async function resolveActiveGa4PropertyForSite(db: AppDatabase, ownerId: string, siteUrl: string, propertyId: string) {
   if (!propertyId) return '';
-  const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null; tier?: string | null }>(
-    'SELECT activatedGa4PropertyId, activatedSiteUrl, tier FROM users WHERE id = ?',
-    [ownerId],
-  );
-  if (user?.tier === 'enterprise') {
-    return propertyId;
-  }
-
-  const activeSiteUrl = typeof user?.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
-  const activePropertyId = typeof user?.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
-  return siteUrl === activeSiteUrl && propertyId === activePropertyId ? propertyId : '';
+  const [siteAllowed, propertyAllowed] = await Promise.all([
+    canAccessSite(db, ownerId, siteUrl),
+    canAccessGa4Property(db, ownerId, propertyId),
+  ]);
+  return siteAllowed && propertyAllowed ? propertyId : '';
 }
 
 const eachIsoDate = (startDate: string, endDate: string) => {
