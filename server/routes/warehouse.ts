@@ -12,7 +12,6 @@ import {
 } from '../validation.js';
 import { canonicalPageKey } from '../reporting/url.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
-import { canUseRawExports } from '../../shared/plans.js';
 import {
   CORE_RANGE_JOB_DAYS,
   GA4_DIMENSION_RANGE_JOB_DAYS,
@@ -28,6 +27,10 @@ import {
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { getBingCacheStatus } from '../services/bingWarehouse.js';
 import { upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
+import {
+  getGscSummaryWindow,
+  refreshGscMonthlySummariesForRange,
+} from '../services/gscMonthlySummaries.js';
 
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
 const GA4_PAGE_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
@@ -81,17 +84,11 @@ const completedJobIncludedProperty = (row: { metricsJson?: string | null; status
 
 async function resolveActiveGa4PropertyForSite(db: AppDatabase, ownerId: string, siteUrl: string, propertyId: string) {
   if (!propertyId) return '';
-  const user = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null; tier?: string | null }>(
-    'SELECT activatedGa4PropertyId, activatedSiteUrl, tier FROM users WHERE id = ?',
-    [ownerId],
-  );
-  if (user?.tier === 'enterprise') {
-    return propertyId;
-  }
-
-  const activeSiteUrl = typeof user?.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
-  const activePropertyId = typeof user?.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
-  return siteUrl === activeSiteUrl && propertyId === activePropertyId ? propertyId : '';
+  const [siteAllowed, propertyAllowed] = await Promise.all([
+    canAccessSite(db, ownerId, siteUrl),
+    canAccessGa4Property(db, ownerId, propertyId),
+  ]);
+  return siteAllowed && propertyAllowed ? propertyId : '';
 }
 
 const eachIsoDate = (startDate: string, endDate: string) => {
@@ -224,6 +221,72 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   const getReplaceDates = (value: unknown) => {
     if (!Array.isArray(value)) return [];
     return value.filter((date): date is string => typeof date === 'string' && isIsoDateString(date));
+  };
+
+  const getDateRangeFromDates = (dates: string[]) => {
+    if (dates.length === 0) return null;
+    const sortedDates = [...dates].sort();
+    return {
+      endDate: sortedDates[sortedDates.length - 1],
+      startDate: sortedDates[0],
+    };
+  };
+
+  const appendWarehouseFilterClauses = (
+    initialWhereClause: string,
+    params: Record<string, unknown>,
+    filterGroups: any[] | undefined,
+    siteUrl: string,
+  ) => {
+    let whereClause = initialWhereClause;
+    if (!filterGroups || filterGroups.length === 0) return whereClause;
+
+    for (const group of filterGroups) {
+      if (!group.filters) continue;
+      for (const filter of group.filters) {
+        if (filter.dimension === 'query' && filter.expression) {
+          const paramIdx = Object.keys(params).length;
+          if (filter.operator === 'equals') {
+            whereClause += ` AND query = @queryFilter${paramIdx}`;
+            params[`queryFilter${paramIdx}`] = filter.expression;
+          } else if (filter.operator === 'contains') {
+            whereClause += ` AND query LIKE @queryFilter${paramIdx}`;
+            params[`queryFilter${paramIdx}`] = `%${filter.expression}%`;
+          } else if (filter.operator === 'notContains') {
+            whereClause += ` AND query NOT LIKE @queryFilter${paramIdx}`;
+            params[`queryFilter${paramIdx}`] = `%${filter.expression}%`;
+          }
+        }
+        if (filter.dimension === 'page' && filter.expression) {
+          const paramIdx = Object.keys(params).length;
+          if (filter.operator === 'equals') {
+            whereClause += ` AND COALESCE(NULLIF(pageKey, ''), page) = @pageFilter${paramIdx}`;
+            params[`pageFilter${paramIdx}`] = canonicalPageKey(filter.expression, siteUrl);
+          } else if (filter.operator === 'contains') {
+            whereClause += ` AND page LIKE @pageFilter${paramIdx}`;
+            params[`pageFilter${paramIdx}`] = `%${filter.expression}%`;
+          } else if (filter.operator === 'notContains') {
+            whereClause += ` AND page NOT LIKE @pageFilter${paramIdx}`;
+            params[`pageFilter${paramIdx}`] = `%${filter.expression}%`;
+          }
+        }
+        if (filter.dimension === 'country' && filter.expression) {
+          const paramIdx = Object.keys(params).length;
+          if (filter.operator === 'equals') {
+            whereClause += ` AND country = @countryFilter${paramIdx}`;
+            params[`countryFilter${paramIdx}`] = filter.expression;
+          } else if (filter.operator === 'contains') {
+            whereClause += ` AND country LIKE @countryFilter${paramIdx}`;
+            params[`countryFilter${paramIdx}`] = `%${filter.expression}%`;
+          } else if (filter.operator === 'notContains') {
+            whereClause += ` AND country NOT LIKE @countryFilter${paramIdx}`;
+            params[`countryFilter${paramIdx}`] = `%${filter.expression}%`;
+          }
+        }
+      }
+    }
+
+    return whereClause;
   };
 
   const fetchLiveGa4Report = async (
@@ -915,6 +978,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         }
       });
       await insertMany(rows);
+      const range = getDateRangeFromDates(rows.map((row: any) => row?.keys?.[0]).filter(isIsoDateString));
+      if (range) {
+        await refreshGscMonthlySummariesForRange(db, {
+          endDate: range.endDate,
+          ownerId,
+          siteUrl,
+          startDate: range.startDate,
+        });
+      }
       res.json({ success: true, count: rows.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -952,6 +1024,18 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       });
       const rowsToInsert = Array.isArray(rows) ? rows : [];
       await insertMany(rowsToInsert);
+      const range = getDateRangeFromDates([
+        ...datesToReplace,
+        ...rowsToInsert.map((row: any) => row?.keys?.[0]).filter(isIsoDateString),
+      ]);
+      if (range) {
+        await refreshGscMonthlySummariesForRange(db, {
+          endDate: range.endDate,
+          ownerId,
+          siteUrl,
+          startDate: range.startDate,
+        });
+      }
       res.json({ success: true, count: rowsToInsert.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1022,6 +1106,18 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       });
       const rowsToInsert = Array.isArray(rows) ? rows : [];
       await insertMany(rowsToInsert);
+      const range = getDateRangeFromDates([
+        ...datesToReplace,
+        ...rowsToInsert.map((row: any) => row?.keys?.[0]).filter(isIsoDateString),
+      ]);
+      if (range) {
+        await refreshGscMonthlySummariesForRange(db, {
+          endDate: range.endDate,
+          ownerId,
+          siteUrl,
+          startDate: range.startDate,
+        });
+      }
       res.json({ success: true, count: rowsToInsert.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1301,6 +1397,69 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       for (const date of [...activeDates]) {
         if (!missingDates.has(date)) activeDates.delete(date);
       }
+      const autoQueueMissingHistory = req.query.autoQueue !== 'false';
+      let autoQueuedCoreJobs = 0;
+      let autoQueuedGa4DimensionJobs = 0;
+      if (autoQueueMissingHistory && expectedDates.length > 0) {
+        const user = await db.get<{ gscRefreshToken?: string | null }>(
+          'SELECT gscRefreshToken FROM users WHERE id = ?',
+          [ownerId],
+        );
+        if (user?.gscRefreshToken) {
+          const handledCoreDates = new Set<string>();
+          addJobDatesToSet(
+            handledCoreDates,
+            warehouseJobRows.filter((row) => (
+              ['daily-sync', 'core-range-sync'].includes(row.jobType)
+              && ['queued', 'retrying', 'running', 'completed'].includes(row.status)
+            )),
+            effectiveStartDate,
+            effectiveEndDate,
+          );
+          const handledGa4DimensionDates = new Set<string>();
+          addJobDatesToSet(
+            handledGa4DimensionDates,
+            warehouseJobRows.filter((row) => (
+              row.jobType === 'ga4-dimension-range-sync'
+              && row.propertyId === effectivePropertyId
+              && ['queued', 'retrying', 'running', 'completed'].includes(row.status)
+            )),
+            effectiveStartDate,
+            effectiveEndDate,
+          );
+          const coreDatesToQueue = expectedDates
+            .filter((date) => missingCoreDates.has(date) && !handledCoreDates.has(date))
+            .sort();
+          const ga4DimensionDatesToQueue = effectivePropertyId
+            ? expectedDates
+              .filter((date) => missingGa4DimensionDates.has(date) && !handledGa4DimensionDates.has(date))
+              .sort()
+            : [];
+
+          for (const chunk of chunkAscendingDates(coreDatesToQueue, CORE_RANGE_JOB_DAYS)) {
+            const job = await queueWarehouseCoreRangeJob(db, {
+              endDate: chunk.endDate,
+              ownerId,
+              propertyId: effectivePropertyId || null,
+              siteUrl,
+              startDate: chunk.startDate,
+            });
+            if (job) autoQueuedCoreJobs += 1;
+          }
+          if (effectivePropertyId) {
+            for (const chunk of chunkAscendingDates(ga4DimensionDatesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
+              const job = await queueWarehouseGa4DimensionRangeJob(db, {
+                endDate: chunk.endDate,
+                ownerId,
+                propertyId: effectivePropertyId,
+                siteUrl,
+                startDate: chunk.startDate,
+              });
+              if (job) autoQueuedGa4DimensionJobs += 1;
+            }
+          }
+        }
+      }
       const activeJobCountByStatus = relevantActiveJobs.reduce((counts, row) => {
         counts[row.status] = (counts[row.status] || 0) + 1;
         return counts;
@@ -1376,11 +1535,16 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           activeDateCount: activeDates.size,
           completed: jobCountByStatus.completed || 0,
           error: jobCountByStatus.error || 0,
-          queued: activeJobCountByStatus.queued || 0,
+          queued: (activeJobCountByStatus.queued || 0) + autoQueuedCoreJobs + autoQueuedGa4DimensionJobs,
           retrying: activeJobCountByStatus.retrying || 0,
           running: activeJobCountByStatus.running || 0,
           superseded: supersededJobCount,
           total: visibleWarehouseJobRows.length,
+        },
+        autoQueue: {
+          coreJobs: autoQueuedCoreJobs,
+          ga4DimensionJobs: autoQueuedGa4DimensionJobs,
+          enabled: autoQueueMissingHistory,
         },
         siteUrl,
       });
@@ -1837,60 +2001,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const limit = Number.isFinite(Number(rowLimit)) ? Math.min(Math.max(Number(rowLimit), 1), 50000) : 50000;
       const offset = Number.isFinite(Number(startRow)) ? Math.max(Number(startRow), 0) : 0;
       const params: Record<string, unknown> = { ownerId, siteUrl, startDate, endDate, limit, offset };
-
-      if (dimensionFilterGroups && dimensionFilterGroups.length > 0) {
-        for (const group of dimensionFilterGroups) {
-          if (group.filters) {
-            for (const filter of group.filters) {
-              if (filter.dimension === 'query' && filter.expression) {
-                const paramIdx = Object.keys(params).length;
-                if (filter.operator === 'equals') {
-                  whereClause += ` AND query = @queryFilter${paramIdx}`;
-                  params[`queryFilter${paramIdx}`] = filter.expression;
-                } else if (filter.operator === 'contains') {
-                  whereClause += ` AND query LIKE @queryFilter${paramIdx}`;
-                  params[`queryFilter${paramIdx}`] = `%${filter.expression}%`;
-                } else if (filter.operator === 'notContains') {
-                  whereClause += ` AND query NOT LIKE @queryFilter${paramIdx}`;
-                  params[`queryFilter${paramIdx}`] = `%${filter.expression}%`;
-                }
-              }
-              if (filter.dimension === 'page' && filter.expression) {
-                const paramIdx = Object.keys(params).length;
-                if (filter.operator === 'equals') {
-                  whereClause += ` AND COALESCE(NULLIF(pageKey, ''), page) = @pageFilter${paramIdx}`;
-                  params[`pageFilter${paramIdx}`] = canonicalPageKey(filter.expression, siteUrl);
-                } else if (filter.operator === 'contains') {
-                  whereClause += ` AND page LIKE @pageFilter${paramIdx}`;
-                  params[`pageFilter${paramIdx}`] = `%${filter.expression}%`;
-                } else if (filter.operator === 'notContains') {
-                  whereClause += ` AND page NOT LIKE @pageFilter${paramIdx}`;
-                  params[`pageFilter${paramIdx}`] = `%${filter.expression}%`;
-                }
-              }
-              if (filter.dimension === 'country' && filter.expression) {
-                const paramIdx = Object.keys(params).length;
-                if (filter.operator === 'equals') {
-                  whereClause += ` AND country = @countryFilter${paramIdx}`;
-                  params[`countryFilter${paramIdx}`] = filter.expression;
-                } else if (filter.operator === 'contains') {
-                  whereClause += ` AND country LIKE @countryFilter${paramIdx}`;
-                  params[`countryFilter${paramIdx}`] = `%${filter.expression}%`;
-                } else if (filter.operator === 'notContains') {
-                  whereClause += ` AND country NOT LIKE @countryFilter${paramIdx}`;
-                  params[`countryFilter${paramIdx}`] = `%${filter.expression}%`;
-                }
-              }
-            }
-          }
-        }
-      }
+      whereClause = appendWarehouseFilterClauses(whereClause, params, dimensionFilterGroups, siteUrl);
 
       let rows: any[] = [];
       let totalRowCount: number | undefined;
       let totalRowCountPromise: Promise<number> | undefined;
       const shouldIncludeTotal = includeTotal === true;
       const shouldReturnTotalOnly = shouldIncludeTotal && totalOnly === true;
+      const summaryWindow = hasDate ? null : getGscSummaryWindow(startDate, endDate);
 
       const getTotalRowCount = async (tableName: string, countExpression: string, extraWhere = '') => {
         const total = await db.get<any>(`
@@ -1902,7 +2020,211 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         return toFiniteNumber(total?.totalRowCount);
       };
 
-      if (hasCountry) {
+      const buildSummarySourceSql = (tableName: string, summaryTableName: string, kind: 'site' | 'query' | 'country' | 'pageQuery') => {
+        if (!summaryWindow) return null;
+        const sourceSegments: string[] = [];
+        const sourceParams: Record<string, unknown> = {
+          ownerId,
+          siteUrl,
+        };
+
+        if (kind === 'site') {
+          sourceSegments.push(`
+            SELECT ownerId, siteUrl, NULL AS page, NULL AS pageKey, NULL AS query, NULL AS country, clicks, impressions, positionSum
+            FROM ${summaryTableName}
+            WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND monthStart >= @summaryMonthStart AND monthStart <= @summaryMonthEnd
+          `);
+        } else if (kind === 'query') {
+          sourceSegments.push(`
+            SELECT ownerId, siteUrl, NULL AS page, NULL AS pageKey, query, NULL AS country, clicks, impressions, positionSum
+            FROM ${summaryTableName}
+            WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND monthStart >= @summaryMonthStart AND monthStart <= @summaryMonthEnd
+          `);
+        } else if (kind === 'country') {
+          sourceSegments.push(`
+            SELECT ownerId, siteUrl, NULL AS page, NULL AS pageKey, NULL AS query, country, clicks, impressions, positionSum
+            FROM ${summaryTableName}
+            WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND monthStart >= @summaryMonthStart AND monthStart <= @summaryMonthEnd
+          `);
+        } else {
+          sourceSegments.push(`
+            SELECT ownerId, siteUrl, page, pageKey, query, NULL AS country, clicks, impressions, positionSum
+            FROM ${summaryTableName}
+            WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND monthStart >= @summaryMonthStart AND monthStart <= @summaryMonthEnd
+          `);
+        }
+
+        sourceParams.summaryMonthStart = summaryWindow.fullMonthStart;
+        sourceParams.summaryMonthEnd = summaryWindow.fullMonthEnd;
+
+        summaryWindow.edgeRanges.forEach((range, index) => {
+          sourceParams[`edgeStart${index}`] = range.startDate;
+          sourceParams[`edgeEnd${index}`] = range.endDate;
+          if (kind === 'site') {
+            sourceSegments.push(`
+              SELECT ownerId, siteUrl, NULL AS page, NULL AS pageKey, NULL AS query, NULL AS country, clicks, impressions, position * impressions AS positionSum
+              FROM ${tableName}
+              WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @edgeStart${index} AND date <= @edgeEnd${index}
+            `);
+          } else if (kind === 'query') {
+            sourceSegments.push(`
+              SELECT ownerId, siteUrl, NULL AS page, NULL AS pageKey, query, NULL AS country, clicks, impressions, position * impressions AS positionSum
+              FROM ${tableName}
+              WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @edgeStart${index} AND date <= @edgeEnd${index}
+            `);
+          } else if (kind === 'country') {
+            sourceSegments.push(`
+              SELECT ownerId, siteUrl, NULL AS page, NULL AS pageKey, NULL AS query, country, clicks, impressions, position * impressions AS positionSum
+              FROM ${tableName}
+              WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @edgeStart${index} AND date <= @edgeEnd${index}
+            `);
+          } else {
+            sourceSegments.push(`
+              SELECT ownerId, siteUrl, page, COALESCE(NULLIF(pageKey, ''), page) AS pageKey, query, NULL AS country, clicks, impressions, position * impressions AS positionSum
+              FROM ${tableName}
+              WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @edgeStart${index} AND date <= @edgeEnd${index}
+            `);
+          }
+        });
+
+        return {
+          params: { ...params, ...sourceParams },
+          sql: sourceSegments.map((segment) => segment.trim()).join('\nUNION ALL\n'),
+        };
+      };
+
+      if (summaryWindow && !hasDate) {
+        if (hasCountry) {
+          const summarySource = buildSummarySourceSql('gsc_country_metrics', 'gsc_country_monthly_metrics', 'country');
+          if (summarySource) {
+            const summaryWhereClause = appendWarehouseFilterClauses(
+              'WHERE ownerId = @ownerId AND siteUrl = @siteUrl',
+              summarySource.params,
+              dimensionFilterGroups,
+              siteUrl,
+            );
+            if (shouldIncludeTotal) {
+              totalRowCountPromise = db.get<any>(`
+                SELECT COUNT(DISTINCT country) AS totalRowCount
+                FROM (${summarySource.sql}) source
+                ${summaryWhereClause}
+                  AND country <> ''
+              `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
+            }
+            if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+              SELECT country,
+                     SUM(clicks) as clicks,
+                     SUM(impressions) as impressions,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
+              FROM (${summarySource.sql}) source
+              ${summaryWhereClause}
+                AND country <> ''
+              GROUP BY country
+              ORDER BY clicks DESC, impressions DESC
+              LIMIT @limit OFFSET @offset
+            `, summarySource.params);
+          }
+        } else if (hasPage && !hasQuery && !hasPageFilter) {
+          const summarySource = buildSummarySourceSql('gsc_page_query_metrics', 'gsc_page_query_monthly_metrics', 'pageQuery');
+          if (summarySource) {
+            if (shouldIncludeTotal) {
+              totalRowCountPromise = db.get<any>(`
+                SELECT COUNT(DISTINCT pageKey) AS totalRowCount
+                FROM (${summarySource.sql}) source
+                WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND pageKey <> ''
+              `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
+            }
+            if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+              SELECT MIN(page) AS page,
+                     pageKey,
+                     COUNT(DISTINCT query) as queryCount,
+                     SUM(clicks) as clicks,
+                     SUM(impressions) as impressions,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
+              FROM (${summarySource.sql}) source
+              WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND pageKey <> ''
+              GROUP BY pageKey
+              ORDER BY clicks DESC, impressions DESC
+              LIMIT @limit OFFSET @offset
+            `, summarySource.params);
+          }
+        } else if (hasPage || (hasQuery && hasPageFilter)) {
+          const summarySource = buildSummarySourceSql('gsc_page_query_metrics', 'gsc_page_query_monthly_metrics', 'pageQuery');
+          if (summarySource) {
+            const summaryWhereClause = appendWarehouseFilterClauses(
+              'WHERE ownerId = @ownerId AND siteUrl = @siteUrl',
+              summarySource.params,
+              dimensionFilterGroups,
+              siteUrl,
+            );
+            if (shouldIncludeTotal) {
+              totalRowCountPromise = db.get<any>(`
+                SELECT COUNT(DISTINCT ${hasQuery ? 'query' : 'pageKey'}) AS totalRowCount
+                FROM (${summarySource.sql}) source
+                ${summaryWhereClause}
+              `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
+            }
+            if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+              SELECT ${selectCols}
+                     ${queryCountCol}
+                     SUM(clicks) as clicks,
+                     SUM(impressions) as impressions,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
+              FROM (${summarySource.sql}) source
+              ${summaryWhereClause}
+              ${groupByClause}
+              ${orderClause}
+              LIMIT @limit OFFSET @offset
+            `, summarySource.params);
+          }
+        } else if (hasQuery) {
+          const summarySource = buildSummarySourceSql('gsc_query_metrics', 'gsc_query_monthly_metrics', 'query');
+          if (summarySource) {
+            const summaryWhereClause = appendWarehouseFilterClauses(
+              'WHERE ownerId = @ownerId AND siteUrl = @siteUrl',
+              summarySource.params,
+              dimensionFilterGroups,
+              siteUrl,
+            );
+            if (shouldIncludeTotal) {
+              totalRowCountPromise = db.get<any>(`
+                SELECT COUNT(DISTINCT query) AS totalRowCount
+                FROM (${summarySource.sql}) source
+                ${summaryWhereClause}
+              `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
+            }
+            if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+              SELECT ${selectCols}
+                     SUM(clicks) as clicks,
+                     SUM(impressions) as impressions,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
+              FROM (${summarySource.sql}) source
+              ${summaryWhereClause}
+              ${groupByClause}
+              ${orderClause}
+              LIMIT @limit OFFSET @offset
+            `, summarySource.params);
+          }
+        } else {
+          const summarySource = buildSummarySourceSql('gsc_site_metrics', 'gsc_site_monthly_metrics', 'site');
+          if (summarySource && !shouldReturnTotalOnly) rows = await db.all<any>(`
+            SELECT ${selectCols}
+                   SUM(clicks) as clicks,
+                   SUM(impressions) as impressions,
+                   CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                   CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
+            FROM (${summarySource.sql}) source
+            WHERE ownerId = @ownerId AND siteUrl = @siteUrl
+            ${groupByClause}
+            ${orderClause}
+            LIMIT @limit OFFSET @offset
+          `, summarySource.params);
+        }
+      } else if (hasCountry) {
         if (shouldIncludeTotal) {
           totalRowCountPromise = getTotalRowCount('gsc_country_metrics', 'country', "AND country <> ''");
         }
@@ -2086,10 +2408,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
-      if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
-      }
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
@@ -2198,10 +2516,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
-      if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
-      }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
       }
@@ -2280,54 +2594,54 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier FROM users WHERE id = ?', [ownerId]);
-      if (!canUseRawExports(user?.tier)) {
-        return res.status(403).json({ error: 'Source-row exports are available on paid plans.' });
-      }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
       }
 
-      const dimensionFilter = search
-        ? {
-            filter: {
-              fieldName: dimension,
-              stringFilter: {
-                matchType: 'CONTAINS',
-                value: search,
-              },
-            },
-          }
-        : undefined;
-
-      const report = await fetchLiveGa4Report(
-        ownerId,
-        propertyId,
-        startDate,
-        endDate,
-        [dimension],
-        ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
-        dimensionFilter,
-        { limit, offset },
-      );
-
-      const rows = (Array.isArray(report?.rows) ? report.rows : []).map((row: any) => ({
-        bounceRate: toFiniteNumber(row.metricValues?.[3]?.value),
-        dimension,
-        dimensionValue: row.dimensionValues?.[0]?.value || '',
-        eventCount: toFiniteNumber(row.metricValues?.[4]?.value),
-        pageViews: toFiniteNumber(row.metricValues?.[2]?.value),
-        sessions: toFiniteNumber(row.metricValues?.[0]?.value),
-        totalUsers: toFiniteNumber(row.metricValues?.[1]?.value),
-      }));
+      const where = search ? 'AND LOWER(dimensionValue) LIKE ?' : '';
+      const params: unknown[] = search
+        ? [ownerId, propertyId, dimension, startDate, endDate, `%${search.toLowerCase()}%`]
+        : [ownerId, propertyId, dimension, startDate, endDate];
+      const total = await db.get<any>(`
+        SELECT COUNT(*) AS total
+        FROM (
+          SELECT dimensionValue
+          FROM ga4_dimension_metrics
+          WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
+          GROUP BY dimensionValue
+        ) dimension_rows
+      `, params);
+      const rows = await db.all<any>(`
+        SELECT
+          dimension,
+          dimensionValue,
+          SUM(sessions) AS sessions,
+          SUM(totalUsers) AS totalUsers,
+          SUM(pageViews) AS pageViews,
+          CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
+          SUM(eventCount) AS eventCount
+        FROM ga4_dimension_metrics
+        WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
+        GROUP BY dimension, dimensionValue
+        ORDER BY sessions DESC, pageViews DESC, eventCount DESC
+        LIMIT ? OFFSET ?
+      `, [...params, limit, offset]);
 
       return res.json({
         page: {
           limit,
           offset,
-          total: toFiniteNumber(report?.rowCount ?? rows.length),
+          total: toFiniteNumber(readField(total, 'total')),
         },
-        rows,
+        rows: rows.map((row) => ({
+          bounceRate: toFiniteNumber(row.bounceRate),
+          dimension,
+          dimensionValue: readField(row, 'dimensionValue') || '',
+          eventCount: toFiniteNumber(row.eventCount),
+          pageViews: toFiniteNumber(row.pageViews),
+          sessions: toFiniteNumber(row.sessions),
+          totalUsers: toFiniteNumber(row.totalUsers),
+        })),
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Failed to load raw GA4 report rows' });

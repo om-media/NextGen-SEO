@@ -257,14 +257,14 @@ export function GscDataGrid({
     : hasActiveWarehouseWork
       ? "Importing Search Console history"
       : hasCoverageGap
-        ? "Search Console history import available"
+        ? "Preparing Search Console history"
         : "Stored Search Console data is ready";
   const coverageStatusDescription = hasWarehouseErrors
-    ? "Some import jobs failed. Use the import status panel above to retry failed jobs."
+    ? "Some background import jobs failed. Stored rows remain visible while retry is handled."
     : hasActiveWarehouseWork
       ? "Existing rows stay visible while the app prepares the missing days for this breakdown."
       : hasCoverageGap
-        ? "Use the import status panel above to queue the remaining missing days for this date range."
+        ? "Missing days are queued automatically in the background for this date range."
         : "This breakdown is loaded from the app warehouse for the selected range.";
 
   const handleSort = (column: SortColumn) => {

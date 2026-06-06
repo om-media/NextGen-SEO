@@ -3,6 +3,7 @@ import type { AppDatabase } from './database.js';
 type WorkspaceAccessUser = {
   activatedGa4PropertyId?: string | null;
   activatedSiteUrl?: string | null;
+  gscRefreshToken?: string | null;
   knownSites?: string | null;
   tier?: string | null;
   unlockedSites?: string | null;
@@ -35,20 +36,36 @@ export async function canAccessSite(db: AppDatabase, ownerId: string, siteUrl: s
   );
 
   if (!user) return false;
-  if (user.tier === 'enterprise') return hasWorkspaceSite(user, siteUrl);
-
-  const unlockedSites = parseStringArray(user.unlockedSites);
-  return unlockedSites.includes(siteUrl) || user.activatedSiteUrl === siteUrl;
+  return hasWorkspaceSite(user, siteUrl);
 }
 
 export async function canAccessGa4Property(db: AppDatabase, ownerId: string, propertyId: string) {
   const user = await db.get<WorkspaceAccessUser>(
-    'SELECT tier, activatedGa4PropertyId FROM users WHERE id = ?',
+    'SELECT tier, activatedGa4PropertyId, gscRefreshToken FROM users WHERE id = ?',
     [ownerId],
   );
 
   if (!user) return false;
-  if (user.tier === 'enterprise') return true;
+  if (user.activatedGa4PropertyId && user.activatedGa4PropertyId === propertyId) return true;
+  const mapping = await db.get<{ propertyId: string }>(
+    'SELECT propertyId FROM workspace_ga4_mappings WHERE ownerId = ? AND propertyId = ?',
+    [ownerId, propertyId],
+  );
+  if (mapping) return true;
+  if (user.gscRefreshToken) return true;
 
-  return Boolean(user.activatedGa4PropertyId && user.activatedGa4PropertyId === propertyId);
+  const storedRows = await db.get<{ count: number }>(
+    `
+      SELECT SUM(rowCount) AS count
+      FROM (
+        SELECT COUNT(*) AS rowCount FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ?
+        UNION ALL
+        SELECT COUNT(*) AS rowCount FROM ga4_dimension_metrics WHERE ownerId = ? AND propertyId = ?
+        UNION ALL
+        SELECT COUNT(*) AS rowCount FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ?
+      ) rows
+    `,
+    [ownerId, propertyId, ownerId, propertyId, ownerId, propertyId],
+  );
+  return Number(storedRows?.count || 0) > 0;
 }

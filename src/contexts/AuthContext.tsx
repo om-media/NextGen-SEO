@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { authFetch } from '../lib/authFetch';
-import { getPlanPropertyLimit, type PlanTier } from '../../shared/plans';
+import type { PlanTier } from '../../shared/plans';
 
 export interface AppUser {
   uid: string;
@@ -328,11 +328,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const unlockSite = async (siteUrl: string) => {
     if (!user || !userProfile) return;
-
-    const limit = getPlanPropertyLimit(userProfile.tier);
-    if (limit !== null && userProfile.unlockedSites.length >= limit) {
-      throw new Error(`You have reached the maximum number of sites for your ${userProfile.tier} tier.`);
-    }
 
     if (userProfile.unlockedSites.includes(siteUrl)) {
       return;

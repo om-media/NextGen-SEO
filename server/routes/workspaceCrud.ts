@@ -2,8 +2,8 @@ import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
+import { canAccessSite } from '../accessControl.js';
 import { isNonEmptyString } from '../validation.js';
-import { isMultiSitePlan } from '../../shared/plans.js';
 
 function parseStringArray(value: unknown) {
   if (typeof value !== 'string') return [];
@@ -34,9 +34,6 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
       if (!user) {
         return res.status(404).json({ error: 'Account not found' });
       }
-      if (!isMultiSitePlan(user.tier)) {
-        return res.status(403).json({ error: 'Multi-site workspace status is available on paid plans.' });
-      }
 
       const sites = uniqueStrings([
         ...parseStringArray(user.unlockedSites),
@@ -46,8 +43,7 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
 
       const rows = [];
       for (const siteUrl of sites) {
-        const unlockedSites = parseStringArray(user.unlockedSites);
-        const isAccessibleSite = user.tier === 'enterprise' || unlockedSites.includes(siteUrl) || siteUrl === user.activatedSiteUrl;
+        const isAccessibleSite = await canAccessSite(db, ownerId, siteUrl);
         const warehouse = await db.get<any>(`
           SELECT
             MIN(date) AS earliestMetricDate,

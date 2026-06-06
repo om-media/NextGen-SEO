@@ -3,6 +3,7 @@ import fs from 'fs';
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalPageKey } from './reporting/url.js';
+import { backfillMissingGscMonthlySummaries } from './services/gscMonthlySummaries.js';
 
 const { Pool } = pg;
 type PgQueryable = pg.Pool | pg.PoolClient;
@@ -157,6 +158,51 @@ const commonSchemaSql = `
     position REAL,
     queryCount INTEGER,
     PRIMARY KEY (ownerId, siteUrl, date, pageKey)
+  );
+
+  CREATE TABLE IF NOT EXISTS gsc_site_monthly_metrics (
+    ownerId TEXT,
+    siteUrl TEXT,
+    monthStart TEXT,
+    clicks INTEGER,
+    impressions INTEGER,
+    positionSum REAL,
+    PRIMARY KEY (ownerId, siteUrl, monthStart)
+  );
+
+  CREATE TABLE IF NOT EXISTS gsc_query_monthly_metrics (
+    ownerId TEXT,
+    siteUrl TEXT,
+    monthStart TEXT,
+    query TEXT,
+    clicks INTEGER,
+    impressions INTEGER,
+    positionSum REAL,
+    PRIMARY KEY (ownerId, siteUrl, monthStart, query)
+  );
+
+  CREATE TABLE IF NOT EXISTS gsc_country_monthly_metrics (
+    ownerId TEXT,
+    siteUrl TEXT,
+    monthStart TEXT,
+    country TEXT,
+    clicks INTEGER,
+    impressions INTEGER,
+    positionSum REAL,
+    PRIMARY KEY (ownerId, siteUrl, monthStart, country)
+  );
+
+  CREATE TABLE IF NOT EXISTS gsc_page_query_monthly_metrics (
+    ownerId TEXT,
+    siteUrl TEXT,
+    monthStart TEXT,
+    page TEXT,
+    pageKey TEXT,
+    query TEXT,
+    clicks INTEGER,
+    impressions INTEGER,
+    positionSum REAL,
+    PRIMARY KEY (ownerId, siteUrl, monthStart, pageKey, query)
   );
 
   CREATE TABLE IF NOT EXISTS ga4_page_metrics (
@@ -404,6 +450,12 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_owner_site_date_pagekey ON gsc_page_query_metrics(ownerId, siteUrl, date, pageKey);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_owner_site_date_key ON gsc_page_metrics(ownerId, siteUrl, date, pageKey);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_owner_site_key_date ON gsc_page_metrics(ownerId, siteUrl, pageKey, date);
+  CREATE INDEX IF NOT EXISTS idx_gsc_site_monthly_owner_site_month ON gsc_site_monthly_metrics(ownerId, siteUrl, monthStart);
+  CREATE INDEX IF NOT EXISTS idx_gsc_query_monthly_owner_site_month_query ON gsc_query_monthly_metrics(ownerId, siteUrl, monthStart, query);
+  CREATE INDEX IF NOT EXISTS idx_gsc_country_monthly_owner_site_month_country ON gsc_country_monthly_metrics(ownerId, siteUrl, monthStart, country);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_query_monthly_owner_site_month_pagekey ON gsc_page_query_monthly_metrics(ownerId, siteUrl, monthStart, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_query_monthly_owner_site_pagekey_month ON gsc_page_query_monthly_metrics(ownerId, siteUrl, pageKey, monthStart);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_query_monthly_owner_site_month_query ON gsc_page_query_monthly_metrics(ownerId, siteUrl, monthStart, query);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_key ON ga4_page_metrics(ownerId, propertyId, date, pageKey);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_key_date ON ga4_page_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_page_owner_property_date_path ON ga4_page_metrics(ownerId, propertyId, date, pagePath);
@@ -797,6 +849,10 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE gsc_query_metrics ADD COLUMN ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN pageKey TEXT',
+    'ALTER TABLE gsc_site_monthly_metrics ADD COLUMN ownerId TEXT',
+    'ALTER TABLE gsc_query_monthly_metrics ADD COLUMN ownerId TEXT',
+    'ALTER TABLE gsc_country_monthly_metrics ADD COLUMN ownerId TEXT',
+    'ALTER TABLE gsc_page_query_monthly_metrics ADD COLUMN ownerId TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN ownerId TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN targetStartDate TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN metricsJson TEXT',
@@ -846,6 +902,10 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE gsc_query_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS pageKey TEXT',
+    'ALTER TABLE gsc_site_monthly_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE gsc_query_monthly_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE gsc_country_monthly_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE gsc_page_query_monthly_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS targetStartDate TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS metricsJson TEXT',
@@ -972,6 +1032,18 @@ async function backfillGscPageMetrics(db: AppDatabase) {
   console.log(`[db] Backfilled ${Number(updated?.count || 0)} legacy GSC page summary rows`);
 }
 
+function scheduleGscMonthlySummaryBackfill(db: AppDatabase) {
+  if (process.env.RUN_GSC_MONTHLY_SUMMARY_BACKFILL !== 'true') {
+    return;
+  }
+
+  setTimeout(() => {
+    backfillMissingGscMonthlySummaries(db).catch((error) => {
+      console.warn('[db] GSC monthly summary backfill skipped:', error?.message || error);
+    });
+  }, 0);
+}
+
 export async function initializeDatabase(): Promise<AppDatabase> {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 
@@ -984,6 +1056,7 @@ export async function initializeDatabase(): Promise<AppDatabase> {
     await applyPostgresMigrations(db);
     await backfillGscPageKeys(db);
     await backfillGscPageMetrics(db);
+    scheduleGscMonthlySummaryBackfill(db);
     console.log('[db] Connected to PostgreSQL');
     return db;
   }
@@ -993,6 +1066,7 @@ export async function initializeDatabase(): Promise<AppDatabase> {
   const db = new SqliteAppDatabase(sqlite);
   await backfillGscPageKeys(db);
   await backfillGscPageMetrics(db);
+  scheduleGscMonthlySummaryBackfill(db);
   console.log('[db] Connected to local SQLite');
   return db;
 }
