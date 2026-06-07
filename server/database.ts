@@ -188,6 +188,19 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, siteUrl, monthStart, country)
   );
 
+  CREATE TABLE IF NOT EXISTS gsc_page_monthly_metrics (
+    ownerId TEXT,
+    siteUrl TEXT,
+    monthStart TEXT,
+    page TEXT,
+    pageKey TEXT,
+    clicks INTEGER,
+    impressions INTEGER,
+    positionSum REAL,
+    queryCount INTEGER,
+    PRIMARY KEY (ownerId, siteUrl, monthStart, pageKey)
+  );
+
   CREATE TABLE IF NOT EXISTS gsc_page_query_monthly_metrics (
     ownerId TEXT,
     siteUrl TEXT,
@@ -449,6 +462,8 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_gsc_site_monthly_owner_site_month ON gsc_site_monthly_metrics(ownerId, siteUrl, monthStart);
   CREATE INDEX IF NOT EXISTS idx_gsc_query_monthly_owner_site_month_query ON gsc_query_monthly_metrics(ownerId, siteUrl, monthStart, query);
   CREATE INDEX IF NOT EXISTS idx_gsc_country_monthly_owner_site_month_country ON gsc_country_monthly_metrics(ownerId, siteUrl, monthStart, country);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_monthly_owner_site_month_key ON gsc_page_monthly_metrics(ownerId, siteUrl, monthStart, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_gsc_page_monthly_owner_site_key_month ON gsc_page_monthly_metrics(ownerId, siteUrl, pageKey, monthStart);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_monthly_owner_site_month_pagekey ON gsc_page_query_monthly_metrics(ownerId, siteUrl, monthStart, pageKey);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_monthly_owner_site_pagekey_month ON gsc_page_query_monthly_metrics(ownerId, siteUrl, pageKey, monthStart);
   CREATE INDEX IF NOT EXISTS idx_gsc_page_query_monthly_owner_site_month_query ON gsc_page_query_monthly_metrics(ownerId, siteUrl, monthStart, query);
