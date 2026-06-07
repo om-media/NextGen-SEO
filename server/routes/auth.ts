@@ -22,10 +22,6 @@ export type UserRow = {
   activatedGa4PropertyId?: string | null;
   activatedGa4DisplayName?: string | null;
   gscRefreshToken?: string | null;
-  billingStatus?: string | null;
-  subscriptionId?: string | null;
-  trialEndsAt?: string | null;
-  currentPeriodEnd?: string | null;
 };
 
 export function normalizeUserProfile(user: UserRow) {
@@ -45,10 +41,6 @@ export function normalizeUserProfile(user: UserRow) {
     activatedGa4PropertyId: user.activatedGa4PropertyId || null,
     activatedGa4DisplayName: user.activatedGa4DisplayName || null,
     googleConnected: Boolean(user.gscRefreshToken),
-    billingStatus: user.billingStatus === 'trialing' ? 'active' : (user.billingStatus || 'active'),
-    subscriptionId: user.subscriptionId || null,
-    trialEndsAt: user.trialEndsAt || null,
-    currentPeriodEnd: user.currentPeriodEnd || null,
   };
 }
 
@@ -137,8 +129,8 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
 
         await db.run(`
           INSERT INTO users (
-            id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
           id,
           normalizedEmail,
@@ -153,10 +145,6 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
           createdAt,
           null,
           0,
-          null,
-          'active',
-          null,
-          null,
           null,
         ]);
 
