@@ -204,8 +204,8 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
           const initialTier = await getInitialRegistrationTier(db);
           await db.run(`
             INSERT INTO users (
-              id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `, [
             id,
             normalizedEmail,
@@ -220,10 +220,6 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
             createdAt,
             null,
             0,
-            null,
-            'active',
-            null,
-            null,
             null,
           ]);
           user = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]))!;

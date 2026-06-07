@@ -63,11 +63,7 @@ const commonSchemaSql = `
     onboardingCompleted INTEGER DEFAULT 0,
     activatedSiteUrl TEXT,
     activatedGa4PropertyId TEXT,
-    activatedGa4DisplayName TEXT,
-    billingStatus TEXT DEFAULT 'active',
-    subscriptionId TEXT,
-    trialEndsAt TEXT,
-    currentPeriodEnd TEXT
+    activatedGa4DisplayName TEXT
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -497,10 +493,6 @@ const camelCaseColumns: Record<string, string> = {
   activatedsiteurl: 'activatedSiteUrl',
   activatedga4propertyid: 'activatedGa4PropertyId',
   activatedga4displayname: 'activatedGa4DisplayName',
-  billingstatus: 'billingStatus',
-  subscriptionid: 'subscriptionId',
-  trialendsat: 'trialEndsAt',
-  currentperiodend: 'currentPeriodEnd',
   lastsyncdate: 'lastSyncDate',
   earliestsyncdate: 'earliestSyncDate',
   lastupdated: 'lastUpdated',
@@ -837,10 +829,6 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE users ADD COLUMN activatedSiteUrl TEXT',
     'ALTER TABLE users ADD COLUMN activatedGa4PropertyId TEXT',
     'ALTER TABLE users ADD COLUMN activatedGa4DisplayName TEXT',
-    "ALTER TABLE users ADD COLUMN billingStatus TEXT DEFAULT 'active'",
-    'ALTER TABLE users ADD COLUMN subscriptionId TEXT',
-    'ALTER TABLE users ADD COLUMN trialEndsAt TEXT',
-    'ALTER TABLE users ADD COLUMN currentPeriodEnd TEXT',
     'ALTER TABLE tracked_keywords ADD COLUMN targetDomain TEXT',
     'ALTER TABLE tracked_keywords ADD COLUMN ownerId TEXT',
     'ALTER TABLE server_logs ADD COLUMN ownerId TEXT',
@@ -890,10 +878,6 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS activatedSiteUrl TEXT',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS activatedGa4PropertyId TEXT',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS activatedGa4DisplayName TEXT',
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS billingStatus TEXT DEFAULT 'active'",
-    'ALTER TABLE users ADD COLUMN IF NOT EXISTS subscriptionId TEXT',
-    'ALTER TABLE users ADD COLUMN IF NOT EXISTS trialEndsAt TEXT',
-    'ALTER TABLE users ADD COLUMN IF NOT EXISTS currentPeriodEnd TEXT',
     'ALTER TABLE tracked_keywords ADD COLUMN IF NOT EXISTS targetDomain TEXT',
     'ALTER TABLE tracked_keywords ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE server_logs ADD COLUMN IF NOT EXISTS ownerId TEXT',

@@ -25,10 +25,6 @@ export interface UserProfile {
   activatedSiteUrl?: string | null;
   activatedGa4PropertyId?: string | null;
   activatedGa4DisplayName?: string | null;
-  billingStatus?: 'trialing' | 'active' | 'past_due' | 'canceled' | 'incomplete';
-  subscriptionId?: string | null;
-  trialEndsAt?: string | null;
-  currentPeriodEnd?: string | null;
 }
 
 type UserProfileUpdate = {

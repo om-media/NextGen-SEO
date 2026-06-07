@@ -118,7 +118,13 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
 
   app.get('/api/users/:id', authRequired, requireMatchingParam('id'), async (req, res) => {
     try {
-      const user = await db.get<any>('SELECT * FROM users WHERE id = ?', [req.params.id]);
+      const user = await db.get<any>(`
+        SELECT id, email, name, company, avatarUrl, bio, tier, unlockedSites, knownSites,
+               createdAt, onboardingCompleted, activatedSiteUrl, activatedGa4PropertyId,
+               activatedGa4DisplayName, gscRefreshToken, bingApiKey
+        FROM users
+        WHERE id = ?
+      `, [req.params.id]);
       if (user) {
         user.unlockedSites = JSON.parse(user.unlockedSites || '[]');
         user.knownSites = JSON.parse(user.knownSites || '[]');
@@ -127,10 +133,6 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         user.activatedGa4PropertyId = user.activatedGa4PropertyId || null;
         user.activatedGa4DisplayName = user.activatedGa4DisplayName || null;
         user.googleConnected = Boolean(user.gscRefreshToken);
-        user.billingStatus = user.billingStatus === 'trialing' ? 'active' : (user.billingStatus || 'active');
-        user.subscriptionId = user.subscriptionId || null;
-        user.trialEndsAt = user.trialEndsAt || null;
-        user.currentPeriodEnd = user.currentPeriodEnd || null;
         user.bingConnected = Boolean(user.bingApiKey);
         delete user.gscRefreshToken;
         delete user.bingApiKey;
@@ -155,10 +157,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       const initialTier = await getInitialRegistrationTier(db);
       await db.run(`
         INSERT INTO users (
-          id, email, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, activatedGa4PropertyId, activatedGa4DisplayName, billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, email, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl, activatedGa4PropertyId, activatedGa4DisplayName
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
-      `, [id, email, name || null, null, avatarUrl || null, null, initialTier, JSON.stringify([]), createdAt, null, 0, null, null, null, 'active', null, null, null]);
+      `, [id, email, name || null, null, avatarUrl || null, null, initialTier, JSON.stringify([]), createdAt, null, 0, null, null, null]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -338,39 +340,6 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
 
   app.put('/api/users/:id/tier', authRequired, requireMatchingParam('id'), (_req, res) => {
     return res.status(403).json({ error: 'Tier changes must be handled by an admin flow' });
-  });
-
-  app.put('/api/users/:id/billing', authRequired, requireMatchingParam('id'), async (req, res) => {
-    const { billingStatus, subscriptionId, trialEndsAt, currentPeriodEnd } = req.body;
-    const allowedStatuses = new Set(['trialing', 'active', 'past_due', 'canceled', 'incomplete']);
-
-    if (!isNonEmptyString(billingStatus) || !allowedStatuses.has(billingStatus)) {
-      return res.status(400).json({ error: 'Invalid billingStatus' });
-    }
-    if (subscriptionId !== undefined && subscriptionId !== null && typeof subscriptionId !== 'string') {
-      return res.status(400).json({ error: 'Invalid subscriptionId' });
-    }
-    if (trialEndsAt !== undefined && trialEndsAt !== null && !isNonEmptyString(trialEndsAt)) {
-      return res.status(400).json({ error: 'Invalid trialEndsAt' });
-    }
-    if (currentPeriodEnd !== undefined && currentPeriodEnd !== null && !isNonEmptyString(currentPeriodEnd)) {
-      return res.status(400).json({ error: 'Invalid currentPeriodEnd' });
-    }
-
-    try {
-      await db.run('UPDATE users SET billingStatus = ?, subscriptionId = ?, trialEndsAt = ?, currentPeriodEnd = ? WHERE id = ?', [billingStatus, subscriptionId || null, trialEndsAt || null, currentPeriodEnd || null, req.params.id]);
-      res.json({
-        success: true,
-        billing: {
-          billingStatus,
-          subscriptionId: subscriptionId || null,
-          trialEndsAt: trialEndsAt || null,
-          currentPeriodEnd: currentPeriodEnd || null,
-        },
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
   });
 
   app.put('/api/users/:id/bing-key', authRequired, requireMatchingParam('id'), async (req, res) => {

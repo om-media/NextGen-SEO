@@ -4,7 +4,6 @@ import type { AppDatabase } from './database.js';
 import { registerAccountDataRoutes } from './routes/accountData.js';
 import { registerAiRoutes } from './routes/ai.js';
 import { registerLocalAuthRoutes } from './routes/auth.js';
-import { registerBillingRoutes } from './routes/billing.js';
 import { registerCrawlRoutes } from './routes/crawl.js';
 import { registerBlendedRoutes } from './routes/blended.js';
 import { registerIndexingRoutes } from './routes/indexing.js';
@@ -82,7 +81,6 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
   registerLocalAuthRoutes(app, db);
   registerAccountDataRoutes(app, db);
   registerAiRoutes(app, db);
-  registerBillingRoutes(app, db);
   registerCrawlRoutes(app, db);
   registerGoogleRoutes(app, db);
   registerWorkspaceCrudRoutes(app, db);
