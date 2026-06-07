@@ -1307,7 +1307,14 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
           if (!(await canAccessSite(db, user.id, siteUrl))) {
             continue;
           }
-          const propertyId = await resolveWorkspaceGa4Property(db, user.id, siteUrl);
+          const mappedPropertyId = await resolveWorkspaceGa4Property(db, user.id, siteUrl);
+          const activePropertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
+          const propertyId = mappedPropertyId || (siteUrl === activeSiteUrl && activePropertyId ? activePropertyId : null);
+          await queueWarehouseBootstrapJobs(db, {
+            ownerId: user.id,
+            propertyId,
+            siteUrl,
+          });
           await queueWarehouseSyncJob(db, {
             ownerId: user.id,
             propertyId,
