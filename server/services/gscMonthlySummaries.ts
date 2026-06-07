@@ -266,6 +266,65 @@ async function rebuildCountrySummaries(db: AppDatabase, ownerId?: string, siteUr
   );
 }
 
+async function rebuildPageSummaries(db: AppDatabase, ownerId?: string, siteUrl?: string, startDate?: string, endDate?: string) {
+  const filters = ["pageKey <> ''"];
+  const params: unknown[] = [];
+  if (ownerId) {
+    filters.push('ownerId = ?');
+    params.push(ownerId);
+  }
+  if (siteUrl) {
+    filters.push('siteUrl = ?');
+    params.push(siteUrl);
+  }
+  if (startDate && endDate) {
+    filters.push('date >= ? AND date <= ?');
+    params.push(startDate, endDate);
+  }
+  const whereClause = `WHERE ${filters.join(' AND ')}`;
+
+  if (startDate && endDate) {
+    const { monthStart, monthEnd } = monthBoundsForRange(startDate, endDate);
+    const deleteParams = ownerId && siteUrl ? [ownerId, siteUrl, monthStart, monthEnd] : ownerId ? [ownerId, monthStart, monthEnd] : siteUrl ? [siteUrl, monthStart, monthEnd] : [monthStart, monthEnd];
+    const deleteWhere = ownerId && siteUrl
+      ? 'ownerId = ? AND siteUrl = ? AND monthStart >= ? AND monthStart <= ?'
+      : ownerId
+        ? 'ownerId = ? AND monthStart >= ? AND monthStart <= ?'
+        : siteUrl
+          ? 'siteUrl = ? AND monthStart >= ? AND monthStart <= ?'
+          : 'monthStart >= ? AND monthStart <= ?';
+    await db.run(`DELETE FROM gsc_page_monthly_metrics WHERE ${deleteWhere}`, deleteParams);
+  } else {
+    await db.run('DELETE FROM gsc_page_monthly_metrics');
+  }
+
+  await db.run(
+    `
+      INSERT INTO gsc_page_monthly_metrics (ownerId, siteUrl, monthStart, page, pageKey, clicks, impressions, positionSum, queryCount)
+      SELECT
+        ownerId,
+        siteUrl,
+        substr(date, 1, 7) || '-01' AS monthStart,
+        MIN(page) AS page,
+        pageKey,
+        SUM(clicks) AS clicks,
+        SUM(impressions) AS impressions,
+        SUM(position * impressions) AS positionSum,
+        SUM(queryCount) AS queryCount
+      FROM gsc_page_metrics
+      ${whereClause}
+      GROUP BY ownerId, siteUrl, substr(date, 1, 7), pageKey
+      ON CONFLICT(ownerId, siteUrl, monthStart, pageKey) DO UPDATE SET
+        page = excluded.page,
+        clicks = excluded.clicks,
+        impressions = excluded.impressions,
+        positionSum = excluded.positionSum,
+        queryCount = excluded.queryCount
+    `,
+    params,
+  );
+}
+
 async function rebuildPageQuerySummaries(db: AppDatabase, ownerId?: string, siteUrl?: string, startDate?: string, endDate?: string) {
   const filters = ["COALESCE(NULLIF(pageKey, ''), page) <> ''", "query <> ''"];
   const params: unknown[] = [];
@@ -332,6 +391,7 @@ export async function refreshGscMonthlySummariesForRange(
     await rebuildSiteSummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
     await rebuildQuerySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
     await rebuildCountrySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
+    await rebuildPageSummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
     await rebuildPageQuerySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
   });
   await run();
@@ -350,7 +410,7 @@ export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {
   await rebuildSiteSummaries(db);
   await rebuildQuerySummaries(db);
   await rebuildCountrySummaries(db);
+  await rebuildPageSummaries(db);
   await rebuildPageQuerySummaries(db);
   console.log('[db] Backfilled GSC monthly summary tables');
 }
-

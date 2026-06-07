@@ -2020,7 +2020,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         return toFiniteNumber(total?.totalRowCount);
       };
 
-      const buildSummarySourceSql = (tableName: string, summaryTableName: string, kind: 'site' | 'query' | 'country' | 'pageQuery') => {
+      const buildSummarySourceSql = (tableName: string, summaryTableName: string, kind: 'site' | 'query' | 'country' | 'page' | 'pageQuery') => {
         if (!summaryWindow) return null;
         const sourceSegments: string[] = [];
         const sourceParams: Record<string, unknown> = {
@@ -2046,9 +2046,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             FROM ${summaryTableName}
             WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND monthStart >= @summaryMonthStart AND monthStart <= @summaryMonthEnd
           `);
+        } else if (kind === 'page') {
+          sourceSegments.push(`
+            SELECT ownerId, siteUrl, page, pageKey, NULL AS query, NULL AS country, queryCount, clicks, impressions, positionSum
+            FROM ${summaryTableName}
+            WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND monthStart >= @summaryMonthStart AND monthStart <= @summaryMonthEnd
+          `);
         } else {
           sourceSegments.push(`
-            SELECT ownerId, siteUrl, page, pageKey, query, NULL AS country, clicks, impressions, positionSum
+            SELECT ownerId, siteUrl, page, pageKey, query, NULL AS country, NULL AS queryCount, clicks, impressions, positionSum
             FROM ${summaryTableName}
             WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND monthStart >= @summaryMonthStart AND monthStart <= @summaryMonthEnd
           `);
@@ -2078,9 +2084,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               FROM ${tableName}
               WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @edgeStart${index} AND date <= @edgeEnd${index}
             `);
+          } else if (kind === 'page') {
+            sourceSegments.push(`
+              SELECT ownerId, siteUrl, page, COALESCE(NULLIF(pageKey, ''), page) AS pageKey, NULL AS query, NULL AS country, queryCount, clicks, impressions, position * impressions AS positionSum
+              FROM ${tableName}
+              WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @edgeStart${index} AND date <= @edgeEnd${index}
+            `);
           } else {
             sourceSegments.push(`
-              SELECT ownerId, siteUrl, page, COALESCE(NULLIF(pageKey, ''), page) AS pageKey, query, NULL AS country, clicks, impressions, position * impressions AS positionSum
+              SELECT ownerId, siteUrl, page, COALESCE(NULLIF(pageKey, ''), page) AS pageKey, query, NULL AS country, NULL AS queryCount, clicks, impressions, position * impressions AS positionSum
               FROM ${tableName}
               WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @edgeStart${index} AND date <= @edgeEnd${index}
             `);
@@ -2126,7 +2138,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             `, summarySource.params);
           }
         } else if (hasPage && !hasQuery && !hasPageFilter) {
-          const summarySource = buildSummarySourceSql('gsc_page_query_metrics', 'gsc_page_query_monthly_metrics', 'pageQuery');
+          const summarySource = buildSummarySourceSql('gsc_page_metrics', 'gsc_page_monthly_metrics', 'page');
           if (summarySource) {
             if (shouldIncludeTotal) {
               totalRowCountPromise = db.get<any>(`
@@ -2138,7 +2150,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             if (!shouldReturnTotalOnly) rows = await db.all<any>(`
               SELECT MIN(page) AS page,
                      pageKey,
-                     COUNT(DISTINCT query) as queryCount,
+                     SUM(queryCount) as queryCount,
                      SUM(clicks) as clicks,
                      SUM(impressions) as impressions,
                      CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
