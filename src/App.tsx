@@ -376,14 +376,17 @@ function MainApp() {
 
   useEffect(() => {
     const googleConnected = Boolean(userProfile?.googleConnected)
+    let cancelled = false;
 
     if (googleConnected && isOnboarding) {
       const ga4Service = new Ga4ApiService()
       ga4Service.getProperties()
         .then((fetchedSites) => {
+          if (cancelled) return;
           setGa4Sites(fetchedSites)
         })
         .catch((err) => {
+          if (cancelled) return;
           console.warn("Failed to fetch GA4 properties during onboarding:", err)
           setGa4Sites([])
         })
@@ -394,10 +397,13 @@ function MainApp() {
         if (!backgroundEffectsReady && !isOnboarding) {
           fetchOfflineGscSites(userProfile)
             .then((offlineSites) => {
+              if (cancelled) return;
               setSites(prev => mergeUniqueSites(prev, offlineSites));
             })
             .catch(e => console.error("Offline fallback err:", e));
-          return;
+          return () => {
+            cancelled = true;
+          };
         }
 
         setFetchingSites(true)
@@ -405,6 +411,7 @@ function MainApp() {
         const gscService = new GscApiService(null, userProfile?.tier || 'free')
         gscService.getSites()
           .then(fetchedSites => {
+            if (cancelled) return;
             setSessionExpired(false)
             setSites(fetchedSites)
             if (fetchedSites.length > 0 && !isOnboarding) {
@@ -416,16 +423,19 @@ function MainApp() {
             }
           })
           .catch(err => {
+            if (cancelled) return;
             if (isGoogleAuthError(err.message) || err.message.includes('GOOGLE_NOT_CONNECTED')) {
               console.warn("Stored Google connection is missing or expired.");
               
               // Fallback to warehouse-synced / offline sites + known sites from profile
               fetchOfflineGscSites(userProfile)
                 .then((offlineSites) => {
+                  if (cancelled) return;
                   setSessionExpired(offlineSites.length === 0);
                   setSites(prev => mergeUniqueSites(prev, offlineSites));
                 })
                 .catch(e => {
+                  if (cancelled) return;
                   setSessionExpired(true);
                   console.error("Offline fallback err:", e);
                 });
@@ -437,16 +447,20 @@ function MainApp() {
               setApiError(err.message)
             }
           })
-          .finally(() => setFetchingSites(false))
+          .finally(() => {
+            if (!cancelled) setFetchingSites(false);
+          })
       } else {
         // No GSC token, populate with offline sites to access local warehouse
         fetchOfflineGscSites(userProfile)
           .then((offlineSites) => {
+             if (cancelled) return;
              if (offlineSites.length > 0) {
                setSessionExpired(true);
              }
              setSites(prev => mergeUniqueSites(prev, offlineSites));
           }).catch(e => {
+            if (cancelled) return;
             console.error("Offline fallback err:", e);
             setSites([]);
           });
@@ -464,13 +478,17 @@ function MainApp() {
       const bingService = new BingApiService()
       bingService.getSites()
         .then(fetchedSites => {
+          if (cancelled) return;
           setBingSites(fetchedSites)
         })
         .catch(err => {
+          if (cancelled) return;
           console.error("Failed to fetch Bing sites:", err)
           setApiError(err.message)
         })
-        .finally(() => setFetchingSites(false))
+        .finally(() => {
+          if (!cancelled) setFetchingSites(false);
+        })
     } else if (dataSource === 'ga4' && googleConnected) {
       if (!backgroundEffectsReady && !isOnboarding) {
         return;
@@ -480,6 +498,7 @@ function MainApp() {
       const ga4Service = new Ga4ApiService()
       ga4Service.getProperties()
           .then(fetchedSites => {
+            if (cancelled) return;
             setSessionExpired(false)
             setGa4Sites(fetchedSites)
           if (fetchedSites.length > 0 && !isOnboarding) {
@@ -487,6 +506,7 @@ function MainApp() {
           }
         })
         .catch(err => {
+          if (cancelled) return;
           if (isGoogleAuthError(err.message) || isGa4ScopeError(err.message) || err.message.includes('GOOGLE_NOT_CONNECTED')) {
             console.warn("Stored Google connection is missing or expired.");
             setSessionExpired(true);
@@ -501,10 +521,16 @@ function MainApp() {
             setSessionExpired(true)
           }
         })
-        .finally(() => setFetchingSites(false))
+        .finally(() => {
+          if (!cancelled) setFetchingSites(false);
+        })
     } else if (dataSource === 'ga4' && !googleConnected) {
       setGa4Sites([])
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [backgroundEffectsReady, dataSource, isOnboarding, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
@@ -758,7 +784,11 @@ function MainApp() {
       return;
     }
 
-    if (!selectedSite || !currentSites.some((site) => site.siteUrl === selectedSite)) {
+    if (dataSource === 'bing') {
+      return;
+    }
+
+    if (!selectedSite || !accessibleWorkspaceSites.some((site) => site.siteUrl === selectedSite)) {
       const preferred = getPreferredSiteUrl(
         userProfile.activatedSiteUrl || selectedSite,
         accessibleWorkspaceSites,
