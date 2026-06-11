@@ -102,6 +102,17 @@ function monthBoundsForRange(startDate: string, endDate: string) {
   };
 }
 
+function monthStartsBetween(startDate: string, endDate: string) {
+  const months: string[] = [];
+  let cursor = startOfMonth(startDate);
+  const finalMonth = startOfMonth(endDate);
+  while (compareIsoDates(cursor, finalMonth) <= 0) {
+    months.push(cursor);
+    cursor = startOfNextMonth(cursor);
+  }
+  return months;
+}
+
 async function rebuildSiteSummaries(db: AppDatabase, ownerId?: string, siteUrl?: string, startDate?: string, endDate?: string) {
   const filters = [];
   const params: unknown[] = [];
@@ -397,20 +408,66 @@ export async function refreshGscMonthlySummariesForRange(
   await run();
 }
 
-export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {
-  const [siteSourceCount, siteSummaryCount] = await Promise.all([
-    db.get<{ count: number }>('SELECT COUNT(*) AS count FROM gsc_site_metrics'),
-    db.get<{ count: number }>('SELECT COUNT(*) AS count FROM gsc_site_monthly_metrics'),
-  ]);
+export async function ensureGscMonthlySummariesForRange(
+  db: AppDatabase,
+  input: { ownerId: string; siteUrl: string; startDate: string; endDate: string },
+) {
+  const summaryWindow = getGscSummaryWindow(input.startDate, input.endDate);
+  if (!summaryWindow) return false;
 
-  if (Number(siteSourceCount?.count || 0) === 0 || Number(siteSummaryCount?.count || 0) > 0) {
+  const fullMonthStart = summaryWindow.fullMonthStart;
+  const fullMonthEndDate = endOfMonth(summaryWindow.fullMonthEnd);
+  const expectedMonths = monthStartsBetween(fullMonthStart, summaryWindow.fullMonthEnd);
+  if (expectedMonths.length === 0) return false;
+
+  const summaryTables = [
+    'gsc_site_monthly_metrics',
+    'gsc_query_monthly_metrics',
+    'gsc_country_monthly_metrics',
+    'gsc_page_monthly_metrics',
+    'gsc_page_query_monthly_metrics',
+  ];
+  const coverageRows = await Promise.all(summaryTables.map((tableName) =>
+    db.get<{ count: number }>(
+      `
+        SELECT COUNT(DISTINCT monthStart) AS count
+        FROM ${tableName}
+        WHERE ownerId = ? AND siteUrl = ? AND monthStart >= ? AND monthStart <= ?
+      `,
+      [input.ownerId, input.siteUrl, fullMonthStart, summaryWindow.fullMonthEnd],
+    )
+  ));
+  const missingSummaryTable = coverageRows.some((row) => Number(row?.count || 0) < expectedMonths.length);
+  if (!missingSummaryTable) return false;
+
+  await refreshGscMonthlySummariesForRange(db, {
+    endDate: fullMonthEndDate,
+    ownerId: input.ownerId,
+    siteUrl: input.siteUrl,
+    startDate: fullMonthStart,
+  });
+  return true;
+}
+
+export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {
+  const missingSites = await db.all<{ ownerId: string; siteUrl: string; startDate: string; endDate: string }>(`
+    SELECT source.ownerId, source.siteUrl, MIN(source.date) AS startDate, MAX(source.date) AS endDate
+    FROM gsc_site_metrics source
+    LEFT JOIN gsc_site_monthly_metrics summary
+      ON summary.ownerId = source.ownerId
+      AND summary.siteUrl = source.siteUrl
+      AND summary.monthStart = substr(source.date, 1, 7) || '-01'
+    WHERE summary.monthStart IS NULL
+    GROUP BY source.ownerId, source.siteUrl
+  `);
+
+  if (missingSites.length === 0) {
     return;
   }
 
-  await rebuildSiteSummaries(db);
-  await rebuildQuerySummaries(db);
-  await rebuildCountrySummaries(db);
-  await rebuildPageSummaries(db);
-  await rebuildPageQuerySummaries(db);
-  console.log('[db] Backfilled GSC monthly summary tables');
+  for (const site of missingSites) {
+    if (!site.ownerId || !site.siteUrl || !site.startDate || !site.endDate) continue;
+    await refreshGscMonthlySummariesForRange(db, site);
+  }
+  console.log(`[db] Backfilled GSC monthly summary tables for ${missingSites.length} site(s)`);
 }
