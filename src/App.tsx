@@ -32,7 +32,8 @@ import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownS
 type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
 
 const selectedSiteCacheKey = (userId: string) => `selected_site_cache:${userId}`;
-const selectedGa4PropertyCacheKey = (userId: string) => `selected_ga4_property_cache:${userId}`;
+const legacySelectedGa4PropertyCacheKey = (userId: string) => `selected_ga4_property_cache:${userId}`;
+const selectedGa4PropertyCacheKey = (userId: string, siteUrl: string) => `selected_ga4_property_cache:${userId}:${encodeURIComponent(siteUrl || "__global__")}`;
 const gscSitesCacheKey = (userId: string) => `gsc_sites_cache:${userId}`;
 const ga4SitesCacheKey = (userId: string) => `ga4_sites_cache:${userId}`;
 
@@ -68,6 +69,7 @@ function MainApp() {
   const [ga4Sites, setGa4Sites] = useState<{siteUrl: string, displayName: string}[]>([])
   const [selectedSite, setSelectedSite] = useState("")
   const [selectedGa4Property, setSelectedGa4Property] = useState("")
+  const [selectedGa4PropertySite, setSelectedGa4PropertySite] = useState("")
   const [initializedSelectionsForUser, setInitializedSelectionsForUser] = useState<string | null>(null)
   const [fetchingSites, setFetchingSites] = useState(false)
   const [isConnectingGoogleData, setIsConnectingGoogleData] = useState(false)
@@ -195,9 +197,10 @@ function MainApp() {
       return;
     }
 
-    localStorage.setItem(selectedGa4PropertyCacheKey(user.uid), selectedGa4Property);
+    localStorage.setItem(selectedGa4PropertyCacheKey(user.uid, selectedGa4PropertySite || selectedSite), selectedGa4Property);
     localStorage.removeItem('selected_ga4_property_cache');
-  }, [initializedSelectionsForUser, selectedGa4Property, user?.uid]);
+    localStorage.removeItem(legacySelectedGa4PropertyCacheKey(user.uid));
+  }, [initializedSelectionsForUser, selectedGa4Property, selectedGa4PropertySite, selectedSite, user?.uid]);
 
   useEffect(() => {
     if (userProfile?.activatedSiteUrl && !selectedSite) {
@@ -214,6 +217,7 @@ function MainApp() {
       setGa4Sites([]);
       setSelectedSite("");
       setSelectedGa4Property("");
+      setSelectedGa4PropertySite("");
       return;
     }
 
@@ -225,6 +229,7 @@ function MainApp() {
         setGa4Sites([]);
         setSelectedSite("");
         setSelectedGa4Property("");
+        setSelectedGa4PropertySite("");
       }
       return;
     }
@@ -239,9 +244,13 @@ function MainApp() {
     localStorage.removeItem('gsc_sites_cache');
     localStorage.removeItem('ga4_sites_cache');
     const cachedSite = localStorage.getItem(selectedSiteCacheKey(userKey)) || "";
-    const cachedGa4Property = localStorage.getItem(selectedGa4PropertyCacheKey(userKey)) || "";
-    setSelectedSite(cachedSite || userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "");
-    setSelectedGa4Property(cachedGa4Property || userProfile.activatedGa4PropertyId || "");
+    const initialSite = cachedSite || userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "";
+    const cachedGa4Property = localStorage.getItem(selectedGa4PropertyCacheKey(userKey, initialSite))
+      || localStorage.getItem(legacySelectedGa4PropertyCacheKey(userKey))
+      || "";
+    setSelectedSite(initialSite);
+    setSelectedGa4Property(cachedGa4Property || (initialSite === userProfile.activatedSiteUrl ? userProfile.activatedGa4PropertyId || "" : ""));
+    setSelectedGa4PropertySite(initialSite);
     setInitializedSelectionsForUser(userKey);
   }, [
     initializedSelectionsForUser,
@@ -357,21 +366,30 @@ function MainApp() {
     return availableSites.find((site) => isGa4PropertyForWorkspaceSite(site, workspaceSite))?.siteUrl || "";
   };
 
-  const getPreferredGa4PropertyId = (availableSites: SiteLike[], currentPreference = selectedGa4Property) => {
-    if (currentPreference && availableSites.some((site) => site.siteUrl === currentPreference)) {
+  const getPreferredGa4PropertyId = (availableSites: SiteLike[], currentPreference = selectedGa4Property, workspaceSite = selectedSite) => {
+    if (
+      currentPreference &&
+      selectedGa4PropertySite === workspaceSite &&
+      availableSites.some((site) => site.siteUrl === currentPreference)
+    ) {
       return currentPreference;
     }
     const savedWorkspaceDefault = userProfile?.activatedGa4PropertyId || "";
-    if (savedWorkspaceDefault && availableSites.some((site) => site.siteUrl === savedWorkspaceDefault)) {
+    if (
+      workspaceSite &&
+      workspaceSite === userProfile?.activatedSiteUrl &&
+      savedWorkspaceDefault &&
+      availableSites.some((site) => site.siteUrl === savedWorkspaceDefault)
+    ) {
       return savedWorkspaceDefault;
     }
 
-    const workspaceMatch = getGa4PropertyForWorkspaceSite(availableSites);
+    const workspaceMatch = getGa4PropertyForWorkspaceSite(availableSites, workspaceSite);
     if (workspaceMatch) {
       return workspaceMatch;
     }
 
-    return availableSites[0]?.siteUrl || "";
+    return "";
   };
 
   useEffect(() => {
@@ -502,7 +520,8 @@ function MainApp() {
             setSessionExpired(false)
             setGa4Sites(fetchedSites)
           if (fetchedSites.length > 0 && !isOnboarding) {
-            setSelectedGa4Property((current) => getPreferredGa4PropertyId(fetchedSites, current))
+            setSelectedGa4Property((current) => getPreferredGa4PropertyId(fetchedSites, current, selectedSite))
+            setSelectedGa4PropertySite(selectedSite)
           }
         })
         .catch(err => {
@@ -531,10 +550,15 @@ function MainApp() {
     return () => {
       cancelled = true;
     };
-  }, [backgroundEffectsReady, dataSource, isOnboarding, user, userProfile])
+  }, [backgroundEffectsReady, dataSource, isOnboarding, selectedSite, selectedGa4PropertySite, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
     setSelectedSite(siteUrl);
+  };
+
+  const handleOnboardingGa4PropertySelect = (propertyId: string) => {
+    setSelectedGa4Property(propertyId);
+    setSelectedGa4PropertySite(selectedSite || "__global__");
   };
 
   const handleSaveSettings = async () => {
@@ -553,6 +577,7 @@ function MainApp() {
 
   const handleGa4PropertySelect = async (propertyId: string) => {
     setSelectedGa4Property(propertyId);
+    setSelectedGa4PropertySite(selectedSite);
 
     if (isOnboarding) {
       return;
@@ -581,6 +606,7 @@ function MainApp() {
     try {
       await updateDefaultGa4Property(pendingGa4Property, selectedProperty?.displayName || null, selectedSite || null);
       setSelectedGa4Property(pendingGa4Property);
+      setSelectedGa4PropertySite(selectedSite);
       toast.success("GA4 property saved", {
         id: saveToast,
         description: "This workspace will now use the selected GA4 property by default.",
@@ -716,7 +742,7 @@ function MainApp() {
     ? accessibleGa4Sites.filter((site) => isGa4PropertyForWorkspaceSite(site, selectedSite))
     : accessibleGa4Sites;
   const mappedGa4PropertyForWorkspace = getGa4PropertyForWorkspaceSite(accessibleGa4Sites, selectedSite);
-  const selectedGa4PropertyForDashboard = accessibleGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
+  const selectedGa4PropertyForDashboard = selectedGa4PropertySite === selectedSite && accessibleGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
     ? selectedGa4Property
     : "";
   const activeGa4PropertyId = selectedGa4PropertyForDashboard || mappedGa4PropertyForWorkspace || null;
@@ -753,7 +779,8 @@ function MainApp() {
         }
       } else {
         if (nextSource === 'ga4') {
-          setSelectedGa4Property((current) => getPreferredGa4PropertyId(availableSites, current));
+          setSelectedGa4Property((current) => getPreferredGa4PropertyId(availableSites, current, selectedSite));
+          setSelectedGa4PropertySite(selectedSite);
         }
       }
     } else {
@@ -775,7 +802,8 @@ function MainApp() {
       }
 
       if (!currentSites.some((site) => site.siteUrl === currentSelection)) {
-        setSelectedGa4Property((current) => getPreferredGa4PropertyId(currentSites, current));
+        setSelectedGa4Property((current) => getPreferredGa4PropertyId(currentSites, current, selectedSite));
+        setSelectedGa4PropertySite(selectedSite);
       }
       return;
     }
@@ -799,6 +827,35 @@ function MainApp() {
       setSelectedSite((current) => preferred || current);
     }
   }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, isOnboarding, selectedSite, userProfile]);
+
+  useEffect(() => {
+    if (!user?.uid || initializedSelectionsForUser !== user.uid || isOnboarding || !selectedSite) {
+      return;
+    }
+
+    const cachedProperty = localStorage.getItem(selectedGa4PropertyCacheKey(user.uid, selectedSite)) || "";
+    if (cachedProperty && accessibleGa4Sites.some((site) => site.siteUrl === cachedProperty)) {
+      if (selectedGa4Property !== cachedProperty || selectedGa4PropertySite !== selectedSite) {
+        setSelectedGa4Property(cachedProperty);
+        setSelectedGa4PropertySite(selectedSite);
+      }
+      return;
+    }
+
+    if (selectedGa4PropertySite !== selectedSite) {
+      const fallbackProperty = getPreferredGa4PropertyId(accessibleGa4Sites, "", selectedSite);
+      setSelectedGa4Property(fallbackProperty);
+      setSelectedGa4PropertySite(selectedSite);
+    }
+  }, [
+    accessibleGa4Sites,
+    initializedSelectionsForUser,
+    isOnboarding,
+    selectedGa4Property,
+    selectedGa4PropertySite,
+    selectedSite,
+    user?.uid,
+  ]);
 
   useEffect(() => {
     if (!userProfile || isOnboarding) {
@@ -844,7 +901,7 @@ function MainApp() {
           isConnectingGoogle={isConnectingGoogleData}
           onComplete={handleFinishOnboarding}
           onConnectGoogle={handleConnectGoogleData}
-          onSelectGa4Property={setSelectedGa4Property}
+          onSelectGa4Property={handleOnboardingGa4PropertySelect}
           onSelectSite={setSelectedSite}
           selectedGa4Property={selectedGa4Property}
           selectedSite={selectedSite}
