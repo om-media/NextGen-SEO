@@ -400,8 +400,11 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     metrics: string[],
     dimensionFilter?: any,
   ) => {
+    const latestAvailableDate = latestStableReportingDate();
+    const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
+    const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
     const whereParts = ['ownerId = ?', 'propertyId = ?', 'siteUrl = ?', 'date >= ?', 'date <= ?'];
-    const params: unknown[] = [ownerId, propertyId, siteUrl, startDate, endDate];
+    const params: unknown[] = [ownerId, propertyId, siteUrl, startDate, effectiveEndDate];
     const exactPageFilterValue = getExactPageFilterValue(dimensionFilter);
     if (exactPageFilterValue) {
       whereParts.push('pageKey = ?');
@@ -438,37 +441,65 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       ${groupBy}
       ${orderBy}
     `, params);
-    const expectedDates = eachIsoDate(startDate, endDate);
     const [coverageRows, jobRows] = await Promise.all([
       db.all<{ date: string; rowCount: number }>(`
         SELECT date, COUNT(*) AS rowCount
         FROM ga4_page_metrics
         WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
         GROUP BY date
-      `, [ownerId, propertyId, siteUrl, startDate, endDate]),
+      `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
       db.all<{ jobType: string; propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null }>(`
         SELECT jobType, propertyId, status, targetStartDate, targetDate
         FROM warehouse_jobs
         WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
           AND jobType IN ('daily-sync', 'core-range-sync')
           AND status IN ('queued', 'retrying', 'running', 'completed')
-      `, [ownerId, siteUrl, startDate, endDate]),
+      `, [ownerId, siteUrl, startDate, effectiveEndDate]),
     ]);
     const completedDates = new Set<string>();
     const activeDates = new Set<string>();
     for (const job of jobRows) {
       if (job.propertyId !== propertyId) continue;
       if (job.status === 'completed') {
-        addJobDatesToSet(completedDates, [job], startDate, endDate);
+        addJobDatesToSet(completedDates, [job], startDate, effectiveEndDate);
       } else {
-        addJobDatesToSet(activeDates, [job], startDate, endDate);
+        addJobDatesToSet(activeDates, [job], startDate, effectiveEndDate);
       }
+    }
+    await promoteWarehouseJobsForRange(db, {
+      endDate: effectiveEndDate,
+      jobTypes: ['core-range-sync'],
+      ownerId,
+      priority: USER_REQUESTED_JOB_PRIORITY,
+      propertyId,
+      siteUrl,
+      startDate,
+    });
+    const coveredDates = new Set(coverageRows.map((row) => row.date));
+    for (const date of completedDates) coveredDates.add(date);
+    const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
+    const datesToQueue = missingDates.filter((date) => !activeDates.has(date));
+    const queuedJobs = [];
+    for (const chunk of chunkAscendingDates(datesToQueue, CORE_RANGE_JOB_DAYS)) {
+      const job = await queueWarehouseCoreRangeJob(db, {
+        endDate: chunk.endDate,
+        ownerId,
+        priority: USER_REQUESTED_JOB_PRIORITY,
+        propertyId,
+        siteUrl,
+        startDate: chunk.startDate,
+      });
+      queuedJobs.push(job);
+      addJobDatesToSet(activeDates, [job], startDate, effectiveEndDate);
     }
     const coverage = {
       ...coverageFromRows(expectedDates, coverageRows, completedDates),
       activeDateCount: activeDates.size,
-      activeJobCount: jobRows.filter((row) => row.propertyId === propertyId && row.status !== 'completed').length,
-      queuedDateCount: activeDates.size,
+      activeJobCount: jobRows.filter((row) => row.propertyId === propertyId && row.status !== 'completed').length + queuedJobs.length,
+      latestAvailableDate,
+      queued: queuedJobs.length,
+      queuedDateCount: datesToQueue.length,
+      skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
     };
 
     return {

@@ -198,12 +198,12 @@ export function SettingsDialog({
                       {googleConnected ? (
                         <>
                           <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                          <span className="text-emerald-700">Connected for live Google Search Console and GA4 data</span>
+                          <span className="text-emerald-700">Connected for Search Console and GA4 source updates</span>
                         </>
                       ) : (
                         <>
                           <span className="h-2 w-2 rounded-full bg-amber-500" />
-                          <span className="text-amber-700">Needs attention before live Google data can refresh</span>
+                          <span className="text-amber-700">Needs attention before Google source data can refresh</span>
                         </>
                       )}
                     </div>

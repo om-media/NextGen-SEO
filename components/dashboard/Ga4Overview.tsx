@@ -552,7 +552,7 @@ export function Ga4Overview({
           {hasActiveWarehouseWork && (
             <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium text-foreground">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              Importing Analytics history
+              Preparing Analytics history
             </div>
           )}
         </CardContent>

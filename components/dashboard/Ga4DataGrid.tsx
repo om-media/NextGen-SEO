@@ -429,7 +429,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
           </div>
           <h3 className="text-lg font-semibold text-foreground">GA4 {getDimensionHeader()} report is being prepared</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            The app is storing this Analytics breakdown in the background. Page and date reports are available now; this report will appear once its historical import is ready.
+            The app is storing this Analytics breakdown in the background. Page and date reports are available now; this report will appear once its history is ready.
           </p>
         </CardContent>
       </Card>
@@ -457,13 +457,13 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
               <Database className="h-4 w-4 text-primary" />
             )}
             <span className="font-medium text-foreground">
-              {hasActiveWarehouseWork ? "Importing Analytics history" : "Analytics breakdown import available"}
+              {hasActiveWarehouseWork ? "Preparing Analytics history" : "Analytics breakdown preparation available"}
             </span>
             <span>
               {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days ready
             </span>
           </div>
-          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while the import catches up." : "The app will queue the missing stored days automatically."}</span>
+          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while stored data catches up." : "The app will queue the missing stored days automatically."}</span>
         </div>
       )}
 
