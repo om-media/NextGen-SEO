@@ -314,13 +314,13 @@ export function DataImportStatusPanel({
     },
     importing: {
       icon: <RefreshCw className="h-4 w-4 animate-spin text-primary" />,
-      label: "Import running",
-      text: `${activeJobCount} import ${activeJobCount === 1 ? "job is" : "jobs are"} active. Existing report rows stay visible.`,
+      label: "Preparing in background",
+      text: "Stored reports stay available while the app fills in missing source data.",
     },
     missing: {
       icon: <Clock3 className="h-4 w-4 text-amber-600" />,
-      label: "Import queued automatically",
-      text: `${formatWholeNumber(stats.missingDateCount)} reportable day${stats.missingDateCount === 1 ? "" : "s"} need stored source data. The app will queue them without a manual export or upload.`,
+      label: "Preparing automatically",
+      text: "The app will fill missing source data in the background. No export, upload, or manual import is needed.",
     },
     ready: {
       icon: <CheckCircle2 className="h-4 w-4 text-primary" />,
@@ -377,7 +377,7 @@ export function DataImportStatusPanel({
               <Database className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-foreground">Data import status</h3>
+              <h3 className="text-sm font-semibold text-foreground">Source data readiness</h3>
               <p className="text-xs text-muted-foreground">
                 {range.startDate} to {range.endDate}
                 {latestJobDistance ? ` · last import update ${latestJobDistance}` : ""}
@@ -475,10 +475,10 @@ export function DataImportStatusPanel({
             >
               <RefreshCw className={`h-3.5 w-3.5 ${actionState === "importing" ? "animate-spin" : ""}`} />
               {actionState === "importing"
-                ? "Starting import"
+                ? "Starting"
                 : activeJobCount > 0
-                  ? "Import running"
-                  : "Import missing days"}
+                  ? "Preparing"
+                  : "Prepare now"}
             </Button>
             )}
           </div>

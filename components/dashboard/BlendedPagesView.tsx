@@ -1116,12 +1116,12 @@ export function BlendedPagesView({
               <RefreshCw className={`mr-2 h-4 w-4 ${coverageSyncing || sourceActiveJobCount > 0 ? "animate-spin" : ""}`} />
             )}
             {coverageSyncing
-              ? "Starting import"
+              ? "Starting"
               : sourceActiveJobCount > 0
-                ? "Import running"
+                ? "Preparing"
                 : sourceRangeReady
                   ? "Range ready"
-                  : "Import missing days"}
+                  : "Prepare now"}
           </Button>
         </div>
 

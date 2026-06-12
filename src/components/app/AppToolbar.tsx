@@ -99,19 +99,12 @@ export function AppToolbar({
     }
   };
   const toolbarHasActiveImport = Number(toolbarCoverage?.activeJobCount || 0) > 0;
-  const toolbarNeedsDataAttention = Boolean(
-    toolbarCoverage &&
-    (toolbarCoverage.missingDateCount > 0 || toolbarCoverage.errorJobCount > 0),
-  );
-  const showImportControl = syncActionState === "queueing" || toolbarHasActiveImport || toolbarNeedsDataAttention;
+  const toolbarNeedsDataAttention = Boolean(toolbarCoverage && toolbarCoverage.errorJobCount > 0);
+  const showImportControl = syncActionState === "queueing" || toolbarNeedsDataAttention;
   const importButtonDisabled = syncActionState === "queueing" || toolbarHasActiveImport;
   const importButtonLabel = syncActionState === "queueing"
-    ? "Queueing update"
-    : toolbarHasActiveImport
-      ? "Syncing in background"
-      : toolbarCoverage?.errorJobCount
-        ? "Retry data update"
-        : "Update data";
+    ? "Starting retry"
+    : "Retry data";
 
   return (
     <div className="premium-panel relative overflow-hidden rounded-2xl border border-border px-5 py-4 sm:px-6">
@@ -152,11 +145,7 @@ export function AppToolbar({
                   className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background disabled:cursor-default disabled:opacity-75"
                   disabled={importButtonDisabled}
                   onClick={handleRefreshResults}
-                  title={dataSource === "blended"
-                    ? "Refresh missing Search Console and Analytics days for the selected range."
-                    : dataSource === "ga4"
-                      ? "Refresh missing Analytics pages and breakdowns for the selected range."
-                      : "Refresh missing Search Console days for the selected range."}
+                  title="Retry failed background data jobs for the selected range."
                   type="button"
                 >
                   <RefreshCw className={`h-4 w-4 ${syncActionState === "queueing" || toolbarHasActiveImport ? "animate-spin" : ""}`} />
