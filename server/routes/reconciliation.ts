@@ -245,9 +245,9 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
             CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
             SUM(eventCount) AS eventCount
           FROM ga4_page_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY pageKey
-        `, [ownerId, propertyId, startDate, endDate])
+        `, [ownerId, propertyId, siteUrl, startDate, endDate])
         : [];
 
       const crawlRows = crawlJobId

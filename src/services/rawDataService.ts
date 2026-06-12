@@ -95,11 +95,13 @@ export async function fetchRawGa4PageRows(params: {
   offset?: number;
   propertyId: string;
   search?: string;
+  siteUrl: string;
   startDate: string;
 }) {
   const searchParams = new URLSearchParams({
     kind: params.kind ?? "page",
     propertyId: params.propertyId,
+    siteUrl: params.siteUrl,
   });
   appendCommonParams(searchParams, params);
 
@@ -119,11 +121,13 @@ export async function fetchRawGa4ReportRows(params: {
   offset?: number;
   propertyId: string;
   search?: string;
+  siteUrl: string;
   startDate: string;
 }) {
   const searchParams = new URLSearchParams({
     kind: params.kind,
     propertyId: params.propertyId,
+    siteUrl: params.siteUrl,
   });
   appendCommonParams(searchParams, params);
 

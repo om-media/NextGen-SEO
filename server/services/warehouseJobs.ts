@@ -353,7 +353,7 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
   if (!job.propertyId) return emptySyncResult({ source: 'ga4-pages' });
   const insertPageSql = `INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
+         ON CONFLICT(ownerId, propertyId, siteUrl, date, pageKey) DO UPDATE SET
            siteUrl=excluded.siteUrl,
            pagePath=excluded.pagePath,
            bounceRate=CASE
@@ -397,7 +397,7 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
 
   const writeStartedAt = Date.now();
   await db.transaction(async () => {
-    await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, startDate, endDate]);
+    await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, job.siteUrl, startDate, endDate]);
     for (const row of rows) {
       const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
       const pagePath = row.dimensionValues?.[1]?.value || '/';
@@ -431,7 +431,7 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
   if (!job.propertyId) return emptySyncResult({ source: 'ga4-dimensions' });
   const insertDimensionSql = `INSERT INTO ga4_dimension_metrics (ownerId, propertyId, siteUrl, date, dimension, dimensionValue, sessions, totalUsers, pageViews, bounceRate, eventCount)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(ownerId, propertyId, date, dimension, dimensionValue) DO UPDATE SET
+           ON CONFLICT(ownerId, propertyId, siteUrl, date, dimension, dimensionValue) DO UPDATE SET
              siteUrl=excluded.siteUrl,
              sessions=excluded.sessions,
              totalUsers=excluded.totalUsers,
@@ -479,8 +479,8 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
     const writeStartedAt = Date.now();
     await db.transaction(async () => {
       await db.run(
-        'DELETE FROM ga4_dimension_metrics WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ?',
-        [job.ownerId, job.propertyId, config.dimension, startDate, endDate],
+        'DELETE FROM ga4_dimension_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ?',
+        [job.ownerId, job.propertyId, job.siteUrl, config.dimension, startDate, endDate],
       );
 
       for (const row of rows) {
@@ -536,7 +536,7 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
   if (!job.propertyId) return emptySyncResult({ source: 'ga4-llm' });
   const insertLlmSql = `INSERT INTO ga4_llm_referral_metrics (ownerId, propertyId, siteUrl, date, source, sourceClass, pagePath, pageKey, sessions, engagedSessions, keyEvents, averageSessionDuration)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(ownerId, propertyId, date, source, pageKey) DO UPDATE SET
+         ON CONFLICT(ownerId, propertyId, siteUrl, date, source, pageKey) DO UPDATE SET
            siteUrl=excluded.siteUrl,
            sourceClass=excluded.sourceClass,
            pagePath=excluded.pagePath,
@@ -585,7 +585,7 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
 
   const writeStartedAt = Date.now();
   await db.transaction(async () => {
-    await db.run('DELETE FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, startDate, endDate]);
+    await db.run('DELETE FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, job.siteUrl, startDate, endDate]);
     for (const row of rows) {
       const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
       const pagePath = row.dimensionValues?.[1]?.value || '/';
@@ -667,8 +667,8 @@ async function hasRequiredCoreWarehouseRows(
       ? db.get<{ count: number }>(`
         SELECT COUNT(DISTINCT date) AS count
         FROM ga4_page_metrics
-        WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
-      `, [job.ownerId, propertyId, startDate, endDate])
+        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+      `, [job.ownerId, propertyId, job.siteUrl, startDate, endDate])
       : Promise.resolve({ count: expectedDays }),
   ]);
 
@@ -984,9 +984,9 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
       ? db.all<{ date: string }>(`
         SELECT date
         FROM ga4_page_metrics
-        WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
         GROUP BY date
-      `, [input.ownerId, propertyId, startDate, endDate])
+      `, [input.ownerId, propertyId, input.siteUrl, startDate, endDate])
       : Promise.resolve([]),
     db.all<{ propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null }>(`
       SELECT propertyId, status, targetStartDate, targetDate

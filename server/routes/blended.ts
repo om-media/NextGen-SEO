@@ -156,9 +156,9 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
             CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
             SUM(eventCount) AS eventCount
           FROM ga4_page_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY pageKey
-        `, [ownerId, ga4PropertyId, startDate, endDate]);
+        `, [ownerId, ga4PropertyId, siteUrl, startDate, endDate]);
 
         ga4Freshness = await db.get<any>(`
           SELECT
@@ -166,8 +166,8 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
             MAX(date) AS latestDate,
             COUNT(*) AS rowCount
           FROM ga4_page_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
-        `, [ownerId, ga4PropertyId, startDate, endDate]);
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+        `, [ownerId, ga4PropertyId, siteUrl, startDate, endDate]);
 
         for (const row of ga4Rows) {
           const pageKey = canonicalPageKey(readField(row, 'pageKey'));

@@ -226,7 +226,7 @@ const commonSchemaSql = `
     pageViews INTEGER,
     bounceRate REAL,
     eventCount INTEGER,
-    PRIMARY KEY (ownerId, propertyId, date, pageKey)
+    PRIMARY KEY (ownerId, propertyId, siteUrl, date, pageKey)
   );
 
   CREATE TABLE IF NOT EXISTS ga4_dimension_metrics (
@@ -241,7 +241,7 @@ const commonSchemaSql = `
     pageViews INTEGER,
     bounceRate REAL,
     eventCount INTEGER,
-    PRIMARY KEY (ownerId, propertyId, date, dimension, dimensionValue)
+    PRIMARY KEY (ownerId, propertyId, siteUrl, date, dimension, dimensionValue)
   );
 
   CREATE TABLE IF NOT EXISTS ga4_llm_referral_metrics (
@@ -257,7 +257,7 @@ const commonSchemaSql = `
     engagedSessions INTEGER,
     keyEvents REAL,
     averageSessionDuration REAL,
-    PRIMARY KEY (ownerId, propertyId, date, source, pageKey)
+    PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey)
   );
 
   CREATE TABLE IF NOT EXISTS warehouse_sync_status (
@@ -831,6 +831,88 @@ function runOptionalSqliteAlter(db: Database.Database, statement: string) {
   }
 }
 
+function sqlitePrimaryKeyColumns(db: Database.Database, tableName: string) {
+  return db.prepare(`PRAGMA table_info(${tableName})`).all()
+    .filter((row: any) => Number(row.pk || 0) > 0)
+    .sort((a: any, b: any) => Number(a.pk) - Number(b.pk))
+    .map((row: any) => String(row.name));
+}
+
+function migrateSqliteGa4SiteScopedKeys(db: Database.Database) {
+  if (!sqlitePrimaryKeyColumns(db, 'ga4_page_metrics').includes('siteUrl')) {
+    db.exec(`
+      CREATE TABLE ga4_page_metrics_new (
+        ownerId TEXT,
+        propertyId TEXT,
+        siteUrl TEXT,
+        date TEXT,
+        pagePath TEXT,
+        pageKey TEXT,
+        sessions INTEGER,
+        totalUsers INTEGER,
+        pageViews INTEGER,
+        bounceRate REAL,
+        eventCount INTEGER,
+        PRIMARY KEY (ownerId, propertyId, siteUrl, date, pageKey)
+      );
+      INSERT OR REPLACE INTO ga4_page_metrics_new (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
+      SELECT ownerId, propertyId, COALESCE(siteUrl, ''), date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount
+      FROM ga4_page_metrics;
+      DROP TABLE ga4_page_metrics;
+      ALTER TABLE ga4_page_metrics_new RENAME TO ga4_page_metrics;
+    `);
+  }
+
+  if (!sqlitePrimaryKeyColumns(db, 'ga4_dimension_metrics').includes('siteUrl')) {
+    db.exec(`
+      CREATE TABLE ga4_dimension_metrics_new (
+        ownerId TEXT,
+        propertyId TEXT,
+        siteUrl TEXT,
+        date TEXT,
+        dimension TEXT,
+        dimensionValue TEXT,
+        sessions INTEGER,
+        totalUsers INTEGER,
+        pageViews INTEGER,
+        bounceRate REAL,
+        eventCount INTEGER,
+        PRIMARY KEY (ownerId, propertyId, siteUrl, date, dimension, dimensionValue)
+      );
+      INSERT OR REPLACE INTO ga4_dimension_metrics_new (ownerId, propertyId, siteUrl, date, dimension, dimensionValue, sessions, totalUsers, pageViews, bounceRate, eventCount)
+      SELECT ownerId, propertyId, COALESCE(siteUrl, ''), date, dimension, dimensionValue, sessions, totalUsers, pageViews, bounceRate, eventCount
+      FROM ga4_dimension_metrics;
+      DROP TABLE ga4_dimension_metrics;
+      ALTER TABLE ga4_dimension_metrics_new RENAME TO ga4_dimension_metrics;
+    `);
+  }
+
+  if (!sqlitePrimaryKeyColumns(db, 'ga4_llm_referral_metrics').includes('siteUrl')) {
+    db.exec(`
+      CREATE TABLE ga4_llm_referral_metrics_new (
+        ownerId TEXT,
+        propertyId TEXT,
+        siteUrl TEXT,
+        date TEXT,
+        source TEXT,
+        sourceClass TEXT,
+        pagePath TEXT,
+        pageKey TEXT,
+        sessions INTEGER,
+        engagedSessions INTEGER,
+        keyEvents REAL,
+        averageSessionDuration REAL,
+        PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey)
+      );
+      INSERT OR REPLACE INTO ga4_llm_referral_metrics_new (ownerId, propertyId, siteUrl, date, source, sourceClass, pagePath, pageKey, sessions, engagedSessions, keyEvents, averageSessionDuration)
+      SELECT ownerId, propertyId, COALESCE(siteUrl, ''), date, source, sourceClass, pagePath, pageKey, sessions, engagedSessions, keyEvents, averageSessionDuration
+      FROM ga4_llm_referral_metrics;
+      DROP TABLE ga4_llm_referral_metrics;
+      ALTER TABLE ga4_llm_referral_metrics_new RENAME TO ga4_llm_referral_metrics;
+    `);
+  }
+}
+
 function applySqliteMigrations(db: Database.Database) {
   db.exec(sqliteSchemaSql);
 
@@ -878,6 +960,7 @@ function applySqliteMigrations(db: Database.Database) {
     runOptionalSqliteAlter(db, statement);
   }
 
+  migrateSqliteGa4SiteScopedKeys(db);
   db.exec(indexSql);
 }
 
@@ -934,6 +1017,34 @@ async function applyPostgresMigrations(db: AppDatabase) {
   await db.exec('ALTER TABLE crawl_pages ADD PRIMARY KEY (ownerId, siteUrl, jobId, normalizedUrl)');
   await db.exec('ALTER TABLE crawl_links DROP CONSTRAINT IF EXISTS crawl_links_pkey');
   await db.exec('ALTER TABLE crawl_links ADD PRIMARY KEY (ownerId, siteUrl, jobId, fromUrl, toUrl)');
+  await db.exec(`
+    UPDATE ga4_page_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
+    WITH ranked AS (
+      SELECT ctid, ROW_NUMBER() OVER (PARTITION BY ownerId, propertyId, siteUrl, date, pageKey ORDER BY ctid) AS row_number
+      FROM ga4_page_metrics
+    )
+    DELETE FROM ga4_page_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1);
+    ALTER TABLE ga4_page_metrics DROP CONSTRAINT IF EXISTS ga4_page_metrics_pkey;
+    ALTER TABLE ga4_page_metrics ADD PRIMARY KEY (ownerId, propertyId, siteUrl, date, pageKey);
+
+    UPDATE ga4_dimension_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
+    WITH ranked AS (
+      SELECT ctid, ROW_NUMBER() OVER (PARTITION BY ownerId, propertyId, siteUrl, date, dimension, dimensionValue ORDER BY ctid) AS row_number
+      FROM ga4_dimension_metrics
+    )
+    DELETE FROM ga4_dimension_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1);
+    ALTER TABLE ga4_dimension_metrics DROP CONSTRAINT IF EXISTS ga4_dimension_metrics_pkey;
+    ALTER TABLE ga4_dimension_metrics ADD PRIMARY KEY (ownerId, propertyId, siteUrl, date, dimension, dimensionValue);
+
+    UPDATE ga4_llm_referral_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
+    WITH ranked AS (
+      SELECT ctid, ROW_NUMBER() OVER (PARTITION BY ownerId, propertyId, siteUrl, date, source, pageKey ORDER BY ctid) AS row_number
+      FROM ga4_llm_referral_metrics
+    )
+    DELETE FROM ga4_llm_referral_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1);
+    ALTER TABLE ga4_llm_referral_metrics DROP CONSTRAINT IF EXISTS ga4_llm_referral_metrics_pkey;
+    ALTER TABLE ga4_llm_referral_metrics ADD PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey);
+  `);
 
   await db.exec(indexSql);
 }

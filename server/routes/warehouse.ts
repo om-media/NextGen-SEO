@@ -498,9 +498,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       db.all<{ date: string }>(`
         SELECT date
         FROM ga4_dimension_metrics
-        WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ?
+        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ?
         GROUP BY date
-      `, [ownerId, propertyId, warehouseDimension, startDate, effectiveEndDate]),
+      `, [ownerId, propertyId, siteUrl, warehouseDimension, startDate, effectiveEndDate]),
       db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
         SELECT jobType, status, targetStartDate, targetDate
         FROM warehouse_jobs
@@ -560,6 +560,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   const readGa4DimensionWarehouseReport = async (
     ownerId: string,
     propertyId: string,
+    siteUrl: string,
     warehouseDimension: string,
     startDate: string,
     endDate: string,
@@ -567,8 +568,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     metrics: string[],
     dimensionFilter?: any,
   ) => {
-    const whereParts = ['ownerId = ?', 'propertyId = ?', 'dimension = ?', 'date >= ?', 'date <= ?'];
-    const params: unknown[] = [ownerId, propertyId, warehouseDimension, startDate, endDate];
+    const whereParts = ['ownerId = ?', 'propertyId = ?', 'siteUrl = ?', 'dimension = ?', 'date >= ?', 'date <= ?'];
+    const params: unknown[] = [ownerId, propertyId, siteUrl, warehouseDimension, startDate, endDate];
     const exactFilter = getExactDimensionFilter(dimensionFilter);
     if (exactFilter?.fieldName === warehouseDimension) {
       whereParts.push('dimensionValue = ?');
@@ -680,6 +681,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           readGa4DimensionWarehouseReport(
             ownerId,
             propertyId,
+            resolvedSiteUrl,
             warehouseDimension,
             startDate,
             endDate,
@@ -756,9 +758,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         db.all<{ date: string }>(`
           SELECT date
           FROM ga4_llm_referral_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
-        `, [ownerId, effectivePropertyId, startDate, effectiveEndDate]),
+        `, [ownerId, effectivePropertyId, siteUrl, startDate, effectiveEndDate]),
         db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
           SELECT jobType, status, targetStartDate, targetDate
           FROM warehouse_jobs
@@ -842,10 +844,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             date,
             SUM(sessions) AS sessions
           FROM ga4_llm_referral_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
           ORDER BY date ASC
-        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
         db.all<any>(`
           SELECT
             sourceClass,
@@ -854,10 +856,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             SUM(keyEvents) AS keyEvents,
             CASE WHEN SUM(sessions) > 0 THEN SUM(averageSessionDuration * sessions)*1.0/SUM(sessions) ELSE 0 END AS averageSessionDuration
           FROM ga4_llm_referral_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY sourceClass
           ORDER BY sessions DESC
-        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
         db.all<any>(`
           SELECT
             MIN(pagePath) AS pagePath,
@@ -868,17 +870,17 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             SUM(keyEvents) AS keyEvents,
             CASE WHEN SUM(sessions) > 0 THEN SUM(averageSessionDuration * sessions)*1.0/SUM(sessions) ELSE 0 END AS averageSessionDuration
           FROM ga4_llm_referral_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY pageKey, sourceClass
           ORDER BY sessions DESC
           LIMIT 500
-        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
         db.all<{ date: string }>(`
           SELECT date
           FROM ga4_llm_referral_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
-        `, [ownerId, propertyId, startDate, effectiveEndDate]),
+        `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
         db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
           SELECT jobType, status, targetStartDate, targetDate
           FROM warehouse_jobs
@@ -1176,7 +1178,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
       const insertMany = db.transaction(async (metrics: any[]) => {
         for (const date of datesToReplace) {
-          await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND date = ?', [ownerId, propertyId, date]);
+          await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date = ?', [ownerId, propertyId, siteUrl, date]);
         }
         for (const row of metrics) {
           const date = row.date || row.keys?.[0];
@@ -1186,7 +1188,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           await db.run(`
             INSERT INTO ga4_page_metrics (ownerId, propertyId, siteUrl, date, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(ownerId, propertyId, date, pageKey) DO UPDATE SET
+            ON CONFLICT(ownerId, propertyId, siteUrl, date, pageKey) DO UPDATE SET
               siteUrl=excluded.siteUrl,
               pagePath=excluded.pagePath,
               sessions=excluded.sessions,
@@ -1337,19 +1339,19 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ? db.all<{ date: string; rowCount: number }>(`
             SELECT date, COUNT(*) AS rowCount
             FROM ga4_page_metrics
-            WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+            WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
-          `, [ownerId, effectivePropertyId, effectiveStartDate, effectiveEndDate])
+          `, [ownerId, effectivePropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         effectivePropertyId
           ? db.all<{ date: string; rowCount: number }>(`
             SELECT date, COUNT(DISTINCT dimension) AS rowCount
             FROM ga4_dimension_metrics
-            WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+            WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
-          `, [ownerId, effectivePropertyId, effectiveStartDate, effectiveEndDate])
+          `, [ownerId, effectivePropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         db.get<any>(`
           SELECT *
@@ -1788,17 +1790,17 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ? db.all<{ date: string }>(`
             SELECT date
             FROM ga4_page_metrics
-            WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+            WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
-        `, [ownerId, requestedPropertyId, effectiveStartDate, effectiveEndDate])
+        `, [ownerId, requestedPropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         requestedPropertyId
           ? db.all<{ date: string; rowCount: number }>(`
             SELECT date, COUNT(DISTINCT dimension) AS rowCount
             FROM ga4_dimension_metrics
-            WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ?
+            WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
-        `, [ownerId, requestedPropertyId, effectiveStartDate, effectiveEndDate])
+        `, [ownerId, requestedPropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         db.all<{ jobType: string; targetDate: string; targetStartDate: string | null; propertyId: string | null; status: string; metricsJson: string | null }>(`
           SELECT jobType, targetDate, targetStartDate, propertyId, status, metricsJson
@@ -2592,6 +2594,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   app.get('/api/warehouse/raw/ga4-pages', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const propertyId = asTrimmedString(req.query.propertyId);
+    const siteUrl = asTrimmedString(req.query.siteUrl);
     const startDate = asTrimmedString(req.query.startDate);
     const endDate = asTrimmedString(req.query.endDate);
     const kind = asTrimmedString(req.query.kind) || 'page';
@@ -2599,19 +2602,22 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 100;
     const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
 
-    if (!propertyId || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!propertyId || !siteUrl || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
       return res.status(400).json({ error: 'Missing or invalid raw GA4 parameters' });
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
       }
 
       const where = search ? 'AND LOWER(pagePath) LIKE ?' : '';
       const params: unknown[] = search
-        ? [ownerId, propertyId, startDate, endDate, `%${search.toLowerCase()}%`]
-        : [ownerId, propertyId, startDate, endDate];
+        ? [ownerId, propertyId, siteUrl, startDate, endDate, `%${search.toLowerCase()}%`]
+        : [ownerId, propertyId, siteUrl, startDate, endDate];
 
       let total: any;
       let rows: any[];
@@ -2620,12 +2626,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         total = await db.get<any>(`
           SELECT COUNT(*) AS total
           FROM ga4_page_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? ${where}
         `, params);
         rows = await db.all<any>(`
           SELECT date, siteUrl, pagePath, pageKey, sessions, totalUsers, pageViews, bounceRate, eventCount
           FROM ga4_page_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? ${where}
           ORDER BY date DESC, sessions DESC, pageViews DESC
           LIMIT ? OFFSET ?
         `, [...params, limit, offset]);
@@ -2635,7 +2641,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           FROM (
             SELECT pageKey
             FROM ga4_page_metrics
-            WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
+            WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? ${where}
             GROUP BY pageKey
           ) pages
         `, params);
@@ -2650,7 +2656,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
             SUM(eventCount) AS eventCount
           FROM ga4_page_metrics
-          WHERE ownerId = ? AND propertyId = ? AND date >= ? AND date <= ? ${where}
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? ${where}
           GROUP BY pageKey
           ORDER BY sessions DESC, pageViews DESC
           LIMIT ? OFFSET ?
@@ -2669,6 +2675,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   app.get('/api/warehouse/raw/ga4-report', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const propertyId = asTrimmedString(req.query.propertyId);
+    const siteUrl = asTrimmedString(req.query.siteUrl);
     const startDate = asTrimmedString(req.query.startDate);
     const endDate = asTrimmedString(req.query.endDate);
     const kind = asTrimmedString(req.query.kind) || '';
@@ -2677,25 +2684,28 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
     const dimension = GA4_RAW_DIMENSIONS[kind];
 
-    if (!propertyId || !isIsoDateString(startDate) || !isIsoDateString(endDate) || !dimension) {
+    if (!propertyId || !siteUrl || !isIsoDateString(startDate) || !isIsoDateString(endDate) || !dimension) {
       return res.status(400).json({ error: 'Missing or invalid raw GA4 report parameters' });
     }
 
     try {
+      if (!(await canAccessSite(db, ownerId, siteUrl))) {
+        return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
       }
 
       const where = search ? 'AND LOWER(dimensionValue) LIKE ?' : '';
       const params: unknown[] = search
-        ? [ownerId, propertyId, dimension, startDate, endDate, `%${search.toLowerCase()}%`]
-        : [ownerId, propertyId, dimension, startDate, endDate];
+        ? [ownerId, propertyId, siteUrl, dimension, startDate, endDate, `%${search.toLowerCase()}%`]
+        : [ownerId, propertyId, siteUrl, dimension, startDate, endDate];
       const total = await db.get<any>(`
         SELECT COUNT(*) AS total
         FROM (
           SELECT dimensionValue
           FROM ga4_dimension_metrics
-          WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
           GROUP BY dimensionValue
         ) dimension_rows
       `, params);
@@ -2709,7 +2719,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
           SUM(eventCount) AS eventCount
         FROM ga4_dimension_metrics
-        WHERE ownerId = ? AND propertyId = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
+        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
         GROUP BY dimension, dimensionValue
         ORDER BY sessions DESC, pageViews DESC, eventCount DESC
         LIMIT ? OFFSET ?

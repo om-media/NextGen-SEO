@@ -151,7 +151,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
           return;
         }
         if (ga4PageKinds.has(ga4Kind)) {
-          const result = await fetchRawGa4PageRows({ endDate, kind: ga4Kind, limit: pageSize, offset, propertyId: ga4PropertyId, search, startDate });
+          const result = await fetchRawGa4PageRows({ endDate, kind: ga4Kind, limit: pageSize, offset, propertyId: ga4PropertyId, search, siteUrl, startDate });
           setGa4Rows(result.rows);
           setGa4ReportRows([]);
           setGscRows([]);
@@ -167,6 +167,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
           offset,
           propertyId: ga4PropertyId,
           search,
+          siteUrl,
           startDate,
         });
         setGa4ReportRows(result.rows);
@@ -241,6 +242,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
               offset: nextOffset,
               propertyId: ga4PropertyId,
               search,
+              siteUrl,
               startDate,
             }))
           : await fetchAllRows((nextOffset) => fetchRawGa4ReportRows({
@@ -250,6 +252,7 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
               offset: nextOffset,
               propertyId: ga4PropertyId,
               search,
+              siteUrl,
               startDate,
             }));
         exportCsv(`source-ga4-${ga4Kind}-${startDate}-${endDate}.csv`, rows as unknown as Record<string, unknown>[]);
