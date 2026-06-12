@@ -17,6 +17,7 @@ type WarehouseJob = {
   metricsJson: string | null;
   nextRunAt: string | null;
   ownerId: string;
+  priority: number | null;
   propertyId: string | null;
   rowsSynced: number | null;
   siteUrl: string;
@@ -75,6 +76,7 @@ const DAILY_SCHEDULER_MS = 60 * 60 * 1000;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 8, 1, 24);
+export const USER_REQUESTED_JOB_PRIORITY = 50;
 export const SEARCH_CONSOLE_HISTORY_DAYS = 486;
 const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, SEARCH_CONSOLE_HISTORY_DAYS, 1, SEARCH_CONSOLE_HISTORY_DAYS);
 export const CORE_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_CORE_RANGE_JOB_DAYS, 120, 7, 365);
@@ -805,7 +807,7 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
 
 async function claimJob(db: AppDatabase) {
   const now = nowIso();
-  const job = await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE status IN ('queued', 'retrying') AND (nextRunAt IS NULL OR nextRunAt <= ?) ORDER BY targetDate DESC, nextRunAt ASC, updatedAt ASC LIMIT 1", [now]);
+  const job = await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE status IN ('queued', 'retrying') AND (nextRunAt IS NULL OR nextRunAt <= ?) ORDER BY COALESCE(priority, 0) DESC, nextRunAt ASC, targetDate DESC, updatedAt ASC LIMIT 1", [now]);
   if (!job) return null;
   const result = await db.run("UPDATE warehouse_jobs SET status = 'running', attemptCount = COALESCE(attemptCount, 0) + 1, startedAt = COALESCE(startedAt, ?), updatedAt = ?, lockedAt = ?, lastError = NULL, metricsJson = NULL WHERE id = ? AND status IN ('queued', 'retrying')", [now, now, now, job.id]);
   if (result.changes === 0) return null;
@@ -831,9 +833,56 @@ async function failOrRetry(db: AppDatabase, job: WarehouseJob, error: unknown) {
   });
 }
 
-export async function queueWarehouseSyncJob(db: AppDatabase, input: { dedupeCompleted?: boolean; jobType?: string; ownerId: string; propertyId?: string | null; siteUrl: string; targetDate: string; targetStartDate?: string | null }) {
+const normalizedJobPriority = (priority: number | undefined) => {
+  if (!Number.isFinite(priority)) return 0;
+  return Math.max(0, Math.floor(Number(priority)));
+};
+
+export async function promoteWarehouseJobsForRange(db: AppDatabase, input: {
+  endDate: string;
+  jobTypes: string[];
+  ownerId: string;
+  priority: number;
+  propertyId?: string | null;
+  siteUrl: string;
+  startDate: string;
+}) {
+  const jobTypes = input.jobTypes.filter(Boolean);
+  if (jobTypes.length === 0) return 0;
+  const priority = normalizedJobPriority(input.priority);
+  const now = nowIso();
+  const propertyClause = input.propertyId === undefined ? '' : " AND COALESCE(propertyId, '') = ?";
+  const jobTypePlaceholders = jobTypes.map(() => '?').join(', ');
+  const params: unknown[] = [
+    priority,
+    priority,
+    now,
+    now,
+    now,
+    input.ownerId,
+    input.siteUrl,
+  ];
+  if (input.propertyId !== undefined) params.push(input.propertyId || '');
+  params.push(...jobTypes, input.startDate, input.endDate);
+  const result = await db.run(
+    `UPDATE warehouse_jobs
+     SET priority = CASE WHEN COALESCE(priority, 0) < ? THEN ? ELSE COALESCE(priority, 0) END,
+         nextRunAt = CASE WHEN nextRunAt IS NULL OR nextRunAt > ? THEN ? ELSE nextRunAt END,
+         updatedAt = ?
+     WHERE ownerId = ? AND siteUrl = ?${propertyClause}
+       AND jobType IN (${jobTypePlaceholders})
+       AND status IN ('queued', 'retrying')
+       AND targetDate >= ?
+       AND COALESCE(targetStartDate, targetDate) <= ?`,
+    params,
+  );
+  return result.changes || 0;
+}
+
+export async function queueWarehouseSyncJob(db: AppDatabase, input: { dedupeCompleted?: boolean; jobType?: string; ownerId: string; priority?: number; propertyId?: string | null; siteUrl: string; targetDate: string; targetStartDate?: string | null }) {
   const jobType = input.jobType || 'daily-sync';
   const propertyId = input.propertyId || null;
+  const priority = normalizedJobPriority(input.priority);
   const targetStartDate = input.targetStartDate || input.targetDate;
   const dedupeStatuses = input.dedupeCompleted === false
     ? ['queued', 'retrying', 'running']
@@ -842,10 +891,23 @@ export async function queueWarehouseSyncJob(db: AppDatabase, input: { dedupeComp
   const existing = propertyId
     ? await db.get<WarehouseJob>(`SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND COALESCE(propertyId, '') = ? AND jobType = ? AND status IN (${statusPlaceholders}) LIMIT 1`, [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, propertyId, jobType, ...dedupeStatuses])
     : await db.get<WarehouseJob>(`SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND jobType = ? AND status IN (${statusPlaceholders}) LIMIT 1`, [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, jobType, ...dedupeStatuses]);
-  if (existing) return existing;
+  if (existing) {
+    const existingPriority = Number(existing.priority || 0);
+    if (priority > existingPriority && ['queued', 'retrying', 'running'].includes(existing.status)) {
+      const updatedAt = nowIso();
+      await db.run(
+        `UPDATE warehouse_jobs
+         SET priority = ?, nextRunAt = CASE WHEN status IN ('queued', 'retrying') THEN ? ELSE nextRunAt END, updatedAt = ?
+         WHERE id = ?`,
+        [priority, updatedAt, updatedAt, existing.id],
+      );
+      return db.get<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE id = ?', [existing.id]);
+    }
+    return existing;
+  }
   const id = crypto.randomUUID();
   const queuedAt = nowIso();
-  await db.run('INSERT INTO warehouse_jobs (id, ownerId, siteUrl, propertyId, jobType, status, targetStartDate, targetDate, attemptCount, maxAttempts, lockedAt, nextRunAt, startedAt, updatedAt, completedAt, lastError, rowsSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, input.ownerId, input.siteUrl, propertyId, jobType, 'queued', targetStartDate, input.targetDate, 0, DEFAULT_MAX_ATTEMPTS, null, queuedAt, null, queuedAt, null, null, 0]);
+  await db.run('INSERT INTO warehouse_jobs (id, ownerId, siteUrl, propertyId, jobType, status, targetStartDate, targetDate, priority, attemptCount, maxAttempts, lockedAt, nextRunAt, startedAt, updatedAt, completedAt, lastError, rowsSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, input.ownerId, input.siteUrl, propertyId, jobType, 'queued', targetStartDate, input.targetDate, priority, 0, DEFAULT_MAX_ATTEMPTS, null, queuedAt, null, queuedAt, null, null, 0]);
   return db.get<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE id = ?', [id]);
 }
 
@@ -1185,11 +1247,12 @@ export async function queueWarehouseBootstrapJobs(db: AppDatabase, input: { days
   };
 }
 
-export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
+export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; priority?: number; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
     dedupeCompleted: input.dedupeCompleted,
     jobType: 'ga4-llm-range-sync',
     ownerId: input.ownerId,
+    priority: input.priority,
     propertyId: input.propertyId,
     siteUrl: input.siteUrl,
     targetDate: input.endDate,
@@ -1197,11 +1260,12 @@ export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { dedupe
   });
 }
 
-export async function queueWarehouseCoreRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; propertyId?: string | null; siteUrl: string; startDate: string; endDate: string }) {
+export async function queueWarehouseCoreRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; priority?: number; propertyId?: string | null; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
     dedupeCompleted: input.dedupeCompleted,
     jobType: 'core-range-sync',
     ownerId: input.ownerId,
+    priority: input.priority,
     propertyId: input.propertyId,
     siteUrl: input.siteUrl,
     targetDate: input.endDate,
@@ -1209,11 +1273,12 @@ export async function queueWarehouseCoreRangeJob(db: AppDatabase, input: { dedup
   });
 }
 
-export async function queueWarehouseGa4DimensionRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
+export async function queueWarehouseGa4DimensionRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; priority?: number; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
     dedupeCompleted: input.dedupeCompleted,
     jobType: 'ga4-dimension-range-sync',
     ownerId: input.ownerId,
+    priority: input.priority,
     propertyId: input.propertyId,
     siteUrl: input.siteUrl,
     targetDate: input.endDate,

@@ -17,7 +17,9 @@ import {
   GA4_DIMENSION_RANGE_JOB_DAYS,
   LLM_RANGE_JOB_DAYS,
   SEARCH_CONSOLE_HISTORY_DAYS,
+  USER_REQUESTED_JOB_PRIORITY,
   listWarehouseJobs,
+  promoteWarehouseJobsForRange,
   queueWarehouseBootstrapJobs,
   queueWarehouseCoreRangeJob,
   queueWarehouseGa4DimensionRangeJob,
@@ -510,6 +512,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
     const activeJobs = jobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
     const completedJobs = jobRows.filter((row) => row.status === 'completed');
+    await promoteWarehouseJobsForRange(db, {
+      endDate: effectiveEndDate,
+      jobTypes: ['ga4-dimension-range-sync'],
+      ownerId,
+      priority: USER_REQUESTED_JOB_PRIORITY,
+      propertyId,
+      siteUrl,
+      startDate,
+    });
     const coveredDates = new Set(rowDates.map((row) => row.date));
     const activeDates = new Set<string>();
     addJobDatesToSet(coveredDates, completedJobs, startDate, effectiveEndDate);
@@ -522,6 +533,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const job = await queueWarehouseGa4DimensionRangeJob(db, {
         endDate: chunk.endDate,
         ownerId,
+        priority: USER_REQUESTED_JOB_PRIORITY,
         propertyId,
         siteUrl,
         startDate: chunk.startDate,
@@ -758,6 +770,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const coveredDates = new Set(rowDates.map((row) => row.date));
       addJobDatesToSet(coveredDates, jobRows.filter((row) => row.status === 'completed'), startDate, effectiveEndDate);
       addJobDatesToSet(coveredDates, jobRows.filter((row) => row.jobType === 'ga4-llm-range-sync' && ['queued', 'retrying', 'running'].includes(row.status)), startDate, effectiveEndDate);
+      await promoteWarehouseJobsForRange(db, {
+        endDate: effectiveEndDate,
+        jobTypes: ['ga4-llm-range-sync'],
+        ownerId,
+        priority: USER_REQUESTED_JOB_PRIORITY,
+        propertyId: effectivePropertyId,
+        siteUrl,
+        startDate,
+      });
       const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
       const datesToQueue = missingDates.slice(Math.max(missingDates.length - queueLimit, 0));
       const chunksToQueue = chunkAscendingDates(datesToQueue, LLM_RANGE_JOB_DAYS);
@@ -767,6 +788,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         const job = await queueWarehouseLlmRangeJob(db, {
           endDate: chunk.endDate,
           ownerId,
+          priority: USER_REQUESTED_JOB_PRIORITY,
           propertyId: effectivePropertyId,
           siteUrl,
           startDate: chunk.startDate,
@@ -866,6 +888,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       ]);
       const activeJobs = llmJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
       const completedJobs = llmJobRows.filter((row) => row.status === 'completed');
+      await promoteWarehouseJobsForRange(db, {
+        endDate: effectiveEndDate,
+        jobTypes: ['ga4-llm-range-sync'],
+        ownerId,
+        priority: USER_REQUESTED_JOB_PRIORITY,
+        propertyId,
+        siteUrl,
+        startDate,
+      });
       const activeJobCount = activeJobs.length;
       const activeDates = new Set<string>();
       addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
@@ -878,6 +909,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         const job = await queueWarehouseLlmRangeJob(db, {
           endDate: chunk.endDate,
           ownerId,
+          priority: USER_REQUESTED_JOB_PRIORITY,
           propertyId,
           siteUrl,
           startDate: chunk.startDate,
@@ -1437,10 +1469,20 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               .sort()
             : [];
 
+          await promoteWarehouseJobsForRange(db, {
+            endDate: effectiveEndDate,
+            jobTypes: ['core-range-sync'],
+            ownerId,
+            priority: USER_REQUESTED_JOB_PRIORITY,
+            propertyId: effectivePropertyId || null,
+            siteUrl,
+            startDate: effectiveStartDate,
+          });
           for (const chunk of chunkAscendingDates(coreDatesToQueue, CORE_RANGE_JOB_DAYS)) {
             const job = await queueWarehouseCoreRangeJob(db, {
               endDate: chunk.endDate,
               ownerId,
+              priority: USER_REQUESTED_JOB_PRIORITY,
               propertyId: effectivePropertyId || null,
               siteUrl,
               startDate: chunk.startDate,
@@ -1448,10 +1490,20 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             if (job) autoQueuedCoreJobs += 1;
           }
           if (effectivePropertyId) {
+            await promoteWarehouseJobsForRange(db, {
+              endDate: effectiveEndDate,
+              jobTypes: ['ga4-dimension-range-sync'],
+              ownerId,
+              priority: USER_REQUESTED_JOB_PRIORITY,
+              propertyId: effectivePropertyId,
+              siteUrl,
+              startDate: effectiveStartDate,
+            });
             for (const chunk of chunkAscendingDates(ga4DimensionDatesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
               const job = await queueWarehouseGa4DimensionRangeJob(db, {
                 endDate: chunk.endDate,
                 ownerId,
+                priority: USER_REQUESTED_JOB_PRIORITY,
                 propertyId: effectivePropertyId,
                 siteUrl,
                 startDate: chunk.startDate,
@@ -1810,11 +1862,21 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         .slice(0, queueLimit);
 
       const jobs = [];
+      await promoteWarehouseJobsForRange(db, {
+        endDate: effectiveEndDate,
+        jobTypes: ['core-range-sync'],
+        ownerId,
+        priority: USER_REQUESTED_JOB_PRIORITY,
+        propertyId: requestedPropertyId || null,
+        siteUrl,
+        startDate,
+      });
       for (const chunk of chunkAscendingDates(coreDatesToQueue, CORE_RANGE_JOB_DAYS)) {
         const job = await queueWarehouseCoreRangeJob(db, {
           dedupeCompleted: false,
           endDate: chunk.endDate,
           ownerId,
+          priority: USER_REQUESTED_JOB_PRIORITY,
           propertyId: requestedPropertyId || null,
           siteUrl,
           startDate: chunk.startDate,
@@ -1822,11 +1884,21 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         jobs.push(job);
       }
       if (requestedPropertyId) {
+        await promoteWarehouseJobsForRange(db, {
+          endDate: effectiveEndDate,
+          jobTypes: ['ga4-dimension-range-sync'],
+          ownerId,
+          priority: USER_REQUESTED_JOB_PRIORITY,
+          propertyId: requestedPropertyId,
+          siteUrl,
+          startDate,
+        });
         for (const chunk of chunkAscendingDates(dimensionDatesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
           const job = await queueWarehouseGa4DimensionRangeJob(db, {
             dedupeCompleted: false,
             endDate: chunk.endDate,
             ownerId,
+            priority: USER_REQUESTED_JOB_PRIORITY,
             propertyId: requestedPropertyId,
             siteUrl,
             startDate: chunk.startDate,

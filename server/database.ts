@@ -323,6 +323,7 @@ const commonSchemaSql = `
     status TEXT,
     targetStartDate TEXT,
     targetDate TEXT,
+    priority INTEGER DEFAULT 0,
     attemptCount INTEGER DEFAULT 0,
     maxAttempts INTEGER DEFAULT 3,
     lockedAt TEXT,
@@ -477,6 +478,7 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_page_date ON ga4_llm_referral_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_bing_query_stats_owner_site_fetched ON bing_query_stats(ownerId, siteUrl, fetchedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_queue ON warehouse_jobs(status, nextRunAt, updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_queue_priority ON warehouse_jobs(status, priority, nextRunAt, targetDate);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site ON warehouse_jobs(ownerId, siteUrl, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_target_status ON warehouse_jobs(ownerId, siteUrl, targetDate, status);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_range_status ON warehouse_jobs(ownerId, siteUrl, targetStartDate, targetDate, status);
@@ -859,6 +861,7 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE warehouse_sync_status ADD COLUMN ownerId TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN targetStartDate TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN metricsJson TEXT',
+    'ALTER TABLE warehouse_jobs ADD COLUMN priority INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN ownerId TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN attemptCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN maxAttempts INTEGER DEFAULT 3',
@@ -908,6 +911,7 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE warehouse_sync_status ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS targetStartDate TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS metricsJson TEXT',
+    'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS attemptCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS maxAttempts INTEGER DEFAULT 3',
