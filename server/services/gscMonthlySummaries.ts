@@ -412,11 +412,31 @@ export async function ensureGscMonthlySummariesForRange(
   db: AppDatabase,
   input: { ownerId: string; siteUrl: string; startDate: string; endDate: string },
 ) {
+  const hasSummaries = await hasGscMonthlySummariesForRange(db, input);
+  if (hasSummaries) return false;
+
   const summaryWindow = getGscSummaryWindow(input.startDate, input.endDate);
   if (!summaryWindow) return false;
 
   const fullMonthStart = summaryWindow.fullMonthStart;
   const fullMonthEndDate = endOfMonth(summaryWindow.fullMonthEnd);
+  await refreshGscMonthlySummariesForRange(db, {
+    endDate: fullMonthEndDate,
+    ownerId: input.ownerId,
+    siteUrl: input.siteUrl,
+    startDate: fullMonthStart,
+  });
+  return true;
+}
+
+export async function hasGscMonthlySummariesForRange(
+  db: AppDatabase,
+  input: { ownerId: string; siteUrl: string; startDate: string; endDate: string },
+) {
+  const summaryWindow = getGscSummaryWindow(input.startDate, input.endDate);
+  if (!summaryWindow) return false;
+
+  const fullMonthStart = summaryWindow.fullMonthStart;
   const expectedMonths = monthStartsBetween(fullMonthStart, summaryWindow.fullMonthEnd);
   if (expectedMonths.length === 0) return false;
 
@@ -438,15 +458,7 @@ export async function ensureGscMonthlySummariesForRange(
     )
   ));
   const missingSummaryTable = coverageRows.some((row) => Number(row?.count || 0) < expectedMonths.length);
-  if (!missingSummaryTable) return false;
-
-  await refreshGscMonthlySummariesForRange(db, {
-    endDate: fullMonthEndDate,
-    ownerId: input.ownerId,
-    siteUrl: input.siteUrl,
-    startDate: fullMonthStart,
-  });
-  return true;
+  return !missingSummaryTable;
 }
 
 export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {

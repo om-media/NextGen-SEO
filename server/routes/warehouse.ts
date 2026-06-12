@@ -30,8 +30,8 @@ import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { getBingCacheStatus } from '../services/bingWarehouse.js';
 import { upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
 import {
-  ensureGscMonthlySummariesForRange,
   getGscSummaryWindow,
+  hasGscMonthlySummariesForRange,
   refreshGscMonthlySummariesForRange,
 } from '../services/gscMonthlySummaries.js';
 
@@ -2083,10 +2083,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       let totalRowCountPromise: Promise<number> | undefined;
       const shouldIncludeTotal = includeTotal === true;
       const shouldReturnTotalOnly = shouldIncludeTotal && totalOnly === true;
-      const summaryWindow = hasDate ? null : getGscSummaryWindow(startDate, endDate);
-      if (summaryWindow) {
-        await ensureGscMonthlySummariesForRange(db, { ownerId, siteUrl, startDate, endDate });
-      }
+      const requestedSummaryWindow = hasDate ? null : getGscSummaryWindow(startDate, endDate);
+      const summaryWindow = requestedSummaryWindow && await hasGscMonthlySummariesForRange(db, { ownerId, siteUrl, startDate, endDate })
+        ? requestedSummaryWindow
+        : null;
 
       const getTotalRowCount = async (tableName: string, countExpression: string, extraWhere = '') => {
         const total = await db.get<any>(`
