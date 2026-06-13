@@ -95,6 +95,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
   const [pageIndex, setPageIndex] = useState(0)
   const pageSize = 100
   const isWarehouseDimension = WAREHOUSED_GA4_DIMENSIONS.has(dimension)
+  const metricsKey = metrics.join("|")
 
   // Keep an opened historic trend visible while users adjust date and compare controls.
   useEffect(() => {
@@ -110,6 +111,8 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
       return
     }
     if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    const controller = new AbortController()
+    let isCurrent = true
 
     const fetchData = async () => {
       setLoading(true)
@@ -118,7 +121,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
         const ga4Service = new Ga4ApiService()
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
-        const reportOptions = { siteUrl: workspaceSiteUrl }
+        const reportOptions = { signal: controller.signal, siteUrl: workspaceSiteUrl }
         
         const promises = [
           ga4Service.runReport(
@@ -149,6 +152,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
         }
         
         const results = await Promise.all(promises);
+        if (!isCurrent) return
         const primaryRows = (results[0].rows || []).filter((row: any) => getGa4DimensionValue(row));
         setCoverage(results[0]?.metadata?.coverage || null)
 
@@ -187,6 +191,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
         
         setPageIndex(0) // Reset to first page
       } catch (err: any) {
+        if (!isCurrent || err?.name === "AbortError") return
         console.error("Error fetching GA4 stats:", err)
         if (err.message.includes("invalid authentication credentials") || err.message.includes("OAuth 2 access token") || err.message.includes("insufficient authentication scopes")) {
           setError("Your Google session has expired or is missing permissions. Please sign out and sign back in to grant Google Analytics access.")
@@ -200,12 +205,16 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
           setError(err.message)
         }
       } finally {
-        setLoading(false)
+        if (isCurrent) setLoading(false)
       }
     }
 
     fetchData()
-  }, [siteUrl, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey])
+    return () => {
+      isCurrent = false
+      controller.abort()
+    }
+  }, [siteUrl, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey, metricsKey])
 
   useEffect(() => {
     if (!coverage || loading) return;

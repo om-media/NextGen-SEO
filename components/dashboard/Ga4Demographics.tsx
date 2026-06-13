@@ -41,6 +41,8 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
 
   useEffect(() => {
     if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    const controller = new AbortController()
+    let isCurrent = true
 
     const fetchData = async () => {
       setLoading(true)
@@ -58,11 +60,12 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
             [dim.key], 
             ['sessions'],
             undefined,
-            { siteUrl: workspaceSiteUrl }
+            { signal: controller.signal, siteUrl: workspaceSiteUrl }
           )
         )
 
         const results = await Promise.all(promises)
+        if (!isCurrent) return
         setCoverage(results.map((result) => result?.metadata?.coverage).find(Boolean) || null)
         
         const newData: Record<string, any[]> = {}
@@ -82,14 +85,19 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
 
         setData(newData)
       } catch (err: any) {
+        if (!isCurrent || err?.name === "AbortError") return
         setError(err.message || 'Failed to fetch breakdown data')
         console.error(err)
       } finally {
-        setLoading(false)
+        if (isCurrent) setLoading(false)
       }
     }
 
     fetchData()
+    return () => {
+      isCurrent = false
+      controller.abort()
+    }
   }, [siteUrl, workspaceSiteUrl, dateRange, userProfile?.googleConnected, pollKey])
 
   useEffect(() => {

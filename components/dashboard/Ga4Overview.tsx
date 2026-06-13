@@ -197,6 +197,8 @@ export function Ga4Overview({
 
   useEffect(() => {
     if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return
+    const controller = new AbortController()
+    let isCurrent = true
 
     const fetchData = async () => {
       setLoading(true)
@@ -208,7 +210,7 @@ export function Ga4Overview({
         const dimensionFilter = filterDimension && filterValue ? { filterDimension, filterValue } : undefined
         const metrics = ["sessions", "totalUsers", "screenPageViews", "bounceRate", "eventCount"]
 
-        const reportOptions = { siteUrl: workspaceSiteUrl }
+        const reportOptions = { signal: controller.signal, siteUrl: workspaceSiteUrl }
         const promises = [
           ga4Service.runReport(siteUrl, startDate, endDate, ["date"], metrics, dimensionFilter, reportOptions),
         ]
@@ -222,18 +224,24 @@ export function Ga4Overview({
         }
 
         const results = await Promise.all(promises)
+        if (!isCurrent) return
         setData(results[0].rows || [])
         setCompareData(results[1]?.rows || [])
         setCoverage(results[0]?.metadata?.coverage || null)
       } catch (err: any) {
+        if (!isCurrent || err?.name === "AbortError") return
         console.error("Error fetching GA4 stats:", err)
         setError(err.message)
       } finally {
-        setLoading(false)
+        if (isCurrent) setLoading(false)
       }
     }
 
     fetchData()
+    return () => {
+      isCurrent = false
+      controller.abort()
+    }
   }, [siteUrl, workspaceSiteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected])
 
   const { chartData, summary, compareSummary } = useMemo(() => {

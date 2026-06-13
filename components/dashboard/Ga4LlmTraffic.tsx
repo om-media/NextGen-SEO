@@ -77,10 +77,12 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
 
     let isMounted = true
     let pollTimer: number | null = null
+    const controller = new AbortController()
 
     const fetchReport = async (startDate: string, endDate: string) => {
       const response = await authFetch("/api/warehouse/ga4/llm/report", {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           endDate,
@@ -107,14 +109,19 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
       try {
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
-        const primaryReport = await fetchReport(startDate, endDate)
+        const reports = [fetchReport(startDate, endDate)]
         let compareReport = null
 
         if (isCompareMode && compareDateRange.from && compareDateRange.to) {
           const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
           const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
-          compareReport = await fetchReport(compareStartDate, compareEndDate)
+          reports.push(fetchReport(compareStartDate, compareEndDate))
         }
+
+        const [primaryReport, loadedCompareReport] = await Promise.all(reports)
+        compareReport = loadedCompareReport || null
+
+        if (!isMounted) return
 
         if (isMounted) {
           setData(primaryReport)
@@ -133,6 +140,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
           }
         }
       } catch (err: any) {
+        if (!isMounted || err?.name === "AbortError") return
         if (isMounted) setError(err.message)
       } finally {
         if (isMounted) {
@@ -145,6 +153,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
     fetchData()
     return () => {
       isMounted = false
+      controller.abort()
       if (pollTimer) window.clearTimeout(pollTimer)
     }
   }, [siteUrl, explicitWorkspaceSiteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.activatedGa4PropertyId, userProfile?.activatedSiteUrl, userProfile?.googleConnected, pollKey])

@@ -18,6 +18,7 @@ export interface Ga4DataRow {
 
 export type Ga4RunReportOptions = {
   allowLive?: boolean;
+  signal?: AbortSignal;
   siteUrl?: string | null;
 };
 
@@ -106,6 +107,7 @@ export class Ga4ApiService {
 
     const data = await this.fetchApi('/api/warehouse/ga4/report', {
       method: 'POST',
+      signal: options.signal,
       body: JSON.stringify({
         propertyId,
         startDate,
