@@ -1,9 +1,6 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
-import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
 
 export async function attachFrontend(app: express.Express) {
   const distPath = path.join(process.cwd(), 'dist');
@@ -22,6 +19,16 @@ export async function attachFrontend(app: express.Express) {
   }
 
   if (useViteMiddleware) {
+    const [
+      { createServer: createViteServer },
+      { default: react },
+      { default: tailwindcss },
+    ] = await Promise.all([
+      import('vite'),
+      import('@vitejs/plugin-react'),
+      import('@tailwindcss/vite'),
+    ]);
+
     const vite = await createViteServer({
       configFile: false,
       server: {
