@@ -33,6 +33,7 @@ import {
   getGscSummaryWindow,
   hasGscMonthlySummariesForRange,
   refreshGscMonthlySummariesForRange,
+  type GscMonthlySummaryTable,
 } from '../services/gscMonthlySummaries.js';
 
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
@@ -2114,8 +2115,23 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       let totalRowCountPromise: Promise<number> | undefined;
       const shouldIncludeTotal = includeTotal === true;
       const shouldReturnTotalOnly = shouldIncludeTotal && totalOnly === true;
+      let requiredSummaryTables: GscMonthlySummaryTable[] = ['gsc_site_monthly_metrics'];
+      if (hasCountry) {
+        requiredSummaryTables = ['gsc_country_monthly_metrics'];
+      } else if (hasPage && !hasQuery && !hasPageFilter) {
+        requiredSummaryTables = ['gsc_page_monthly_metrics'];
+      } else if (hasPage || (hasQuery && hasPageFilter)) {
+        requiredSummaryTables = ['gsc_page_query_monthly_metrics'];
+      } else if (hasQuery) {
+        requiredSummaryTables = ['gsc_query_monthly_metrics'];
+      }
+
       const requestedSummaryWindow = hasDate ? null : getGscSummaryWindow(startDate, endDate);
-      const summaryWindow = requestedSummaryWindow && await hasGscMonthlySummariesForRange(db, { ownerId, siteUrl, startDate, endDate })
+      const summaryWindow = requestedSummaryWindow && await hasGscMonthlySummariesForRange(
+        db,
+        { ownerId, siteUrl, startDate, endDate },
+        requiredSummaryTables,
+      )
         ? requestedSummaryWindow
         : null;
 

@@ -12,6 +12,15 @@ type SummaryWindow = {
 };
 
 const LONG_RANGE_SUMMARY_MIN_DAYS = 45;
+const ALL_GSC_MONTHLY_SUMMARY_TABLES = [
+  'gsc_site_monthly_metrics',
+  'gsc_query_monthly_metrics',
+  'gsc_country_monthly_metrics',
+  'gsc_page_monthly_metrics',
+  'gsc_page_query_monthly_metrics',
+] as const;
+
+export type GscMonthlySummaryTable = typeof ALL_GSC_MONTHLY_SUMMARY_TABLES[number];
 
 function toUtcDate(value: string) {
   return new Date(`${value}T00:00:00.000Z`);
@@ -432,6 +441,7 @@ export async function ensureGscMonthlySummariesForRange(
 export async function hasGscMonthlySummariesForRange(
   db: AppDatabase,
   input: { ownerId: string; siteUrl: string; startDate: string; endDate: string },
+  summaryTables: readonly GscMonthlySummaryTable[] = ALL_GSC_MONTHLY_SUMMARY_TABLES,
 ) {
   const summaryWindow = getGscSummaryWindow(input.startDate, input.endDate);
   if (!summaryWindow) return false;
@@ -440,13 +450,8 @@ export async function hasGscMonthlySummariesForRange(
   const expectedMonths = monthStartsBetween(fullMonthStart, summaryWindow.fullMonthEnd);
   if (expectedMonths.length === 0) return false;
 
-  const summaryTables = [
-    'gsc_site_monthly_metrics',
-    'gsc_query_monthly_metrics',
-    'gsc_country_monthly_metrics',
-    'gsc_page_monthly_metrics',
-    'gsc_page_query_monthly_metrics',
-  ];
+  if (summaryTables.length === 0) return false;
+
   const coverageRows = await Promise.all(summaryTables.map((tableName) =>
     db.get<{ count: number }>(
       `

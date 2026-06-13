@@ -60,6 +60,7 @@ export async function fetchCachedWarehouseQuery<T = unknown>(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: options.signal,
   }).then(async (response) => {
     if (!response.ok) {
       warehouseQueryCache.delete(key);
