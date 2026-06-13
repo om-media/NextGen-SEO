@@ -467,24 +467,26 @@ export async function hasGscMonthlySummariesForRange(
 }
 
 export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {
-  const missingSites = await db.all<{ ownerId: string; siteUrl: string; startDate: string; endDate: string }>(`
-    SELECT source.ownerId, source.siteUrl, MIN(source.date) AS startDate, MAX(source.date) AS endDate
-    FROM gsc_site_metrics source
-    LEFT JOIN gsc_site_monthly_metrics summary
-      ON summary.ownerId = source.ownerId
-      AND summary.siteUrl = source.siteUrl
-      AND summary.monthStart = substr(source.date, 1, 7) || '-01'
-    WHERE summary.monthStart IS NULL
-    GROUP BY source.ownerId, source.siteUrl
+  const sites = await db.all<{ ownerId: string; siteUrl: string; startDate: string; endDate: string }>(`
+    SELECT ownerId, siteUrl, MIN(date) AS startDate, MAX(date) AS endDate
+    FROM gsc_site_metrics
+    GROUP BY ownerId, siteUrl
   `);
 
-  if (missingSites.length === 0) {
+  if (sites.length === 0) {
     return;
   }
 
-  for (const site of missingSites) {
+  let backfilledSiteCount = 0;
+  for (const site of sites) {
     if (!site.ownerId || !site.siteUrl || !site.startDate || !site.endDate) continue;
+    const hasSummaries = await hasGscMonthlySummariesForRange(db, site);
+    if (hasSummaries) continue;
     await refreshGscMonthlySummariesForRange(db, site);
+    backfilledSiteCount += 1;
   }
-  console.log(`[db] Backfilled GSC monthly summary tables for ${missingSites.length} site(s)`);
+
+  if (backfilledSiteCount > 0) {
+    console.log(`[db] Backfilled GSC monthly summary tables for ${backfilledSiteCount} site(s)`);
+  }
 }

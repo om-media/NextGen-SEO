@@ -1147,7 +1147,7 @@ async function backfillGscPageMetrics(db: AppDatabase) {
 }
 
 function scheduleGscMonthlySummaryBackfill(db: AppDatabase) {
-  if (process.env.RUN_GSC_MONTHLY_SUMMARY_BACKFILL !== 'true') {
+  if (process.env.RUN_GSC_MONTHLY_SUMMARY_BACKFILL === 'false') {
     return;
   }
 
