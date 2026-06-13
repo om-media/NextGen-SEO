@@ -961,7 +961,7 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   if (!startDate || !endDate) return [];
 
   const propertyId = input.propertyId || '';
-  const [gscSiteRows, gscQueryRows, gscPageQueryRows, ga4PageRows, jobRows] = await Promise.all([
+  const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, jobRows] = await Promise.all([
     db.all<{ date: string }>(`
       SELECT date
       FROM gsc_site_metrics
@@ -977,6 +977,12 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
     db.all<{ date: string }>(`
       SELECT date
       FROM gsc_page_query_metrics
+      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+      GROUP BY date
+    `, [input.ownerId, input.siteUrl, startDate, endDate]),
+    db.all<{ date: string }>(`
+      SELECT date
+      FROM gsc_country_metrics
       WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
       GROUP BY date
     `, [input.ownerId, input.siteUrl, startDate, endDate]),
@@ -1001,6 +1007,7 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
   const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
   const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
+  const gscCountryDates = new Set(gscCountryRows.map((row) => row.date));
   const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
   const anyCoreJobDates = new Set<string>();
   const matchingPropertyJobDates = new Set<string>();
@@ -1015,7 +1022,7 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   }
 
   return dates.filter((date) => {
-    const needsExistingGsc = !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date);
+    const needsExistingGsc = !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date);
     const needsGa4 = Boolean(propertyId && !ga4PageDates.has(date));
     return (needsExistingGsc && !anyCoreJobDates.has(date))
       || (needsGa4 && !matchingPropertyJobDates.has(date));
