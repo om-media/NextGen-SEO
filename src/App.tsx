@@ -197,6 +197,10 @@ function MainApp() {
       return;
     }
 
+    if (!selectedGa4Property || !selectedGa4PropertySite) {
+      return;
+    }
+
     localStorage.setItem(selectedGa4PropertyCacheKey(user.uid, selectedGa4PropertySite || selectedSite), selectedGa4Property);
     localStorage.removeItem('selected_ga4_property_cache');
     localStorage.removeItem(legacySelectedGa4PropertyCacheKey(user.uid));
@@ -746,13 +750,14 @@ function MainApp() {
     ? selectedGa4Property
     : "";
   const activeGa4PropertyId = selectedGa4PropertyForDashboard || mappedGa4PropertyForWorkspace || null;
+  const activeGa4Selection = activeGa4PropertyId || "";
   const visibleGa4Sites = dataSource === 'ga4' ? accessibleGa4Sites : workspaceMatchedGa4Sites;
   const accessibleWorkspaceSites = accessibleGscSites.length > 0
     ? accessibleGscSites
     : (userProfile?.unlockedSites || []).map((siteUrl) => ({ siteUrl, permissionLevel: "warehouse" }));
 
   const currentSites = dataSource === 'ga4' ? accessibleGa4Sites : dataSource === 'bing' ? accessibleBingSites : accessibleGscSites;
-  const currentSelection = dataSource === 'ga4' ? selectedGa4PropertyForDashboard : selectedSite;
+  const currentSelection = dataSource === 'ga4' ? activeGa4Selection : selectedSite;
   const showStatusPanels = activeMenu === "Dashboard";
   const showReportToolbar = [
     "AI Content Auditor",
@@ -1012,7 +1017,7 @@ function MainApp() {
                     onActivateWorkspaceSite={unlockSite}
                     onOpenSettings={openSettings}
                     onOpenSiteWorkspace={handleOpenSiteWorkspace}
-                    selectedSite={dataSource === 'ga4' ? selectedGa4PropertyForDashboard : selectedSite}
+                    selectedSite={dataSource === 'ga4' ? activeGa4Selection : selectedSite}
                     workspaceSiteUrl={selectedSite}
                     setShowSystemAnnotations={setShowSystemAnnotations}
                     setShowUserAnnotations={setShowUserAnnotations}
