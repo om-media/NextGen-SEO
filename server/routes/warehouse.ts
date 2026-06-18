@@ -1435,7 +1435,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
       const ga4DimensionDateCounts = new Map(ga4DimensionRows.map((row) => [row.date, toCoverageNumber(row.rowCount)]));
       const missingCoreDates = new Set(expectedDates.filter((date) => {
-        const needsGsc = (!gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date)) && !completedGscDates.has(date);
+        const needsGsc = (!gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date)) && !completedGscDates.has(date);
         const needsGa4 = Boolean(effectivePropertyId && !ga4PageDates.has(date) && !completedGa4Dates.has(date));
         return needsGsc || needsGa4;
       }));
@@ -1474,15 +1474,30 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         );
         if (user?.gscRefreshToken) {
           const handledCoreDates = new Set<string>();
-          addJobDatesToSet(
-            handledCoreDates,
-            warehouseJobRows.filter((row) => (
-              ['daily-sync', 'core-range-sync'].includes(row.jobType)
-              && ['queued', 'retrying', 'running', 'completed'].includes(row.status)
-            )),
-            effectiveStartDate,
-            effectiveEndDate,
-          );
+          const coreJobsByDate = new Map<string, Array<{ jobType: string; metricsJson: string | null; propertyId: string | null; status: string }>>();
+          for (const row of warehouseJobRows.filter((job) => (
+            ['daily-sync', 'core-range-sync'].includes(job.jobType)
+            && ['queued', 'retrying', 'running', 'completed'].includes(job.status)
+          ))) {
+            for (const date of jobDatesWithin(row, effectiveStartDate, effectiveEndDate)) {
+              const rows = coreJobsByDate.get(date) || [];
+              rows.push(row);
+              coreJobsByDate.set(date, rows);
+            }
+          }
+          for (const date of expectedDates) {
+            const jobsForDate = coreJobsByDate.get(date) || [];
+            const needsGscForDate = !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date);
+            const needsGa4ForDate = Boolean(effectivePropertyId && !ga4PageDates.has(date));
+            const hasGscJob = jobsForDate.length > 0;
+            const hasGa4Job = Boolean(
+              effectivePropertyId
+              && jobsForDate.some((row) => row.propertyId === effectivePropertyId && (row.status !== 'completed' || completedJobIncludedProperty(row))),
+            );
+            if ((!needsGscForDate || hasGscJob) && (!needsGa4ForDate || hasGa4Job)) {
+              handledCoreDates.add(date);
+            }
+          }
           const handledGa4DimensionDates = new Set<string>();
           addJobDatesToSet(
             handledGa4DimensionDates,
@@ -1875,7 +1890,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           && (['queued', 'retrying', 'running'].includes(row.status) || completedJobIncludedProperty(row))
         )),
       );
-      const needsExistingGscSync = (date: string) => !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date);
+      const needsExistingGscSync = (date: string) => !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date);
       const needsGa4Sync = (date: string) => Boolean(requestedPropertyId && !ga4PageDates.has(date));
       const needsGa4DimensionSync = (date: string) => Boolean(
         requestedPropertyId
