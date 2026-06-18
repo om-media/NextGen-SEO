@@ -3,7 +3,6 @@ import fs from 'fs';
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalPageKey } from './reporting/url.js';
-import { backfillMissingGscMonthlySummaries } from './services/gscMonthlySummaries.js';
 
 const { Pool } = pg;
 type PgQueryable = pg.Pool | pg.PoolClient;
@@ -531,7 +530,12 @@ const camelCaseColumns: Record<string, string> = {
   lastinspectiontime: 'lastInspectionTime',
   earliestmetricdate: 'earliestMetricDate',
   lastmetricdate: 'lastMetricDate',
+  startdate: 'startDate',
+  enddate: 'endDate',
   metricdaycount: 'metricDayCount',
+  detailrows: 'detailRows',
+  minmonth: 'minMonth',
+  maxmonth: 'maxMonth',
   rowcount: 'rowCount',
   totalrowcount: 'totalRowCount',
   querycount: 'queryCount',
@@ -1146,18 +1150,6 @@ async function backfillGscPageMetrics(db: AppDatabase) {
   console.log(`[db] Backfilled ${Number(updated?.count || 0)} legacy GSC page summary rows`);
 }
 
-function scheduleGscMonthlySummaryBackfill(db: AppDatabase) {
-  if (process.env.RUN_GSC_MONTHLY_SUMMARY_BACKFILL === 'false') {
-    return;
-  }
-
-  setTimeout(() => {
-    backfillMissingGscMonthlySummaries(db).catch((error) => {
-      console.warn('[db] GSC monthly summary backfill skipped:', error?.message || error);
-    });
-  }, 0);
-}
-
 export async function initializeDatabase(): Promise<AppDatabase> {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 
@@ -1170,7 +1162,6 @@ export async function initializeDatabase(): Promise<AppDatabase> {
     await applyPostgresMigrations(db);
     await backfillGscPageKeys(db);
     await backfillGscPageMetrics(db);
-    scheduleGscMonthlySummaryBackfill(db);
     console.log('[db] Connected to PostgreSQL');
     return db;
   }
@@ -1180,7 +1171,6 @@ export async function initializeDatabase(): Promise<AppDatabase> {
   const db = new SqliteAppDatabase(sqlite);
   await backfillGscPageKeys(db);
   await backfillGscPageMetrics(db);
-  scheduleGscMonthlySummaryBackfill(db);
   console.log('[db] Connected to local SQLite');
   return db;
 }

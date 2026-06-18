@@ -12,7 +12,7 @@ type SummaryWindow = {
 };
 
 const LONG_RANGE_SUMMARY_MIN_DAYS = 45;
-const ALL_GSC_MONTHLY_SUMMARY_TABLES = [
+export const ALL_GSC_MONTHLY_SUMMARY_TABLES = [
   'gsc_site_monthly_metrics',
   'gsc_query_monthly_metrics',
   'gsc_country_monthly_metrics',
@@ -489,4 +489,39 @@ export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {
   if (backfilledSiteCount > 0) {
     console.log(`[db] Backfilled GSC monthly summary tables for ${backfilledSiteCount} site(s)`);
   }
+}
+
+export function startGscMonthlySummaryBackfillWorker(db: AppDatabase) {
+  if (process.env.RUN_GSC_MONTHLY_SUMMARY_BACKFILL === 'false') {
+    return () => {};
+  }
+
+  const intervalMs = Number(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_INTERVAL_MS || 30 * 60 * 1000);
+  let stopped = false;
+  let running = false;
+
+  const runBackfill = async () => {
+    if (stopped || running) return;
+    running = true;
+    try {
+      await backfillMissingGscMonthlySummaries(db);
+    } catch (error: any) {
+      console.warn('[db] GSC monthly summary backfill skipped:', error?.message || error);
+    } finally {
+      running = false;
+    }
+  };
+
+  const initialTimer = setTimeout(() => {
+    void runBackfill();
+  }, 5_000);
+  const interval = setInterval(() => {
+    void runBackfill();
+  }, intervalMs);
+
+  return () => {
+    stopped = true;
+    clearTimeout(initialTimer);
+    clearInterval(interval);
+  };
 }

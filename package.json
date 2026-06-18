@@ -20,6 +20,7 @@
     "db:postgres:up": "docker compose -f docker-compose.postgres.yml up -d",
     "db:postgres:down": "docker compose -f docker-compose.postgres.yml down",
     "db:migrate:postgres": "tsx --tsconfig tsconfig.server.json scripts/migrate-sqlite-to-postgres.ts",
+    "db:backfill:gsc-summaries": "tsx --tsconfig tsconfig.server.json scripts/backfill-gsc-monthly-summaries.ts",
     "benchmark:warehouse:pages": "tsx --tsconfig tsconfig.server.json scripts/benchmark-warehouse-pages.ts",
     "start": "node .server-dist/server.js"
   },
@@ -65,5 +66,8 @@
     "tsx": "^4.22.4",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
+  },
+  "overrides": {
+    "undici": "7.28.0"
   }
 }

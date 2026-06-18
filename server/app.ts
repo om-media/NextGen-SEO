@@ -16,6 +16,7 @@ import { registerWorkspaceCrudRoutes } from './routes/workspaceCrud.js';
 import { authRateLimit, securityHeaders } from './middleware/security.js';
 import { startBingDailyScheduler } from './services/bingWarehouse.js';
 import { startCrawlQueueWorker } from './services/crawl.js';
+import { startGscMonthlySummaryBackfillWorker } from './services/gscMonthlySummaries.js';
 import { startRankTrackingScheduler } from './services/rankTracking.js';
 import { startWarehouseDailyScheduler, startWarehouseJobWorker } from './services/warehouseJobs.js';
 
@@ -97,6 +98,7 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
       startBingDailyScheduler(db),
       startWarehouseJobWorker(db),
       startWarehouseDailyScheduler(db),
+      startGscMonthlySummaryBackfillWorker(db),
       startRankTrackingScheduler(db),
     ];
     app.locals.stopBackgroundWorkers = () => {

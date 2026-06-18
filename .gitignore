@@ -19,6 +19,7 @@ coverage/
 *.sqlite-wal
 .aider*
 .tmp/
+.npm-cache/
 
 # Local agent and QA artifacts
 AGENTS.md
