@@ -80,7 +80,7 @@ export function SettingsDialog({
 
   const displayName = draft.name.trim() || userEmail || "User";
   const avatarFallback = displayName.charAt(0).toUpperCase() || "U";
-  const unlockedSites = userProfile?.unlockedSites || [];
+  const activeSites = userProfile?.unlockedSites || [];
   const knownSites = userProfile?.knownSites || [];
   const bingConnected = Boolean(userProfile?.bingConnected);
 
@@ -166,19 +166,19 @@ export function SettingsDialog({
 
               <div className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-3">
                 <div>
-                  <p className="text-sm font-medium">Unlocked properties</p>
-                  <p className="text-sm text-muted-foreground">These properties are currently active for your workspace.</p>
+                  <p className="text-sm font-medium">Active properties</p>
+                  <p className="text-sm text-muted-foreground">These properties are included in your workspace.</p>
                 </div>
-                {unlockedSites.length > 0 ? (
+                {activeSites.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
-                    {unlockedSites.map((siteUrl) => (
+                    {activeSites.map((siteUrl) => (
                       <Badge key={siteUrl} variant="outline" className="max-w-full truncate">
                         {siteUrl}
                       </Badge>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground">No properties unlocked yet.</p>
+                  <p className="text-sm text-muted-foreground">No active properties yet.</p>
                 )}
               </div>
 

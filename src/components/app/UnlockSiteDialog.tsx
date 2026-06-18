@@ -27,13 +27,13 @@ export function UnlockSiteDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Unlock Property</DialogTitle>
+          <DialogTitle>Activate Property</DialogTitle>
           <DialogDescription>
             {unlockError ? (
               <span className="text-destructive">{unlockError}</span>
             ) : (
               <span>
-                You are about to unlock <strong>{siteToUnlock}</strong>. Your workspace currently has <strong>{unlockedCount}</strong> active propert{unlockedCount === 1 ? "y" : "ies"}. Once unlocked, this becomes part of your active workspace.
+                You are about to activate <strong>{siteToUnlock}</strong>. Your workspace currently has <strong>{unlockedCount}</strong> active propert{unlockedCount === 1 ? "y" : "ies"}. Once activated, this property becomes part of your workspace.
               </span>
             )}
           </DialogDescription>
@@ -47,7 +47,7 @@ export function UnlockSiteDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          {!unlockError && <Button onClick={onConfirm}>Confirm Unlock</Button>}
+          {!unlockError && <Button onClick={onConfirm}>Activate Property</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -17,74 +17,37 @@ export type PlanDefinition = {
   featureHighlights: string[];
 };
 
+const WORKSPACE_ACCESS_DEFINITION: PlanDefinition = {
+  displayName: 'Workspace',
+  monthlyPriceLabel: 'Included',
+  propertyLimit: null,
+  aiInsights: 'priority',
+  warehouseSync: 'unlimited',
+  rankTracking: 'scale',
+  crawl: {
+    allowJavaScriptRendering: true,
+    allowRawExports: true,
+    allowReconciliation: true,
+    maxDepth: 10,
+    maxPages: 100000,
+  },
+  featureHighlights: [
+    'Unlimited workspace properties',
+    'Automatic history import',
+    'Full crawl inventory',
+    'Rank tracking and reports',
+  ],
+};
+
 export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
-  free: {
-    displayName: 'Free',
-    monthlyPriceLabel: '$0',
-    propertyLimit: 1,
-    aiInsights: 'limited',
-    warehouseSync: 'basic',
-    rankTracking: 'starter',
-    crawl: {
-      allowJavaScriptRendering: false,
-      allowRawExports: false,
-      allowReconciliation: false,
-      maxDepth: 2,
-      maxPages: 1000,
-    },
-    featureHighlights: [
-      '1 active property',
-      'Core Search Console dashboard',
-      'Basic history import',
-      'Starter rank tracking',
-    ],
-  },
-  pro: {
-    displayName: 'Pro',
-    monthlyPriceLabel: '$49',
-    propertyLimit: 3,
-    aiInsights: 'expanded',
-    warehouseSync: 'extended',
-    rankTracking: 'growth',
-    crawl: {
-      allowJavaScriptRendering: true,
-      allowRawExports: true,
-      allowReconciliation: true,
-      maxDepth: 6,
-      maxPages: 25000,
-    },
-    featureHighlights: [
-      '3 active properties',
-      'Expanded AI workflows',
-      'Extended history import',
-      'Growth rank tracking',
-    ],
-  },
-  enterprise: {
-    displayName: 'Enterprise',
-    monthlyPriceLabel: 'Custom',
-    propertyLimit: null,
-    aiInsights: 'priority',
-    warehouseSync: 'unlimited',
-    rankTracking: 'scale',
-    crawl: {
-      allowJavaScriptRendering: true,
-      allowRawExports: true,
-      allowReconciliation: true,
-      maxDepth: 10,
-      maxPages: 100000,
-    },
-    featureHighlights: [
-      'Unlimited active properties',
-      'Priority AI workflows',
-      'Unlimited history import',
-      'Scale rank tracking',
-    ],
-  },
+  free: WORKSPACE_ACCESS_DEFINITION,
+  pro: WORKSPACE_ACCESS_DEFINITION,
+  enterprise: WORKSPACE_ACCESS_DEFINITION,
 };
 
 export function getPlanDefinition(tier: PlanTier | null | undefined) {
-  return PLAN_DEFINITIONS[tier || 'free'];
+  void tier;
+  return WORKSPACE_ACCESS_DEFINITION;
 }
 
 export function getPlanDisplayName(tier: PlanTier | null | undefined) {
