@@ -388,11 +388,6 @@ function MainApp() {
       return savedWorkspaceDefault;
     }
 
-    const workspaceMatch = getGa4PropertyForWorkspaceSite(availableSites, workspaceSite);
-    if (workspaceMatch) {
-      return workspaceMatch;
-    }
-
     return "";
   };
 
@@ -741,11 +736,10 @@ function MainApp() {
   const workspaceMatchedGa4Sites = selectedSite
     ? accessibleGa4Sites.filter((site) => isGa4PropertyForWorkspaceSite(site, selectedSite))
     : accessibleGa4Sites;
-  const mappedGa4PropertyForWorkspace = getGa4PropertyForWorkspaceSite(accessibleGa4Sites, selectedSite);
   const selectedGa4PropertyForDashboard = selectedGa4PropertySite === selectedSite && accessibleGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
     ? selectedGa4Property
     : "";
-  const activeGa4PropertyId = selectedGa4PropertyForDashboard || mappedGa4PropertyForWorkspace || null;
+  const activeGa4PropertyId = selectedGa4PropertyForDashboard || null;
   const activeGa4Selection = activeGa4PropertyId || "";
   const visibleGa4Sites = dataSource === 'ga4' ? accessibleGa4Sites : workspaceMatchedGa4Sites;
   const accessibleWorkspaceSites = accessibleGscSites.length > 0
@@ -956,7 +950,7 @@ function MainApp() {
                   dataSource={dataSource}
                   dateRange={dateRange}
                   firstName={(userProfile?.name || user.displayName || user.email || '').split(' ')[0]}
-                  ga4PropertyId={dataSource === 'ga4' ? activeGa4PropertyId : mappedGa4PropertyForWorkspace || null}
+                  ga4PropertyId={activeGa4PropertyId}
                   gscSyncVersion={gscSyncVersion}
                   isCompareMode={isCompareMode}
                   onCompareFromDateChange={handleCompareFromDateChange}
@@ -1000,7 +994,7 @@ function MainApp() {
                     dataSource={dataSource}
                     dateRange={dateRange}
                     ga4DashboardTab={ga4DashboardTab}
-                    ga4PropertyId={dataSource === 'ga4' ? activeGa4PropertyId : mappedGa4PropertyForWorkspace || null}
+                    ga4PropertyId={activeGa4PropertyId}
                     ga4Sites={visibleGa4Sites}
                     ga4UserDimension={ga4UserDimension}
                     gscDashboardTab={gscDashboardTab}
