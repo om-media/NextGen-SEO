@@ -398,14 +398,25 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
   const writeStartedAt = Date.now();
   await db.transaction(async () => {
     await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, job.siteUrl, startDate, endDate]);
+    const seenDates = new Set<string>();
     for (const row of rows) {
       const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
+      seenDates.add(date);
       const pagePath = row.dimensionValues?.[1]?.value || '/';
       await runWarehouseStatement(
         db,
         insertPage,
         insertPageSql,
         [job.ownerId, job.propertyId, job.siteUrl, date, pagePath, canonicalPageKey(pagePath, job.siteUrl), toNumber(row.metricValues?.[0]?.value), toNumber(row.metricValues?.[1]?.value), toNumber(row.metricValues?.[2]?.value), toNumber(row.metricValues?.[3]?.value), toNumber(row.metricValues?.[4]?.value)],
+      );
+    }
+    for (const date of eachIsoDate(startDate, endDate)) {
+      if (seenDates.has(date)) continue;
+      await runWarehouseStatement(
+        db,
+        insertPage,
+        insertPageSql,
+        [job.ownerId, job.propertyId, job.siteUrl, date, '', '', 0, 0, 0, 0, 0],
       );
     }
   })();
@@ -483,8 +494,10 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
         [job.ownerId, job.propertyId, job.siteUrl, config.dimension, startDate, endDate],
       );
 
+      const seenDates = new Set<string>();
       for (const row of rows) {
         const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
+        seenDates.add(date);
         const dimensionValue = String(row.dimensionValues?.[1]?.value || '(not set)');
         const metricValue = (metric: string) => {
           const index = (config.metrics as readonly string[]).indexOf(metric);
@@ -508,6 +521,15 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
             metricValue('bounceRate'),
             metricValue('eventCount'),
           ],
+        );
+      }
+      for (const date of eachIsoDate(startDate, endDate)) {
+        if (seenDates.has(date)) continue;
+        await runWarehouseStatement(
+          db,
+          insertDimension,
+          insertDimensionSql,
+          [job.ownerId, job.propertyId, job.siteUrl, date, config.dimension, '', 0, 0, 0, 0, 0],
         );
       }
     })();
@@ -586,8 +608,10 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
   const writeStartedAt = Date.now();
   await db.transaction(async () => {
     await db.run('DELETE FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, job.siteUrl, startDate, endDate]);
+    const seenDates = new Set<string>();
     for (const row of rows) {
       const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
+      seenDates.add(date);
       const pagePath = row.dimensionValues?.[1]?.value || '/';
       const source = row.dimensionValues?.[2]?.value || '(not set)';
       await runWarehouseStatement(
@@ -608,6 +632,15 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
           toNumber(row.metricValues?.[2]?.value),
           toNumber(row.metricValues?.[3]?.value),
         ],
+      );
+    }
+    for (const date of eachIsoDate(startDate, endDate)) {
+      if (seenDates.has(date)) continue;
+      await runWarehouseStatement(
+        db,
+        insertLlm,
+        insertLlmSql,
+        [job.ownerId, job.propertyId, job.siteUrl, date, '', '', '', '', 0, 0, 0, 0],
       );
     }
   })();

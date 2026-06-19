@@ -410,6 +410,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (exactPageFilterValue) {
       whereParts.push('pageKey = ?');
       params.push(canonicalPageKey(exactPageFilterValue, siteUrl));
+    } else if (dimensions.some((dimension) => dimension !== 'date')) {
+      whereParts.push("pageKey <> ''");
     }
 
     const selectedDimensions = dimensions.map((dimension) => {
@@ -600,7 +602,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     metrics: string[],
     dimensionFilter?: any,
   ) => {
-    const whereParts = ['ownerId = ?', 'propertyId = ?', 'siteUrl = ?', 'dimension = ?', 'date >= ?', 'date <= ?'];
+    const whereParts = ['ownerId = ?', 'propertyId = ?', 'siteUrl = ?', 'dimension = ?', 'date >= ?', 'date <= ?', "dimensionValue <> ''"];
     const params: unknown[] = [ownerId, propertyId, siteUrl, warehouseDimension, startDate, endDate];
     const exactFilter = getExactDimensionFilter(dimensionFilter);
     if (exactFilter?.fieldName === warehouseDimension) {
@@ -876,7 +878,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             date,
             SUM(sessions) AS sessions
           FROM ga4_llm_referral_metrics
-          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND source <> ''
           GROUP BY date
           ORDER BY date ASC
         `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
@@ -888,7 +890,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             SUM(keyEvents) AS keyEvents,
             CASE WHEN SUM(sessions) > 0 THEN SUM(averageSessionDuration * sessions)*1.0/SUM(sessions) ELSE 0 END AS averageSessionDuration
           FROM ga4_llm_referral_metrics
-          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND source <> ''
           GROUP BY sourceClass
           ORDER BY sessions DESC
         `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
@@ -902,7 +904,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             SUM(keyEvents) AS keyEvents,
             CASE WHEN SUM(sessions) > 0 THEN SUM(averageSessionDuration * sessions)*1.0/SUM(sessions) ELSE 0 END AS averageSessionDuration
           FROM ga4_llm_referral_metrics
-          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND source <> '' AND pageKey <> ''
           GROUP BY pageKey, sourceClass
           ORDER BY sessions DESC
           LIMIT 500
@@ -2802,7 +2804,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
       }
 
-      const where = search ? 'AND LOWER(pagePath) LIKE ?' : '';
+      const where = search ? "AND pageKey <> '' AND LOWER(pagePath) LIKE ?" : "AND pageKey <> ''";
       const params: unknown[] = search
         ? [ownerId, propertyId, siteUrl, startDate, endDate, `%${search.toLowerCase()}%`]
         : [ownerId, propertyId, siteUrl, startDate, endDate];
@@ -2893,7 +2895,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         FROM (
           SELECT dimensionValue
           FROM ga4_dimension_metrics
-          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ? AND dimensionValue <> '' ${where}
           GROUP BY dimensionValue
         ) dimension_rows
       `, params);
@@ -2907,7 +2909,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           CASE WHEN SUM(sessions) > 0 THEN SUM(bounceRate * sessions)*1.0/SUM(sessions) ELSE 0 END AS bounceRate,
           SUM(eventCount) AS eventCount
         FROM ga4_dimension_metrics
-        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ? ${where}
+        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ? AND dimensionValue <> '' ${where}
         GROUP BY dimension, dimensionValue
         ORDER BY sessions DESC, pageViews DESC, eventCount DESC
         LIMIT ? OFFSET ?
