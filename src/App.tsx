@@ -519,14 +519,10 @@ function MainApp() {
       setApiError(null)
       const ga4Service = new Ga4ApiService()
       ga4Service.getProperties()
-          .then(fetchedSites => {
-            if (cancelled) return;
-            setSessionExpired(false)
-            setGa4Sites(fetchedSites)
-          if (fetchedSites.length > 0 && !isOnboarding) {
-            setSelectedGa4Property((current) => getPreferredGa4PropertyId(fetchedSites, current, selectedSite))
-            setSelectedGa4PropertySite(selectedSite)
-          }
+        .then(fetchedSites => {
+          if (cancelled) return;
+          setSessionExpired(false)
+          setGa4Sites(fetchedSites)
         })
         .catch(err => {
           if (cancelled) return;
@@ -554,7 +550,7 @@ function MainApp() {
     return () => {
       cancelled = true;
     };
-  }, [backgroundEffectsReady, dataSource, isOnboarding, selectedSite, selectedGa4PropertySite, user, userProfile])
+  }, [backgroundEffectsReady, dataSource, isOnboarding, selectedSite, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
     setSelectedSite(siteUrl);

@@ -7,7 +7,7 @@ import { getPlanCrawlLimits } from '../../shared/plans.js';
 import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
-import { canAccessSite } from '../accessControl.js';
+import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { resolveWorkspaceGa4Property, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
 import { getInitialRegistrationTier } from '../services/registrationTier.js';
 
@@ -279,7 +279,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       const user = await db.get<any>('SELECT activatedSiteUrl, knownSites, tier, unlockedSites FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
 
-      await db.run('UPDATE users SET activatedGa4PropertyId = ?, activatedGa4DisplayName = ? WHERE id = ?', [activatedGa4PropertyId, activatedGa4DisplayName || null, req.params.id]);
+      if (!(await canAccessGa4Property(db, req.params.id, activatedGa4PropertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+
       const activeSiteUrl = isNonEmptyString(user.activatedSiteUrl) ? user.activatedSiteUrl.trim() : '';
       const mappedSiteUrl = isNonEmptyString(siteUrl) ? siteUrl.trim() : activeSiteUrl;
       if (mappedSiteUrl) {
@@ -293,6 +296,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
           siteUrl: mappedSiteUrl,
         });
       }
+      await db.run('UPDATE users SET activatedGa4PropertyId = ?, activatedGa4DisplayName = ? WHERE id = ?', [activatedGa4PropertyId, activatedGa4DisplayName || null, req.params.id]);
       const sitesToBackfill = uniqueSites([
         ...parseStoredSites(user.unlockedSites),
         ...parseStoredSites(user.knownSites),
