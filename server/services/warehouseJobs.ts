@@ -248,8 +248,14 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
       for (const row of dateSiteRows) {
         await runWarehouseStatement(db, insertSite, insertSiteSql, [job.ownerId, job.siteUrl, date, toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
       }
+      if (dateSiteRows.length === 0) {
+        await runWarehouseStatement(db, insertSite, insertSiteSql, [job.ownerId, job.siteUrl, date, 0, 0, 0, 0]);
+      }
       for (const row of dateQueryRows) {
         await runWarehouseStatement(db, insertQuery, insertQuerySql, [job.ownerId, job.siteUrl, date, row.keys?.[1] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
+      }
+      if (dateQueryRows.length === 0) {
+        await runWarehouseStatement(db, insertQuery, insertQuerySql, [job.ownerId, job.siteUrl, date, '', 0, 0, 0, 0]);
       }
       for (const row of datePageQueryRows) {
         const page = row.keys?.[1] || '';
@@ -259,6 +265,9 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
           insertPageQuerySql,
           [job.ownerId, job.siteUrl, date, page, canonicalPageKey(page, job.siteUrl), row.keys?.[2] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)],
         );
+      }
+      if (datePageQueryRows.length === 0) {
+        await runWarehouseStatement(db, insertPageQuery, insertPageQuerySql, [job.ownerId, job.siteUrl, date, '', '', '', 0, 0, 0, 0]);
       }
       const pageSummaries = new Map<string, { clicks: number; impressions: number; page: string; pageKey: string; queries: Set<string>; weightedPosition: number }>();
       for (const row of datePageQueryRows) {
@@ -301,6 +310,9 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
             summary.queries.size,
           ],
         );
+      }
+      if (pageSummaries.size === 0) {
+        await runWarehouseStatement(db, insertPage, insertPageSql, [job.ownerId, job.siteUrl, date, '', '', 0, 0, 0, 0, 0]);
       }
       if (dateCountryRows.length === 0) {
         await runWarehouseStatement(
@@ -1032,7 +1044,7 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
       FROM warehouse_jobs
       WHERE ownerId = ? AND siteUrl = ?
         AND jobType IN ('daily-sync', 'core-range-sync')
-        AND status IN ('queued', 'retrying', 'running', 'completed')
+        AND status IN ('queued', 'retrying', 'running')
         AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
     `, [input.ownerId, input.siteUrl, startDate, endDate]),
   ]);
@@ -1219,6 +1231,7 @@ export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?
   for (const chunk of chunkDescendingDates(missingDates, CORE_RANGE_JOB_DAYS)) {
     const job = await queueWarehouseCoreRangeJob(db, {
       endDate: chunk.endDate,
+      dedupeCompleted: false,
       ownerId: input.ownerId,
       propertyId: input.propertyId,
       siteUrl: input.siteUrl,

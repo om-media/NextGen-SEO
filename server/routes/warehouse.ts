@@ -2241,7 +2241,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
       const selectCols = selectClauseElements.length > 0 ? `${selectClauseElements.join(', ')}, ` : '';
       const queryCountCol = ((hasPage && !hasQuery) || (wantsQueryCount && hasDate && !hasQuery))
-        ? 'COUNT(DISTINCT query) as queryCount,'
+        ? "COUNT(DISTINCT NULLIF(query, '')) as queryCount,"
         : '';
       const groupByClause = groupByClauseElements.length > 0 ? `GROUP BY ${groupByClauseElements.join(', ')}` : '';
 
@@ -2438,12 +2438,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               siteUrl,
             );
             if (shouldIncludeTotal) {
+              const blankFilter = hasQuery ? "AND query <> ''" : "AND pageKey <> ''";
               totalRowCountPromise = db.get<any>(`
                 SELECT COUNT(DISTINCT ${hasQuery ? 'query' : 'pageKey'}) AS totalRowCount
                 FROM (${summarySource.sql}) source
                 ${summaryWhereClause}
+                ${blankFilter}
               `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
             }
+            const blankFilter = hasQuery ? "AND query <> ''" : "AND pageKey <> ''";
             if (!shouldReturnTotalOnly) rows = await db.all<any>(`
               SELECT ${selectCols}
                      ${queryCountCol}
@@ -2453,6 +2456,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
                      CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
               FROM (${summarySource.sql}) source
               ${summaryWhereClause}
+              ${blankFilter}
               ${groupByClause}
               ${orderClause}
               LIMIT @limit OFFSET @offset
@@ -2544,6 +2548,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             totalRowCountPromise = getTotalRowCount(
               'gsc_page_query_metrics',
               "COALESCE(NULLIF(pageKey, ''), page)",
+              "AND COALESCE(NULLIF(pageKey, ''), page) <> ''",
             );
           }
           rows = await db.all<any>(`
@@ -2556,6 +2561,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
                    CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
             FROM gsc_page_query_metrics
             ${whereClause}
+              AND COALESCE(NULLIF(pageKey, ''), page) <> ''
             GROUP BY COALESCE(NULLIF(pageKey, ''), page)
             ORDER BY clicks DESC, impressions DESC
             LIMIT @limit OFFSET @offset
@@ -2566,8 +2572,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           totalRowCountPromise = getTotalRowCount(
             'gsc_page_query_metrics',
             hasQuery ? 'query' : "COALESCE(NULLIF(pageKey, ''), page)",
+            hasQuery ? "AND query <> ''" : "AND COALESCE(NULLIF(pageKey, ''), page) <> ''",
           );
         }
+        const blankFilter = hasQuery ? "AND query <> ''" : "AND COALESCE(NULLIF(pageKey, ''), page) <> ''";
         if (!shouldReturnTotalOnly) rows = await db.all<any>(`
           SELECT ${selectCols} 
                  ${queryCountCol}
@@ -2577,6 +2585,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
                  CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
           FROM gsc_page_query_metrics
           ${whereClause}
+          ${blankFilter}
           ${groupByClause}
           ${orderClause}
           LIMIT @limit OFFSET @offset
@@ -2597,7 +2606,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         `, params);
       } else if (hasQuery) {
         if (shouldIncludeTotal) {
-          totalRowCountPromise = getTotalRowCount('gsc_query_metrics', 'query');
+          totalRowCountPromise = getTotalRowCount('gsc_query_metrics', 'query', "AND query <> ''");
         }
         if (!shouldReturnTotalOnly) rows = await db.all<any>(`
                  SELECT ${selectCols} 
@@ -2607,6 +2616,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
                  CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
           FROM gsc_query_metrics
           ${whereClause}
+            AND query <> ''
           ${groupByClause}
           ${orderClause}
           LIMIT @limit OFFSET @offset
