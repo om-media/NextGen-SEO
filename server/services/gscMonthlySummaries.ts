@@ -612,7 +612,12 @@ export async function hasGscMonthlySummariesForRange(
   return !missingSummaryTable;
 }
 
-export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {
+function positiveNumber(value: unknown, fallback: number) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+export async function backfillMissingGscMonthlySummaries(db: AppDatabase, maxSites = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_MAX_SITES, 2)) {
   const sites = await db.all<{ ownerId: string; siteUrl: string; startDate: string; endDate: string }>(`
     SELECT ownerId, siteUrl, MIN(date) AS startDate, MAX(date) AS endDate
     FROM gsc_site_metrics
@@ -625,6 +630,7 @@ export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {
 
   let backfilledSiteCount = 0;
   for (const site of sites) {
+    if (backfilledSiteCount >= maxSites) break;
     if (!site.ownerId || !site.siteUrl || !site.startDate || !site.endDate) continue;
     if (!getGscSummaryWindow(site.startDate, site.endDate)) continue;
     const missingTables: GscMonthlySummaryTable[] = [];
@@ -647,7 +653,9 @@ export function startGscMonthlySummaryBackfillWorker(db: AppDatabase) {
     return () => {};
   }
 
-  const intervalMs = Number(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_INTERVAL_MS || 30 * 60 * 1000);
+  const intervalMs = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_INTERVAL_MS, 30 * 60 * 1000);
+  const initialDelayMs = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_INITIAL_DELAY_MS, 60_000);
+  const maxSitesPerRun = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_MAX_SITES, 2);
   let stopped = false;
   let running = false;
 
@@ -655,7 +663,16 @@ export function startGscMonthlySummaryBackfillWorker(db: AppDatabase) {
     if (stopped || running) return;
     running = true;
     try {
-      await backfillMissingGscMonthlySummaries(db);
+      const activeWarehouseJobs = await db.get<{ count: number }>(`
+        SELECT COUNT(*) AS count
+        FROM warehouse_jobs
+        WHERE status IN ('queued', 'retrying', 'running')
+      `);
+      if (Number(activeWarehouseJobs?.count || 0) > 0) {
+        return;
+      }
+
+      await backfillMissingGscMonthlySummaries(db, maxSitesPerRun);
     } catch (error: any) {
       console.warn('[db] GSC monthly summary backfill skipped:', error?.message || error);
     } finally {
@@ -665,7 +682,7 @@ export function startGscMonthlySummaryBackfillWorker(db: AppDatabase) {
 
   const initialTimer = setTimeout(() => {
     void runBackfill();
-  }, 5_000);
+  }, initialDelayMs);
   const interval = setInterval(() => {
     void runBackfill();
   }, intervalMs);
