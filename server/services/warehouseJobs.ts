@@ -77,6 +77,8 @@ const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 8, 1, 24);
 export const USER_REQUESTED_JOB_PRIORITY = 50;
+const BOOTSTRAP_CORE_JOB_PRIORITY = 20;
+const BOOTSTRAP_DETAIL_JOB_PRIORITY = 5;
 export const SEARCH_CONSOLE_HISTORY_DAYS = 486;
 const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, SEARCH_CONSOLE_HISTORY_DAYS, 1, SEARCH_CONSOLE_HISTORY_DAYS);
 export const CORE_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_CORE_RANGE_JOB_DAYS, 120, 7, 365);
@@ -1234,6 +1236,7 @@ export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?
       dedupeCompleted: false,
       ownerId: input.ownerId,
       propertyId: input.propertyId,
+      priority: BOOTSTRAP_CORE_JOB_PRIORITY,
       siteUrl: input.siteUrl,
       startDate: chunk.startDate,
     });
@@ -1248,6 +1251,7 @@ export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: { da
     const job = await queueWarehouseSyncJob(db, {
       jobType: 'ga4-llm-range-sync',
       ownerId: input.ownerId,
+      priority: BOOTSTRAP_DETAIL_JOB_PRIORITY,
       propertyId: input.propertyId,
       siteUrl: input.siteUrl,
       targetDate: chunk.endDate,
@@ -1264,6 +1268,7 @@ export async function queueWarehouseGa4DimensionBackfillJobs(db: AppDatabase, in
     const job = await queueWarehouseGa4DimensionRangeJob(db, {
       endDate: chunk.endDate,
       ownerId: input.ownerId,
+      priority: BOOTSTRAP_DETAIL_JOB_PRIORITY,
       propertyId: input.propertyId,
       siteUrl: input.siteUrl,
       startDate: chunk.startDate,
