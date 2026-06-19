@@ -510,6 +510,7 @@ export function GscDataGrid({
             isAiDialogOpen={isAiDialogOpen}
             isExporting={pendingExportAfterLoad}
             isGeneratingAi={isGeneratingAi}
+            isLoading={loading}
             onAiDialogOpenChange={setIsAiDialogOpen}
             onExport={handleExport}
             onGenerateInsights={handleGenerateInsights}

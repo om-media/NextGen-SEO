@@ -2470,6 +2470,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
                 SELECT COUNT(DISTINCT query) AS totalRowCount
                 FROM (${summarySource.sql}) source
                 ${summaryWhereClause}
+                  AND query <> ''
               `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
             }
             if (!shouldReturnTotalOnly) rows = await db.all<any>(`
@@ -2480,6 +2481,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
                      CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
               FROM (${summarySource.sql}) source
               ${summaryWhereClause}
+                AND query <> ''
               ${groupByClause}
               ${orderClause}
               LIMIT @limit OFFSET @offset

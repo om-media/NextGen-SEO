@@ -229,6 +229,38 @@ async function rebuildQuerySummaries(db: AppDatabase, ownerId?: string, siteUrl?
     `,
     params,
   );
+
+  await db.run(
+    `
+      INSERT INTO gsc_query_monthly_metrics (ownerId, siteUrl, monthStart, query, clicks, impressions, positionSum)
+      SELECT
+        site.ownerId,
+        site.siteUrl,
+        site.monthStart,
+        '' AS query,
+        0 AS clicks,
+        0 AS impressions,
+        0 AS positionSum
+      FROM (
+        SELECT ownerId, siteUrl, substr(date, 1, 7) || '-01' AS monthStart
+        FROM gsc_site_metrics
+        ${whereClause.replace("query <> '' AND ", '')}
+        GROUP BY ownerId, siteUrl, substr(date, 1, 7)
+      ) site
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM gsc_query_monthly_metrics query
+        WHERE query.ownerId = site.ownerId
+          AND query.siteUrl = site.siteUrl
+          AND query.monthStart = site.monthStart
+      )
+      ON CONFLICT(ownerId, siteUrl, monthStart, query) DO UPDATE SET
+        clicks = excluded.clicks,
+        impressions = excluded.impressions,
+        positionSum = excluded.positionSum
+    `,
+    params,
+  );
 }
 
 async function rebuildCountrySummaries(db: AppDatabase, ownerId?: string, siteUrl?: string, startDate?: string, endDate?: string) {
@@ -277,6 +309,38 @@ async function rebuildCountrySummaries(db: AppDatabase, ownerId?: string, siteUr
       FROM gsc_country_metrics
       ${whereClause}
       GROUP BY ownerId, siteUrl, substr(date, 1, 7), country
+      ON CONFLICT(ownerId, siteUrl, monthStart, country) DO UPDATE SET
+        clicks = excluded.clicks,
+        impressions = excluded.impressions,
+        positionSum = excluded.positionSum
+    `,
+    params,
+  );
+
+  await db.run(
+    `
+      INSERT INTO gsc_country_monthly_metrics (ownerId, siteUrl, monthStart, country, clicks, impressions, positionSum)
+      SELECT
+        site.ownerId,
+        site.siteUrl,
+        site.monthStart,
+        '' AS country,
+        0 AS clicks,
+        0 AS impressions,
+        0 AS positionSum
+      FROM (
+        SELECT ownerId, siteUrl, substr(date, 1, 7) || '-01' AS monthStart
+        FROM gsc_site_metrics
+        ${whereClause}
+        GROUP BY ownerId, siteUrl, substr(date, 1, 7)
+      ) site
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM gsc_country_monthly_metrics country
+        WHERE country.ownerId = site.ownerId
+          AND country.siteUrl = site.siteUrl
+          AND country.monthStart = site.monthStart
+      )
       ON CONFLICT(ownerId, siteUrl, monthStart, country) DO UPDATE SET
         clicks = excluded.clicks,
         impressions = excluded.impressions,
@@ -334,6 +398,42 @@ async function rebuildPageSummaries(db: AppDatabase, ownerId?: string, siteUrl?:
       FROM gsc_page_metrics
       ${whereClause}
       GROUP BY ownerId, siteUrl, substr(date, 1, 7), pageKey
+      ON CONFLICT(ownerId, siteUrl, monthStart, pageKey) DO UPDATE SET
+        page = excluded.page,
+        clicks = excluded.clicks,
+        impressions = excluded.impressions,
+        positionSum = excluded.positionSum,
+        queryCount = excluded.queryCount
+    `,
+    params,
+  );
+
+  await db.run(
+    `
+      INSERT INTO gsc_page_monthly_metrics (ownerId, siteUrl, monthStart, page, pageKey, clicks, impressions, positionSum, queryCount)
+      SELECT
+        site.ownerId,
+        site.siteUrl,
+        site.monthStart,
+        '' AS page,
+        '' AS pageKey,
+        0 AS clicks,
+        0 AS impressions,
+        0 AS positionSum,
+        0 AS queryCount
+      FROM (
+        SELECT ownerId, siteUrl, substr(date, 1, 7) || '-01' AS monthStart
+        FROM gsc_site_metrics
+        ${whereClause.replace("pageKey <> '' AND ", '')}
+        GROUP BY ownerId, siteUrl, substr(date, 1, 7)
+      ) site
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM gsc_page_monthly_metrics page
+        WHERE page.ownerId = site.ownerId
+          AND page.siteUrl = site.siteUrl
+          AND page.monthStart = site.monthStart
+      )
       ON CONFLICT(ownerId, siteUrl, monthStart, pageKey) DO UPDATE SET
         page = excluded.page,
         clicks = excluded.clicks,
@@ -401,18 +501,64 @@ async function rebuildPageQuerySummaries(db: AppDatabase, ownerId?: string, site
     `,
     params,
   );
+
+  await db.run(
+    `
+      INSERT INTO gsc_page_query_monthly_metrics (ownerId, siteUrl, monthStart, page, pageKey, query, clicks, impressions, positionSum)
+      SELECT
+        site.ownerId,
+        site.siteUrl,
+        site.monthStart,
+        '' AS page,
+        '' AS pageKey,
+        '' AS query,
+        0 AS clicks,
+        0 AS impressions,
+        0 AS positionSum
+      FROM (
+        SELECT ownerId, siteUrl, substr(date, 1, 7) || '-01' AS monthStart
+        FROM gsc_site_metrics
+        ${whereClause.replace("COALESCE(NULLIF(pageKey, ''), page) <> '' AND ", '').replace("query <> '' AND ", '')}
+        GROUP BY ownerId, siteUrl, substr(date, 1, 7)
+      ) site
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM gsc_page_query_monthly_metrics pageQuery
+        WHERE pageQuery.ownerId = site.ownerId
+          AND pageQuery.siteUrl = site.siteUrl
+          AND pageQuery.monthStart = site.monthStart
+      )
+      ON CONFLICT(ownerId, siteUrl, monthStart, pageKey, query) DO UPDATE SET
+        page = excluded.page,
+        clicks = excluded.clicks,
+        impressions = excluded.impressions,
+        positionSum = excluded.positionSum
+    `,
+    params,
+  );
 }
 
 export async function refreshGscMonthlySummariesForRange(
   db: AppDatabase,
   input: { ownerId: string; siteUrl: string; startDate: string; endDate: string },
+  summaryTables: readonly GscMonthlySummaryTable[] = ALL_GSC_MONTHLY_SUMMARY_TABLES,
 ) {
   const run = db.transaction(async () => {
-    await rebuildSiteSummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
-    await rebuildQuerySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
-    await rebuildCountrySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
-    await rebuildPageSummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
-    await rebuildPageQuerySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
+    if (summaryTables.includes('gsc_site_monthly_metrics')) {
+      await rebuildSiteSummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
+    }
+    if (summaryTables.includes('gsc_query_monthly_metrics')) {
+      await rebuildQuerySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
+    }
+    if (summaryTables.includes('gsc_country_monthly_metrics')) {
+      await rebuildCountrySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
+    }
+    if (summaryTables.includes('gsc_page_monthly_metrics')) {
+      await rebuildPageSummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
+    }
+    if (summaryTables.includes('gsc_page_query_monthly_metrics')) {
+      await rebuildPageQuerySummaries(db, input.ownerId, input.siteUrl, input.startDate, input.endDate);
+    }
   });
   await run();
 }
@@ -480,9 +626,14 @@ export async function backfillMissingGscMonthlySummaries(db: AppDatabase) {
   let backfilledSiteCount = 0;
   for (const site of sites) {
     if (!site.ownerId || !site.siteUrl || !site.startDate || !site.endDate) continue;
-    const hasSummaries = await hasGscMonthlySummariesForRange(db, site);
-    if (hasSummaries) continue;
-    await refreshGscMonthlySummariesForRange(db, site);
+    if (!getGscSummaryWindow(site.startDate, site.endDate)) continue;
+    const missingTables: GscMonthlySummaryTable[] = [];
+    for (const tableName of ALL_GSC_MONTHLY_SUMMARY_TABLES) {
+      const hasSummaryTable = await hasGscMonthlySummariesForRange(db, site, [tableName]);
+      if (!hasSummaryTable) missingTables.push(tableName);
+    }
+    if (missingTables.length === 0) continue;
+    await refreshGscMonthlySummariesForRange(db, site, missingTables);
     backfilledSiteCount += 1;
   }
 

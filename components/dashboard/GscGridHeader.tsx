@@ -12,6 +12,7 @@ type GscGridHeaderProps = {
   isAiDialogOpen: boolean;
   isExporting?: boolean;
   isGeneratingAi: boolean;
+  isLoading?: boolean;
   isAiProviderUnavailable: boolean;
   onAiDialogOpenChange: (open: boolean) => void;
   onExport: () => void;
@@ -30,6 +31,7 @@ export function GscGridHeader({
   isAiDialogOpen,
   isExporting = false,
   isGeneratingAi,
+  isLoading = false,
   isAiProviderUnavailable,
   onAiDialogOpenChange,
   onExport,
@@ -42,6 +44,7 @@ export function GscGridHeader({
   const hasWarehouseTotal = typeof totalRowCount === "number" && Number.isFinite(totalRowCount);
   const titleCount = hasWarehouseTotal ? totalRowCount : rowCount;
   const titleCountSuffix = hasWarehouseTotal ? " total" : "";
+  const shouldShowCount = hasWarehouseTotal || rowCount > 0 || !isLoading;
   const dimensionLabel = dimension === "query" ? "queries" : getGridTitle(dimension).toLowerCase().replace(/^top\s+/, "");
   const description = descriptionOverride || `Analyze your top performing ${dimensionLabel} and discover new opportunities.`;
 
@@ -49,7 +52,7 @@ export function GscGridHeader({
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div className="space-y-1">
         <CardTitle className="text-lg leading-tight text-[#0F172A]">
-          {titleOverride || `${getGridTitle(dimension)} (${titleCount.toLocaleString()}${titleCountSuffix})`}
+          {titleOverride || `${getGridTitle(dimension)}${shouldShowCount ? ` (${titleCount.toLocaleString()}${titleCountSuffix})` : ""}`}
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           {description}
