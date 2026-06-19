@@ -132,6 +132,7 @@ export function AppToolbar({
           {isDashboard && (dataSource === "gsc" || dataSource === "blended" || dataSource === "ga4") && (
             <>
               <GscSyncStatusBadge
+                activeMenu={activeMenu}
                 dataSource={dataSource}
                 dateRange={dateRange}
                 ga4PropertyId={reportingGa4PropertyId}
@@ -210,6 +211,7 @@ function getIsoDateRange(dateRange: DateRange) {
 const formatWholeNumber = (value: number) => new Intl.NumberFormat("en-US").format(value);
 
 function GscSyncStatusBadge({
+  activeMenu,
   dataSource,
   dateRange,
   ga4PropertyId,
@@ -218,6 +220,7 @@ function GscSyncStatusBadge({
   refreshKey,
   siteUrl,
 }: {
+  activeMenu: string;
   dataSource: DataSource;
   dateRange: DateRange;
   ga4PropertyId?: string | null;
@@ -277,6 +280,7 @@ function GscSyncStatusBadge({
             const includeGsc = dataSource === "gsc" || dataSource === "blended";
             const includeGa4Pages = (dataSource === "ga4" || dataSource === "blended") && Boolean(status?.ga4?.enabled);
             const includeGa4Dimensions = dataSource === "ga4" && Boolean(status?.ga4?.enabled);
+            const includeGa4Llm = dataSource === "ga4" && activeMenu === "LLM Traffic" && Boolean(status?.ga4?.enabled);
             const datasets = [
               ...(includeGsc ? [
                 status.gsc.site,
@@ -285,6 +289,7 @@ function GscSyncStatusBadge({
               ] : []),
               ...(includeGa4Pages ? [status.ga4.pages] : []),
               ...(includeGa4Dimensions ? [status.ga4.dimensions] : []),
+              ...(includeGa4Llm && status.ga4.llm ? [status.ga4.llm] : []),
             ].filter(Boolean);
             activeJobCount = Number(status?.warehouseJobs?.queued || 0)
               + Number(status?.warehouseJobs?.running || 0)
@@ -298,6 +303,7 @@ function GscSyncStatusBadge({
               ? Math.max(
                 includeGa4Pages ? Number(status?.ga4?.pages?.missingDateCount || 0) : 0,
                 includeGa4Dimensions ? Number(status?.ga4?.dimensions?.missingDateCount || 0) : 0,
+                includeGa4Llm ? Number(status?.ga4?.llm?.missingDateCount || 0) : 0,
               )
               : 0;
             const coveredDateCounts = datasets.map((dataset: any) => Number(dataset?.coveredDateCount || 0));
@@ -389,7 +395,7 @@ function GscSyncStatusBadge({
     return () => {
       cancelled = true;
     };
-  }, [dataSource, dateRange, ga4PropertyId, onCoverageLoaded, pollKey, refreshKey, siteUrl]);
+  }, [activeMenu, dataSource, dateRange, ga4PropertyId, onCoverageLoaded, pollKey, refreshKey, siteUrl]);
 
   const activeJobCount = coverage?.activeJobCount || 0;
   const activeDateCount = coverage?.activeDateCount || 0;

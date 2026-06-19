@@ -46,6 +46,7 @@ export type DataCoverageResponse = {
   ga4: {
     dimensions: CoverageDataset;
     enabled: boolean;
+    llm?: CoverageDataset;
     pages: CoverageDataset;
     propertyId: string | null;
   };
@@ -117,6 +118,7 @@ export async function queueMissingCoverageSync(params: {
     queued: number;
     queuedCoreDates?: number;
     queuedGa4DimensionDates?: number;
+    queuedLlmDates?: number;
     remainingMissingDates: number;
     skippedUnavailableDates?: number;
   };

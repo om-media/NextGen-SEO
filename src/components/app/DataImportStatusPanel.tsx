@@ -105,6 +105,7 @@ function getDatasetStats(coverage: DataCoverageResponse | null, dataSource: Data
 
   if (dataSource === "ga4" && coverage.ga4.enabled) {
     datasets.push(coverage.ga4.dimensions);
+    if (coverage.ga4.llm) datasets.push(coverage.ga4.llm);
   }
 
   const expectedDateCount = Math.max(...datasets.map((dataset) => dataset.expectedDateCount), 0);
