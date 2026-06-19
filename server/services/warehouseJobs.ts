@@ -76,6 +76,7 @@ const DAILY_SCHEDULER_MS = 60 * 60 * 1000;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 8, 1, 24);
+const POSTGRES_JOB_CONCURRENCY = positiveIntegerEnv(process.env.WAREHOUSE_JOB_CONCURRENCY, 3, 1, 8);
 export const USER_REQUESTED_JOB_PRIORITY = 50;
 const BOOTSTRAP_CORE_JOB_PRIORITY = 20;
 const BOOTSTRAP_DETAIL_JOB_PRIORITY = 5;
@@ -1351,6 +1352,7 @@ export async function listWarehouseJobs(db: AppDatabase, ownerId: string, siteUr
 export function startWarehouseJobWorker(db: AppDatabase) {
   let stopped = false;
   let running = false;
+  const maxConcurrentJobs = db.dialect === 'postgres' ? Math.min(JOBS_PER_TICK, POSTGRES_JOB_CONCURRENCY) : 1;
   const tick = async () => {
     if (stopped || running) return;
     running = true;
@@ -1359,14 +1361,23 @@ export function startWarehouseJobWorker(db: AppDatabase) {
       await supersedeLegacyCoreDailyJobs(db);
       await supersedeLegacyLlmDailyJobs(db);
       await supersedeObsoleteCoreRangeJobs(db);
-      for (let i = 0; i < JOBS_PER_TICK; i += 1) {
-        const job = await claimJob(db);
-        if (!job) break;
-        try {
-          await executeWarehouseJob(db, job);
-        } catch (error) {
-          await failOrRetry(db, job, error);
+      let processedThisTick = 0;
+      while (processedThisTick < JOBS_PER_TICK) {
+        const batch: WarehouseJob[] = [];
+        for (let i = 0; i < maxConcurrentJobs && processedThisTick + batch.length < JOBS_PER_TICK; i += 1) {
+          const job = await claimJob(db);
+          if (!job) break;
+          batch.push(job);
         }
+        if (batch.length === 0) break;
+        await Promise.all(batch.map(async (job) => {
+          try {
+            await executeWarehouseJob(db, job);
+          } catch (error) {
+            await failOrRetry(db, job, error);
+          }
+        }));
+        processedThisTick += batch.length;
       }
     } catch (error) {
       console.error('[warehouse] Queue worker failed:', error);
