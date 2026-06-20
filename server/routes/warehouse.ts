@@ -2260,7 +2260,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       if (hasCountry) {
         requiredSummaryTables = ['gsc_country_monthly_metrics'];
       } else if (hasPage && !hasQuery && !hasPageFilter) {
-        requiredSummaryTables = ['gsc_page_monthly_metrics'];
+        requiredSummaryTables = ['gsc_page_monthly_metrics', 'gsc_page_query_monthly_metrics'];
       } else if (hasPage || (hasQuery && hasPageFilter)) {
         requiredSummaryTables = ['gsc_page_query_monthly_metrics'];
       } else if (hasQuery) {
@@ -2405,7 +2405,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           }
         } else if (hasPage && !hasQuery && !hasPageFilter) {
           const summarySource = buildSummarySourceSql('gsc_page_metrics', 'gsc_page_monthly_metrics', 'page');
-          if (summarySource) {
+          const pageQuerySummarySource = buildSummarySourceSql('gsc_page_query_metrics', 'gsc_page_query_monthly_metrics', 'pageQuery');
+          if (summarySource && pageQuerySummarySource) {
             if (shouldIncludeTotal) {
               totalRowCountPromise = db.get<any>(`
                 SELECT COUNT(DISTINCT pageKey) AS totalRowCount
@@ -2414,17 +2415,33 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
             }
             if (!shouldReturnTotalOnly) rows = await db.all<any>(`
-              SELECT MIN(page) AS page,
-                     pageKey,
-                     SUM(queryCount) as queryCount,
-                     SUM(clicks) as clicks,
-                     SUM(impressions) as impressions,
-                     CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
-                     CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
-              FROM (${summarySource.sql}) source
-              WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND pageKey <> ''
-              GROUP BY pageKey
-              ORDER BY clicks DESC, impressions DESC
+              WITH page_metrics AS (
+                SELECT MIN(page) AS page,
+                       pageKey,
+                       SUM(clicks) as clicks,
+                       SUM(impressions) as impressions,
+                       SUM(positionSum) as positionSum
+                FROM (${summarySource.sql}) source
+                WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND pageKey <> ''
+                GROUP BY pageKey
+              ),
+              query_counts AS (
+                SELECT pageKey,
+                       COUNT(DISTINCT query) AS queryCount
+                FROM (${pageQuerySummarySource.sql}) source
+                WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND pageKey <> '' AND query <> ''
+                GROUP BY pageKey
+              )
+              SELECT page_metrics.page,
+                     page_metrics.pageKey,
+                     COALESCE(query_counts.queryCount, 0) AS queryCount,
+                     page_metrics.clicks,
+                     page_metrics.impressions,
+                     CASE WHEN page_metrics.impressions > 0 THEN page_metrics.clicks*1.0/page_metrics.impressions ELSE 0 END as ctr,
+                     CASE WHEN page_metrics.impressions > 0 THEN page_metrics.positionSum*1.0/page_metrics.impressions ELSE 0 END as position
+              FROM page_metrics
+              LEFT JOIN query_counts ON query_counts.pageKey = page_metrics.pageKey
+              ORDER BY page_metrics.clicks DESC, page_metrics.impressions DESC
               LIMIT @limit OFFSET @offset
             `, summarySource.params);
           }
