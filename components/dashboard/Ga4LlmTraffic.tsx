@@ -94,7 +94,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
       const payload = await response.json().catch(() => null)
       if (!response.ok) {
         const message = String(payload?.error || "Failed to load stored LLM referral report");
-        throw new Error(message.includes("warehouse") ? "This LLM referral report needs stored history for the selected range." : message)
+        throw new Error(message.includes("warehouse") ? "Analytics data is still updating for this LLM referral report." : message)
       }
       return payload
     }
@@ -230,9 +230,9 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
           <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground">Preparing LLM referral traffic</h3>
+          <h3 className="text-lg font-semibold text-foreground">Updating LLM referral traffic</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            {coverageText}. The app is importing Analytics source and landing-page facts for this report, then this view will update automatically.
+            {coverageText}. Analytics source and landing-page rows are updating in the background.
           </p>
         </CardContent>
       </Card>
@@ -244,7 +244,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
       <div className="space-y-6" aria-busy="true">
         <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_24px_rgba(15,61,46,0.045)]">
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          <span>Loading stored LLM referral data...</span>
+          <span>Loading LLM referral data...</span>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, index) => (
@@ -274,7 +274,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
             <Database className="h-5 w-5" />
           </div>
           <h3 className={`text-lg font-semibold ${isPreparationError ? 'text-foreground' : 'text-destructive'}`}>
-            {isPreparationError ? 'Preparing LLM referral traffic' : 'Could not load LLM referral traffic'}
+            {isPreparationError ? 'Updating LLM referral traffic' : 'Could not load LLM referral traffic'}
           </h3>
           <p className="mt-2 max-w-2xl text-sm leading-6">{error}</p>
         </CardContent>

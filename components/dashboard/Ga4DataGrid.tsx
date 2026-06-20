@@ -200,7 +200,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
         } else if (err.message === "Failed to fetch") {
           setError("Network error: Unable to connect to Google Analytics API. This could be due to an adblocker, privacy extension, or network connectivity issue.")
         } else if (/not warehoused|being prepared|not ready|history import/i.test(err.message)) {
-          setError("This Analytics report needs stored history for the selected range. Existing Overview and Pages data stays available while the import completes.")
+          setError("Analytics data is still updating for this report. Existing stored rows stay available while the background import catches up.")
         } else {
           setError(err.message)
         }
@@ -339,10 +339,10 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
           </div>
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            Loading stored Analytics data
+            Loading Analytics report
           </div>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Reading the app warehouse for {dimensionLabel.toLowerCase()} metrics on this site and date range.
+            Checking stored {dimensionLabel.toLowerCase()} metrics for this site and date range.
           </p>
         </CardContent>
       </Card>
@@ -358,7 +358,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
           </div>
           <div>
             <h3 className={`text-lg font-semibold ${isPreparationError ? 'text-foreground' : 'text-destructive'}`}>
-              {isPreparationError ? `Preparing GA4 ${dimensionLabel} report` : 'Could not load Analytics report'}
+              {isPreparationError ? `Updating GA4 ${dimensionLabel} report` : 'Could not load Analytics report'}
             </h3>
             <p className="mt-2 max-w-2xl text-sm leading-6">{error}</p>
           </div>
@@ -436,9 +436,9 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
           <div className="mb-4 rounded-full bg-secondary p-3 text-primary">
             <Database className="h-5 w-5" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground">GA4 {getDimensionHeader()} report is being prepared</h3>
+          <h3 className="text-lg font-semibold text-foreground">GA4 {getDimensionHeader()} report is updating</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            The app is storing this Analytics breakdown in the background. Page and date reports are available now; this report will appear once its history is ready.
+            This Analytics breakdown is queued in the background. Other stored Analytics reports remain available while this one catches up.
           </p>
         </CardContent>
       </Card>
@@ -466,13 +466,13 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
               <Database className="h-4 w-4 text-primary" />
             )}
             <span className="font-medium text-foreground">
-              {hasActiveWarehouseWork ? "Preparing Analytics history" : "Analytics breakdown preparation available"}
+              {hasActiveWarehouseWork ? "Updating Analytics history" : "Analytics data update available"}
             </span>
             <span>
               {Number(coverage.coveredDateCount || 0).toLocaleString()} / {Number(coverage.expectedDateCount || 0).toLocaleString()} days ready
             </span>
           </div>
-          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while stored data catches up." : "The app will queue the missing stored days automatically."}</span>
+          <span>{hasActiveWarehouseWork ? "Existing rows stay visible while stored data catches up." : "Refresh the selected range to fill missing stored rows for this breakdown."}</span>
         </div>
       )}
 
@@ -633,7 +633,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
                 <TableRow>
                   <TableCell colSpan={metrics.length + 1} className="h-24 text-center text-muted-foreground">
                     {Number(coverage?.missingDateCount || 0) > 0
-                      ? `GA4 ${dimensionLabel.toLowerCase()} history is being prepared for this property, site, and date range. The app queues missing days automatically.`
+                      ? `GA4 ${dimensionLabel.toLowerCase()} data is updating for this property, site, and date range. Existing stored rows will appear here automatically.`
                       : "No data available."}
                   </TableCell>
                 </TableRow>

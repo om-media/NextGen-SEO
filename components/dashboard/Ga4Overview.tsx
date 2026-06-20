@@ -520,9 +520,9 @@ export function Ga4Overview({
         <CardContent className="flex h-[400px] flex-col items-center justify-center gap-3 px-6 text-center">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Loading stored Analytics data</h3>
+            <h3 className="text-sm font-semibold text-foreground">Loading Analytics report</h3>
             <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              Reading this property and workspace site from the app warehouse.
+              Checking stored rows for this property and workspace site.
             </p>
           </div>
         </CardContent>
@@ -550,17 +550,17 @@ export function Ga4Overview({
             <Info className="h-5 w-5" />
           </div>
           <h3 className="text-lg font-semibold text-foreground">
-            {missingDateCount > 0 ? "Preparing GA4 history for this range" : "No GA4 activity found for this range"}
+            {missingDateCount > 0 ? "Analytics data is updating" : "No GA4 activity found for this range"}
           </h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
             {missingDateCount > 0
-              ? `${coveredDateCount.toLocaleString()} / ${expectedDateCount.toLocaleString()} days are ready for this property and workspace site. The app is queuing missing days automatically; existing stored rows will appear as soon as they are ready.`
+              ? `${coveredDateCount.toLocaleString()} / ${expectedDateCount.toLocaleString()} days are ready for this property and workspace site. Missing days are queued in the background.`
               : "The selected GA4 property and workspace site have no stored Analytics rows for this date range."}
           </p>
           {hasActiveWarehouseWork && (
             <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium text-foreground">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              Preparing Analytics history
+              Updating Analytics history
             </div>
           )}
         </CardContent>

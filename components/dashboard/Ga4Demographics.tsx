@@ -166,7 +166,7 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
               <Database className="h-4 w-4 text-primary" />
             )}
             <span className="font-medium text-foreground">
-              {hasActiveWarehouseWork || isPreparationError ? "Preparing Analytics breakdowns" : "Analytics breakdown import available"}
+              {hasActiveWarehouseWork || isPreparationError ? "Updating Analytics breakdowns" : "Analytics data update available"}
             </span>
             {coverage && (
               <span>
@@ -174,7 +174,7 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
               </span>
             )}
           </div>
-          <span>{hasAnyRows ? "Existing rows stay visible while the import catches up." : "Stored rows will appear here as soon as they are ready."}</span>
+          <span>{hasAnyRows ? "Existing rows stay visible while stored data catches up." : "Stored rows will appear here automatically when they are ready."}</span>
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
