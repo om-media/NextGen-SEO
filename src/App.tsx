@@ -247,11 +247,23 @@ function MainApp() {
     setGa4Sites(readCachedList<{siteUrl: string, displayName: string}>(ga4SitesCacheKey(userKey)));
     localStorage.removeItem('gsc_sites_cache');
     localStorage.removeItem('ga4_sites_cache');
+    const profileWorkspaceSites = Array.from(new Set([
+      userProfile.activatedSiteUrl || "",
+      ...(userProfile.unlockedSites || []),
+      ...(userProfile.knownSites || []),
+    ].filter(Boolean)));
     const cachedSite = localStorage.getItem(selectedSiteCacheKey(userKey)) || "";
-    const initialSite = cachedSite || userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || "";
-    const cachedGa4Property = localStorage.getItem(selectedGa4PropertyCacheKey(userKey, initialSite))
-      || localStorage.getItem(legacySelectedGa4PropertyCacheKey(userKey))
-      || "";
+    const cachedSiteIsKnown = cachedSite && profileWorkspaceSites.includes(cachedSite);
+    if (cachedSite && !cachedSiteIsKnown) {
+      localStorage.removeItem(selectedSiteCacheKey(userKey));
+    }
+    const initialSite = cachedSiteIsKnown
+      ? cachedSite
+      : userProfile.activatedSiteUrl || userProfile.unlockedSites[0] || userProfile.knownSites?.[0] || "";
+    const cachedGa4Property = initialSite
+      ? localStorage.getItem(selectedGa4PropertyCacheKey(userKey, initialSite)) || ""
+      : "";
+    localStorage.removeItem(legacySelectedGa4PropertyCacheKey(userKey));
     setSelectedSite(initialSite);
     setSelectedGa4Property(cachedGa4Property || (initialSite === userProfile.activatedSiteUrl ? userProfile.activatedGa4PropertyId || "" : ""));
     setSelectedGa4PropertySite(initialSite);
@@ -261,6 +273,7 @@ function MainApp() {
     user?.uid,
     userProfile?.activatedGa4PropertyId,
     userProfile?.activatedSiteUrl,
+    userProfile?.knownSites,
     userProfile?.unlockedSites,
   ]);
 
@@ -370,10 +383,15 @@ function MainApp() {
     return availableSites.find((site) => isGa4PropertyForWorkspaceSite(site, workspaceSite))?.siteUrl || "";
   };
 
-  const getPreferredGa4PropertyId = (availableSites: SiteLike[], currentPreference = selectedGa4Property, workspaceSite = selectedSite) => {
+  const getPreferredGa4PropertyId = (
+    availableSites: SiteLike[],
+    currentPreference = selectedGa4Property,
+    workspaceSite = selectedSite,
+    options: { allowUnscopedPreference?: boolean } = {},
+  ) => {
     if (
       currentPreference &&
-      selectedGa4PropertySite === workspaceSite &&
+      (options.allowUnscopedPreference || selectedGa4PropertySite === workspaceSite) &&
       availableSites.some((site) => site.siteUrl === currentPreference)
     ) {
       return currentPreference;
@@ -388,7 +406,7 @@ function MainApp() {
       return savedWorkspaceDefault;
     }
 
-    return "";
+    return getGa4PropertyForWorkspaceSite(availableSites, workspaceSite);
   };
 
   useEffect(() => {
@@ -549,6 +567,15 @@ function MainApp() {
 
   const handleSiteSelect = async (siteUrl: string) => {
     setSelectedSite(siteUrl);
+    if (dataSource === "ga4") {
+      const cachedProperty = user?.uid
+        ? localStorage.getItem(selectedGa4PropertyCacheKey(user.uid, siteUrl)) || ""
+        : "";
+      setSelectedGa4Property(getPreferredGa4PropertyId(accessibleGa4Sites, cachedProperty, siteUrl, {
+        allowUnscopedPreference: Boolean(cachedProperty),
+      }));
+      setSelectedGa4PropertySite(siteUrl);
+    }
   };
 
   const handleOnboardingGa4PropertySelect = (propertyId: string) => {
@@ -837,7 +864,14 @@ function MainApp() {
       return;
     }
 
-    if (selectedGa4PropertySite !== selectedSite) {
+    if (cachedProperty) {
+      localStorage.removeItem(selectedGa4PropertyCacheKey(user.uid, selectedSite));
+    }
+
+    const selectedPropertyIsAvailable = selectedGa4Property
+      ? accessibleGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
+      : false;
+    if (selectedGa4PropertySite !== selectedSite || (selectedGa4Property && !selectedPropertyIsAvailable)) {
       const fallbackProperty = getPreferredGa4PropertyId(accessibleGa4Sites, "", selectedSite);
       setSelectedGa4Property(fallbackProperty);
       setSelectedGa4PropertySite(selectedSite);
