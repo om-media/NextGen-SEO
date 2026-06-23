@@ -566,8 +566,9 @@ export async function refreshGscMonthlySummariesForRange(
 export async function ensureGscMonthlySummariesForRange(
   db: AppDatabase,
   input: { ownerId: string; siteUrl: string; startDate: string; endDate: string },
+  summaryTables: readonly GscMonthlySummaryTable[] = ALL_GSC_MONTHLY_SUMMARY_TABLES,
 ) {
-  const hasSummaries = await hasGscMonthlySummariesForRange(db, input);
+  const hasSummaries = await hasGscMonthlySummariesForRange(db, input, summaryTables);
   if (hasSummaries) return false;
 
   const summaryWindow = getGscSummaryWindow(input.startDate, input.endDate);
@@ -580,7 +581,7 @@ export async function ensureGscMonthlySummariesForRange(
     ownerId: input.ownerId,
     siteUrl: input.siteUrl,
     startDate: fullMonthStart,
-  });
+  }, summaryTables);
   return true;
 }
 
