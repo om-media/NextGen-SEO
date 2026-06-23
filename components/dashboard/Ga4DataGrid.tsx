@@ -122,74 +122,68 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
         const reportOptions = { signal: controller.signal, siteUrl: workspaceSiteUrl }
-        
-        const promises = [
-          ga4Service.runReport(
-            siteUrl, 
-            startDate, 
-            endDate, 
-            [dimension], 
-            metrics,
-            undefined,
-            reportOptions
-          )
-        ];
+        const primaryResult = await ga4Service.runReport(
+          siteUrl,
+          startDate,
+          endDate,
+          [dimension],
+          metrics,
+          undefined,
+          reportOptions
+        )
+        if (!isCurrent) return
+
+        const primaryRows = (primaryResult.rows || []).filter((row: any) => getGa4DimensionValue(row));
+        setCoverage(primaryResult?.metadata?.coverage || null)
+        setData(primaryRows)
+        setPageIndex(0)
 
         if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
-           const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
-           const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
-           promises.push(
-             ga4Service.runReport(
-               siteUrl,
-               compareStartDate,
-               compareEndDate,
-               [dimension],
-               metrics,
-               undefined,
-               reportOptions
-             )
-           )
-        }
-        
-        const results = await Promise.all(promises);
-        if (!isCurrent) return
-        const primaryRows = (results[0].rows || []).filter((row: any) => getGa4DimensionValue(row));
-        setCoverage(results[0]?.metadata?.coverage || null)
+          try {
+            const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
+            const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
+            const compareResult = await ga4Service.runReport(
+              siteUrl,
+              compareStartDate,
+              compareEndDate,
+              [dimension],
+              metrics,
+              undefined,
+              reportOptions
+            )
+            if (!isCurrent) return
+            const compareRows = (compareResult.rows || []).filter((row: any) => getGa4DimensionValue(row));
+            let mergedData = [];
 
-        if (!isCompareMode || !results[1]) {
-           setData(primaryRows);
-        } else {
-           const compareRows = (results[1].rows || []).filter((row: any) => getGa4DimensionValue(row));
-           let mergedData = [];
-           
-           if (dimension === 'date') {
-             // For dates, map by index after sorting chronologically, so day 1 matches compare day 1
-             const sortedPrimary = [...primaryRows].sort((a: any, b: any) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)));
-             const sortedCompare = [...compareRows].sort((a: any, b: any) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)));
-             
-             mergedData = sortedPrimary.map((row: any, index: number) => {
-               const compareRow = sortedCompare[index];
-               return {
-                 ...row,
-                 compareMetricValues: compareRow ? compareRow.metricValues : undefined
-               };
-             });
-           } else {
-             const compareMap = new Map(compareRows.map((row: any) => [getGa4DimensionValue(row), row]));
-             
-             mergedData = primaryRows.map((row: any) => {
-               const compareRow: any = compareMap.get(getGa4DimensionValue(row));
-               return {
-                 ...row,
-                 compareMetricValues: compareRow ? compareRow.metricValues : undefined
-               };
-             });
-           }
-           
-           setData(mergedData);
+            if (dimension === 'date') {
+              const sortedPrimary = [...primaryRows].sort((a: any, b: any) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)));
+              const sortedCompare = [...compareRows].sort((a: any, b: any) => getGa4DimensionValue(a).localeCompare(getGa4DimensionValue(b)));
+
+              mergedData = sortedPrimary.map((row: any, index: number) => {
+                const compareRow = sortedCompare[index];
+                return {
+                  ...row,
+                  compareMetricValues: compareRow ? compareRow.metricValues : undefined
+                };
+              });
+            } else {
+              const compareMap = new Map(compareRows.map((row: any) => [getGa4DimensionValue(row), row]));
+
+              mergedData = primaryRows.map((row: any) => {
+                const compareRow: any = compareMap.get(getGa4DimensionValue(row));
+                return {
+                  ...row,
+                  compareMetricValues: compareRow ? compareRow.metricValues : undefined
+                };
+              });
+            }
+
+            setData(mergedData);
+          } catch (compareError: any) {
+            if (!isCurrent || compareError?.name === "AbortError") return
+            console.warn("GA4 compare report is not ready yet; showing primary rows.", compareError)
+          }
         }
-        
-        setPageIndex(0) // Reset to first page
       } catch (err: any) {
         if (!isCurrent || err?.name === "AbortError") return
         console.error("Error fetching GA4 stats:", err)

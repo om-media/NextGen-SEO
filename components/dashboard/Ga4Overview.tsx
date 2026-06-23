@@ -211,23 +211,24 @@ export function Ga4Overview({
         const metrics = ["sessions", "totalUsers", "screenPageViews", "bounceRate", "eventCount"]
 
         const reportOptions = { signal: controller.signal, siteUrl: workspaceSiteUrl }
-        const promises = [
-          ga4Service.runReport(siteUrl, startDate, endDate, ["date"], metrics, dimensionFilter, reportOptions),
-        ]
+        const primaryResult = await ga4Service.runReport(siteUrl, startDate, endDate, ["date"], metrics, dimensionFilter, reportOptions)
+        if (!isCurrent) return
+        setData(primaryResult.rows || [])
+        setCompareData([])
+        setCoverage(primaryResult?.metadata?.coverage || null)
 
         if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
-          const compareStartDate = format(compareDateRange.from, "yyyy-MM-dd")
-          const compareEndDate = format(compareDateRange.to, "yyyy-MM-dd")
-          promises.push(
-            ga4Service.runReport(siteUrl, compareStartDate, compareEndDate, ["date"], metrics, dimensionFilter, reportOptions),
-          )
+          try {
+            const compareStartDate = format(compareDateRange.from, "yyyy-MM-dd")
+            const compareEndDate = format(compareDateRange.to, "yyyy-MM-dd")
+            const compareResult = await ga4Service.runReport(siteUrl, compareStartDate, compareEndDate, ["date"], metrics, dimensionFilter, reportOptions)
+            if (!isCurrent) return
+            setCompareData(compareResult.rows || [])
+          } catch (compareError: any) {
+            if (!isCurrent || compareError?.name === "AbortError") return
+            console.warn("GA4 compare chart is not ready yet; showing primary chart data.", compareError)
+          }
         }
-
-        const results = await Promise.all(promises)
-        if (!isCurrent) return
-        setData(results[0].rows || [])
-        setCompareData(results[1]?.rows || [])
-        setCoverage(results[0]?.metadata?.coverage || null)
       } catch (err: any) {
         if (!isCurrent || err?.name === "AbortError") return
         console.error("Error fetching GA4 stats:", err)
