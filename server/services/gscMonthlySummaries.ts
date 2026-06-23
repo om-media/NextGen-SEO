@@ -412,6 +412,26 @@ async function rebuildPageSummaries(db: AppDatabase, ownerId?: string, siteUrl?:
     `
       INSERT INTO gsc_page_monthly_metrics (ownerId, siteUrl, monthStart, page, pageKey, clicks, impressions, positionSum, queryCount)
       SELECT
+        ownerId,
+        siteUrl,
+        substr(date, 1, 7) || '-01' AS monthStart,
+        MIN(page) AS page,
+        COALESCE(NULLIF(pageKey, ''), page) AS pageKey,
+        SUM(clicks) AS clicks,
+        SUM(impressions) AS impressions,
+        SUM(position * impressions) AS positionSum,
+        COUNT(DISTINCT query) AS queryCount
+      FROM gsc_page_query_metrics
+      ${whereClause.replace("pageKey <> ''", "COALESCE(NULLIF(pageKey, ''), page) <> ''")}
+      GROUP BY ownerId, siteUrl, substr(date, 1, 7), COALESCE(NULLIF(pageKey, ''), page)
+      ON CONFLICT(ownerId, siteUrl, monthStart, pageKey) DO NOTHING
+    `,
+    params,
+  );
+  await db.run(
+    `
+      INSERT INTO gsc_page_monthly_metrics (ownerId, siteUrl, monthStart, page, pageKey, clicks, impressions, positionSum, queryCount)
+      SELECT
         site.ownerId,
         site.siteUrl,
         site.monthStart,
@@ -694,3 +714,4 @@ export function startGscMonthlySummaryBackfillWorker(db: AppDatabase) {
     clearInterval(interval);
   };
 }
+

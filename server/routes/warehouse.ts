@@ -2364,6 +2364,34 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               FROM ${tableName}
               WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @edgeStart${index} AND date <= @edgeEnd${index}
             `);
+            sourceSegments.push(`
+              SELECT
+                pageQuery.ownerId,
+                pageQuery.siteUrl,
+                MIN(pageQuery.page) AS page,
+                COALESCE(NULLIF(pageQuery.pageKey, ''), pageQuery.page) AS pageKey,
+                NULL AS query,
+                NULL AS country,
+                COUNT(DISTINCT pageQuery.query) AS queryCount,
+                SUM(pageQuery.clicks) AS clicks,
+                SUM(pageQuery.impressions) AS impressions,
+                SUM(pageQuery.position * pageQuery.impressions) AS positionSum
+              FROM gsc_page_query_metrics pageQuery
+              WHERE pageQuery.ownerId = @ownerId
+                AND pageQuery.siteUrl = @siteUrl
+                AND pageQuery.date >= @edgeStart${index}
+                AND pageQuery.date <= @edgeEnd${index}
+                AND COALESCE(NULLIF(pageQuery.pageKey, ''), pageQuery.page) <> ''
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM ${tableName} pageMetric
+                  WHERE pageMetric.ownerId = pageQuery.ownerId
+                    AND pageMetric.siteUrl = pageQuery.siteUrl
+                    AND pageMetric.date = pageQuery.date
+                    AND COALESCE(NULLIF(pageMetric.pageKey, ''), pageMetric.page) = COALESCE(NULLIF(pageQuery.pageKey, ''), pageQuery.page)
+                )
+              GROUP BY pageQuery.ownerId, pageQuery.siteUrl, COALESCE(NULLIF(pageQuery.pageKey, ''), pageQuery.page)
+            `);
           } else {
             sourceSegments.push(`
               SELECT ownerId, siteUrl, page, COALESCE(NULLIF(pageKey, ''), page) AS pageKey, query, NULL AS country, NULL AS queryCount, clicks, impressions, position * impressions AS positionSum
@@ -2971,3 +2999,4 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
   });
 }
+
