@@ -265,7 +265,7 @@ function MainApp() {
       : "";
     localStorage.removeItem(legacySelectedGa4PropertyCacheKey(userKey));
     setSelectedSite(initialSite);
-    setSelectedGa4Property(cachedGa4Property || (initialSite === userProfile.activatedSiteUrl ? userProfile.activatedGa4PropertyId || "" : ""));
+    setSelectedGa4Property(cachedGa4Property);
     setSelectedGa4PropertySite(initialSite);
     setInitializedSelectionsForUser(userKey);
   }, [
@@ -397,11 +397,14 @@ function MainApp() {
       return currentPreference;
     }
     const savedWorkspaceDefault = userProfile?.activatedGa4PropertyId || "";
+    const savedDefaultSite = savedWorkspaceDefault
+      ? availableSites.find((site) => site.siteUrl === savedWorkspaceDefault)
+      : null;
     if (
       workspaceSite &&
       workspaceSite === userProfile?.activatedSiteUrl &&
-      savedWorkspaceDefault &&
-      availableSites.some((site) => site.siteUrl === savedWorkspaceDefault)
+      savedDefaultSite &&
+      isGa4PropertyForWorkspaceSite(savedDefaultSite, workspaceSite)
     ) {
       return savedWorkspaceDefault;
     }
@@ -597,20 +600,9 @@ function MainApp() {
     setShowSettingsModal(false);
   };
 
-  const handleGa4PropertySelect = async (propertyId: string) => {
+  const handleGa4PropertySelect = (propertyId: string) => {
     setSelectedGa4Property(propertyId);
     setSelectedGa4PropertySite(selectedSite);
-
-    if (isOnboarding) {
-      return;
-    }
-
-    const selectedProperty = ga4Sites.find((site) => site.siteUrl === propertyId);
-    try {
-      await updateDefaultGa4Property(propertyId, selectedProperty?.displayName || null, selectedSite || null);
-    } catch (err) {
-      console.warn("Failed to persist default GA4 property:", err);
-    }
   };
 
   const handleSaveGa4Property = async () => {
