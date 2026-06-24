@@ -78,6 +78,36 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
   };
 
+  const queueInitialBingSyncIfPossible = async (ownerId: string, apiKey?: string | null) => {
+    const normalizedApiKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+    if (!normalizedApiKey) return;
+
+    try {
+      const user = await db.get<{ activatedSiteUrl?: string | null; knownSites?: string | null; unlockedSites?: string | null }>(
+        'SELECT activatedSiteUrl, knownSites, unlockedSites FROM users WHERE id = ?',
+        [ownerId],
+      );
+      if (!user) return;
+
+      const candidateSites = uniqueSites([
+        typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl : '',
+        ...parseStoredSites(user.unlockedSites),
+        ...parseStoredSites(user.knownSites),
+      ]);
+
+      for (const siteUrl of candidateSites) {
+        try {
+          if (await canAccessSite(db, ownerId, siteUrl)) {
+            await syncBingQueryStats(db, { apiKey: normalizedApiKey, ownerId, siteUrl });
+          }
+        } catch (err) {
+          console.warn('Failed to sync initial Bing data', { ownerId, siteUrl, err });
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to start initial Bing data sync', { ownerId, err });
+    }
+  };
   const queueKnownSiteDataIfPossible = async (ownerId: string, knownSites: string[]) => {
     try {
       const user = await db.get<{
@@ -363,6 +393,9 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       const normalized = typeof bingApiKey === 'string' ? bingApiKey.trim() : '';
       await db.run('UPDATE users SET bingApiKey = ? WHERE id = ?', [normalized || null, req.params.id]);
       res.json({ success: true, bingConnected: Boolean(normalized) });
+      if (normalized) {
+        void queueInitialBingSyncIfPossible(req.params.id, normalized);
+      }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
