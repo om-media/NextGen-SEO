@@ -2620,6 +2620,28 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             LIMIT @limit OFFSET @offset
           `, params);
         }
+      } else if (wantsQueryCount && hasDate && hasPage && hasPageFilter && !hasQuery) {
+        if (shouldIncludeTotal) {
+          totalRowCountPromise = getTotalRowCount(
+            'gsc_page_metrics',
+            "COALESCE(NULLIF(pageKey, ''), page)",
+            "AND COALESCE(NULLIF(pageKey, ''), page) <> ''",
+          );
+        }
+        if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+          SELECT ${selectCols}
+                 SUM(queryCount) as queryCount,
+                 SUM(clicks) as clicks,
+                 SUM(impressions) as impressions,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
+          FROM gsc_page_metrics
+          ${whereClause}
+            AND COALESCE(NULLIF(pageKey, ''), page) <> ''
+          ${groupByClause}
+          ${orderClause}
+          LIMIT @limit OFFSET @offset
+        `, params);
       } else if (hasPage || (hasQuery && hasPageFilter)) {
         if (shouldIncludeTotal) {
           totalRowCountPromise = getTotalRowCount(
