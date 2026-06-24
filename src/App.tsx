@@ -3,7 +3,7 @@ import { AppSidebar } from "@/components/layout/AppSidebar"
 import { Button } from "@/components/ui/button"
 import { AuthProvider, useAuth } from "./contexts/AuthContext"
 import { BarChart3 } from "lucide-react"
-import { lazy, Suspense, useCallback, useEffect, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { GscApiService, GscSite } from "./services/gscService"
 import { subDays, differenceInDays } from "date-fns"
 import { DateRange } from "react-day-picker"
@@ -70,6 +70,8 @@ function MainApp() {
   const [selectedSite, setSelectedSite] = useState("")
   const [selectedGa4Property, setSelectedGa4Property] = useState("")
   const [selectedGa4PropertySite, setSelectedGa4PropertySite] = useState("")
+  const explicitSiteSelectionRef = useRef(false)
+  const explicitGa4SelectionRef = useRef(false)
   const [initializedSelectionsForUser, setInitializedSelectionsForUser] = useState<string | null>(null)
   const [fetchingSites, setFetchingSites] = useState(false)
   const [isConnectingGoogleData, setIsConnectingGoogleData] = useState(false)
@@ -264,6 +266,8 @@ function MainApp() {
       ? localStorage.getItem(selectedGa4PropertyCacheKey(userKey, initialSite)) || ""
       : "";
     localStorage.removeItem(legacySelectedGa4PropertyCacheKey(userKey));
+    explicitSiteSelectionRef.current = false;
+    explicitGa4SelectionRef.current = false;
     setSelectedSite(initialSite);
     setSelectedGa4Property(cachedGa4Property);
     setSelectedGa4PropertySite(initialSite);
@@ -569,6 +573,8 @@ function MainApp() {
   }, [backgroundEffectsReady, dataSource, isOnboarding, selectedSite, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
+    explicitSiteSelectionRef.current = true;
+    explicitGa4SelectionRef.current = false;
     setSelectedSite(siteUrl);
     if (dataSource === "ga4") {
       const cachedProperty = user?.uid
@@ -601,6 +607,7 @@ function MainApp() {
   };
 
   const handleGa4PropertySelect = (propertyId: string) => {
+    explicitGa4SelectionRef.current = true;
     setSelectedGa4Property(propertyId);
     setSelectedGa4PropertySite(selectedSite);
   };
@@ -811,13 +818,17 @@ function MainApp() {
 
     if (dataSource === 'ga4') {
       if (currentSites.length === 0) {
-        setSelectedGa4Property("");
+        if (!fetchingSites && !explicitGa4SelectionRef.current) {
+          setSelectedGa4Property("");
+        }
         return;
       }
 
       if (!currentSites.some((site) => site.siteUrl === currentSelection)) {
-        setSelectedGa4Property((current) => getPreferredGa4PropertyId(currentSites, current, selectedSite));
-        setSelectedGa4PropertySite(selectedSite);
+        if (!fetchingSites && !explicitGa4SelectionRef.current) {
+          setSelectedGa4Property((current) => getPreferredGa4PropertyId(currentSites, current, selectedSite));
+          setSelectedGa4PropertySite(selectedSite);
+        }
       }
       return;
     }
@@ -830,7 +841,8 @@ function MainApp() {
       return;
     }
 
-    if (!selectedSite || !accessibleWorkspaceSites.some((site) => site.siteUrl === selectedSite)) {
+    const selectedSiteIsAccessible = Boolean(selectedSite && accessibleWorkspaceSites.some((site) => site.siteUrl === selectedSite));
+    if (!selectedSite || (!selectedSiteIsAccessible && !fetchingSites && !explicitSiteSelectionRef.current)) {
       const preferred = getPreferredSiteUrl(
         userProfile.activatedSiteUrl || selectedSite,
         accessibleWorkspaceSites,
@@ -840,7 +852,7 @@ function MainApp() {
       );
       setSelectedSite((current) => preferred || current);
     }
-  }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, isOnboarding, selectedSite, userProfile]);
+  }, [accessibleWorkspaceSites, currentSites, currentSelection, dataSource, fetchingSites, isOnboarding, selectedSite, userProfile]);
 
   useEffect(() => {
     if (!user?.uid || initializedSelectionsForUser !== user.uid || isOnboarding || !selectedSite) {
@@ -849,7 +861,7 @@ function MainApp() {
 
     const cachedProperty = localStorage.getItem(selectedGa4PropertyCacheKey(user.uid, selectedSite)) || "";
     if (cachedProperty && accessibleGa4Sites.some((site) => site.siteUrl === cachedProperty)) {
-      if (selectedGa4Property !== cachedProperty || selectedGa4PropertySite !== selectedSite) {
+      if (!explicitGa4SelectionRef.current && (selectedGa4Property !== cachedProperty || selectedGa4PropertySite !== selectedSite)) {
         setSelectedGa4Property(cachedProperty);
         setSelectedGa4PropertySite(selectedSite);
       }
@@ -864,6 +876,9 @@ function MainApp() {
       ? accessibleGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
       : false;
     if (selectedGa4PropertySite !== selectedSite || (selectedGa4Property && !selectedPropertyIsAvailable)) {
+      if (explicitGa4SelectionRef.current && selectedGa4Property && selectedGa4PropertySite === selectedSite) {
+        return;
+      }
       const fallbackProperty = getPreferredGa4PropertyId(accessibleGa4Sites, "", selectedSite);
       setSelectedGa4Property(fallbackProperty);
       setSelectedGa4PropertySite(selectedSite);

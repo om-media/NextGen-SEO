@@ -38,6 +38,9 @@ import {
 } from '../services/gscMonthlySummaries.js';
 
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
+const GA4_DIMENSION_WAREHOUSE_METRICS: Record<string, Set<string>> = {
+  eventName: new Set(['eventCount', 'totalUsers']),
+};
 const GA4_PAGE_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
 const GA4_DIMENSION_WAREHOUSE_DIMENSIONS = new Set([
   'browser',
@@ -64,6 +67,7 @@ const GA4_RAW_DIMENSIONS: Record<string, string> = {
   region: 'region',
   traffic: 'sessionSourceMedium',
 };
+const getGa4DimensionSupportedMetrics = (dimension: string) => Array.from(GA4_DIMENSION_WAREHOUSE_METRICS[dimension] || GA4_WAREHOUSE_METRICS);
 
 const readField = (row: any, key: string) => row?.[key] ?? row?.[key.toLowerCase()];
 const toCoverageNumber = (value: unknown) => {
@@ -373,7 +377,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const warehouseDimension = getGenericGa4WarehouseDimension(dimensions, dimensionFilter);
     if (!warehouseDimension) return false;
     if (dimensions.some((dimension) => dimension !== 'date' && dimension !== warehouseDimension)) return false;
-    if (metrics.some((metric) => !GA4_WAREHOUSE_METRICS.has(metric))) return false;
+    const supportedMetrics = GA4_DIMENSION_WAREHOUSE_METRICS[warehouseDimension] || GA4_WAREHOUSE_METRICS;
+    if (metrics.some((metric) => !supportedMetrics.has(metric))) return false;
     const exactFilter = getExactDimensionFilter(dimensionFilter);
     if (!exactFilter) return true;
     return exactFilter.fieldName === warehouseDimension;
@@ -735,13 +740,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       if (!allowLive) {
+        const requestedWarehouseDimension = getGenericGa4WarehouseDimension(dimensions, dimensionFilter);
+        const supportedMetrics = requestedWarehouseDimension ? getGa4DimensionSupportedMetrics(requestedWarehouseDimension) : Array.from(GA4_WAREHOUSE_METRICS);
         return res.status(409).json({
           code: 'GA4_REPORT_NOT_WAREHOUSED',
           error: 'This GA4 report is not available in the stored warehouse model yet. Use one of the supported stored dimensions or enable an explicit live request.',
           metadata: {
             source: 'warehouse',
             supportedDimensions: Array.from(GA4_WAREHOUSE_DIMENSIONS),
-            supportedMetrics: Array.from(GA4_WAREHOUSE_METRICS),
+            supportedMetrics,
           },
         });
       }
