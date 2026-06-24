@@ -149,6 +149,13 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
   const rows = data?.rows || [];
   const page = data?.page || { limit: pageSize, offset: 0, total: 0 };
   const totals = data?.meta.totals || { crawlErrors: 0, issues: 0, matched: 0, missingCrawl: 0, missingGa4: 0, missingGsc: 0, total: 0 };
+  const ga4Coverage = data?.meta.ga4Coverage || null;
+  const ga4CoverageIncomplete = Boolean(
+    ga4PropertyId
+    && ga4Coverage
+    && ga4Coverage.expectedDateCount > 0
+    && ga4Coverage.missingDateCount > 0,
+  );
   const currentPage = Math.floor(page.offset / page.limit) + 1;
   const totalPages = Math.max(1, Math.ceil(page.total / page.limit));
 
@@ -282,6 +289,13 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
           </div>
 
           {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
+
+          {ga4CoverageIncomplete && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-sm leading-6 text-amber-900">
+              <span className="font-semibold">GA4 page history is still preparing.</span>{" "}
+              Missing-GA4 findings are paused until this range is ready. {formatNumber(ga4Coverage?.coveredDateCount)} of {formatNumber(ga4Coverage?.expectedDateCount)} days are currently covered.
+            </div>
+          )}
 
           <div className="overflow-hidden rounded-2xl border border-border">
             <div className="overflow-x-auto">
@@ -452,7 +466,7 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
                       <DetailLine label="Events" value={formatNumber(selectedRow.ga4.eventCount)} />
                     </>
                   ) : (
-                    <div className="text-muted-foreground">No GA4 landing-page row matched this path.</div>
+                    <div className="text-muted-foreground">{ga4CoverageIncomplete ? "GA4 page history is still preparing for this date range." : "No GA4 landing-page row matched this path."}</div>
                   )}
                 </DetailBlock>
 

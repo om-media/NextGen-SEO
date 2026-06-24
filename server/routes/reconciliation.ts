@@ -59,6 +59,21 @@ type ReconciliationRow = {
 
 type ReconciliationBaseRow = Omit<ReconciliationRow, 'flags' | 'match' | 'reasons' | 'sources'>;
 
+type CoverageSummary = {
+  activeDateCount: number;
+  activeJobCount: number;
+  coveredDateCount: number;
+  coverageRatio: number;
+  errorJobCount: number;
+  expectedDateCount: number;
+  firstCoveredDate: string | null;
+  lastCoveredDate: string | null;
+  latestAvailableDate: string | null;
+  missingDateCount: number;
+  missingDates: string[];
+  totalRows: number;
+};
+
 const toNumber = (value: unknown) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
@@ -67,12 +82,120 @@ const toNumber = (value: unknown) => {
 const getLimit = (value: unknown) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 1), 5000) : 100);
 const getOffset = (value: unknown) => (Number.isFinite(Number(value)) ? Math.max(Number(value), 0) : 0);
 
-function getFlags(row: ReconciliationBaseRow, hasGa4Property: boolean) {
+const addIsoDays = (date: string, days: number) => {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+};
+
+const minIsoDate = (a: string, b: string) => (a <= b ? a : b);
+
+const latestStableReportingDate = () => {
+  const now = new Date();
+  now.setUTCDate(now.getUTCDate() - 2);
+  return now.toISOString().slice(0, 10);
+};
+
+const eachIsoDate = (startDate: string, endDate: string) => {
+  const dates: string[] = [];
+  for (let current = startDate; current <= endDate; current = addIsoDays(current, 1)) {
+    dates.push(current);
+  }
+  return dates;
+};
+
+const toCoverageNumber = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+function parseWarehouseJobMetrics(value: unknown) {
+  if (!value) return null;
+  try {
+    return JSON.parse(String(value)) as { ga4PropertyIds?: unknown; propertyId?: unknown; propertyIncluded?: unknown };
+  } catch {
+    return null;
+  }
+}
+
+function completedJobIncludedProperty(row: { metricsJson?: unknown; propertyId?: unknown }, propertyId: string) {
+  const metrics = parseWarehouseJobMetrics(row.metricsJson);
+  if (!metrics) return String(row.propertyId || '') === propertyId;
+  if (metrics.propertyIncluded === true) return true;
+  if (String(metrics.propertyId || '') === propertyId) return true;
+  return Array.isArray(metrics.ga4PropertyIds) && metrics.ga4PropertyIds.map(String).includes(propertyId);
+}
+
+function jobDateRange(row: { targetDate?: unknown; targetStartDate?: unknown }) {
+  const targetDate = String(row.targetDate || '');
+  if (!isIsoDateString(targetDate)) return null;
+  const targetStartDate = String(row.targetStartDate || targetDate);
+  const start = isIsoDateString(targetStartDate) ? targetStartDate : targetDate;
+  return { end: targetDate, start };
+}
+
+function jobDatesWithin(row: { targetDate?: unknown; targetStartDate?: unknown }, startDate: string, endDate: string) {
+  const range = jobDateRange(row);
+  if (!range) return [];
+  const start = range.start < startDate ? startDate : range.start;
+  const end = range.end > endDate ? endDate : range.end;
+  if (start > end) return [];
+  return eachIsoDate(start, end);
+}
+
+function addJobDatesToSet(
+  dates: Set<string>,
+  rows: Array<{ targetDate?: unknown; targetStartDate?: unknown }>,
+  startDate: string,
+  endDate: string,
+) {
+  for (const row of rows) {
+    for (const date of jobDatesWithin(row, startDate, endDate)) {
+      dates.add(date);
+    }
+  }
+}
+
+function coverageFromRows(
+  expectedDates: string[],
+  rows: Array<{ date: string; rowCount: unknown }>,
+  completedDates: Set<string>,
+): CoverageSummary {
+  const covered = new Set<string>(completedDates);
+  let totalRows = 0;
+
+  for (const row of rows) {
+    const rowCount = toCoverageNumber(row.rowCount);
+    totalRows += rowCount;
+    if (rowCount > 0) covered.add(String(row.date));
+  }
+
+  const missingDates = expectedDates.filter((date) => !covered.has(date));
+  const coveredDates = expectedDates.filter((date) => covered.has(date));
+  const expectedDateCount = expectedDates.length;
+
+  return {
+    activeDateCount: 0,
+    activeJobCount: 0,
+    coveredDateCount: coveredDates.length,
+    coverageRatio: expectedDateCount > 0 ? coveredDates.length / expectedDateCount : 1,
+    errorJobCount: 0,
+    expectedDateCount,
+    firstCoveredDate: coveredDates[0] || null,
+    lastCoveredDate: coveredDates[coveredDates.length - 1] || null,
+    latestAvailableDate: null,
+    missingDateCount: missingDates.length,
+    missingDates: missingDates.slice(0, 20),
+    totalRows,
+  };
+}
+
+function getFlags(row: ReconciliationBaseRow, hasGa4Property: boolean, ga4CoverageComplete: boolean) {
   const flags: string[] = [];
 
   if ((row.gsc || row.ga4) && !row.crawl) flags.push('missing_in_crawl');
   if ((row.ga4 || row.crawl) && !row.gsc) flags.push('missing_in_gsc');
-  if (hasGa4Property && (row.gsc || row.crawl) && !row.ga4) flags.push('missing_in_ga4');
+  if (hasGa4Property && ga4CoverageComplete && (row.gsc || row.crawl) && !row.ga4) flags.push('missing_in_ga4');
   if (row.crawl?.statusCode === null || (row.crawl?.statusCode || 0) >= 400) flags.push('crawl_error');
   if (row.crawl?.noindex) flags.push('noindex');
   if (row.crawl?.canonicalUrl && canonicalPageKey(row.crawl.canonicalUrl) !== row.pageKey) flags.push('canonical_mismatch');
@@ -249,7 +372,47 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
           GROUP BY pageKey
         `, [ownerId, propertyId, siteUrl, startDate, endDate])
         : [];
-
+      const latestAvailableDate = latestStableReportingDate();
+      const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
+      const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
+      let ga4Coverage: CoverageSummary | null = null;
+      if (propertyId) {
+        const [ga4CoverageRows, ga4JobRows] = await Promise.all([
+          db.all<{ date: string; rowCount: number }>(`
+            SELECT date, COUNT(*) AS rowCount
+            FROM ga4_page_metrics
+            WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+            GROUP BY date
+          `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
+          db.all<{ jobType: string; metricsJson: string | null; propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null }>(`
+            SELECT jobType, metricsJson, propertyId, status, targetStartDate, targetDate
+            FROM warehouse_jobs
+            WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
+              AND jobType IN ('daily-sync', 'core-range-sync')
+          `, [ownerId, siteUrl, startDate, effectiveEndDate]),
+        ]);
+        const completedDates = new Set<string>();
+        const activeDates = new Set<string>();
+        const completedJobs = ga4JobRows.filter((row) => (
+          row.status === 'completed'
+          && row.propertyId === propertyId
+          && completedJobIncludedProperty(row, propertyId)
+        ));
+        const activeJobs = ga4JobRows.filter((row) => (
+          ['queued', 'retrying', 'running'].includes(row.status)
+          && row.propertyId === propertyId
+        ));
+        addJobDatesToSet(completedDates, completedJobs, startDate, effectiveEndDate);
+        addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
+        ga4Coverage = {
+          ...coverageFromRows(expectedDates, ga4CoverageRows, completedDates),
+          activeDateCount: activeDates.size,
+          activeJobCount: activeJobs.length,
+          errorJobCount: ga4JobRows.filter((row) => row.status === 'error' && row.propertyId === propertyId).length,
+          latestAvailableDate,
+        };
+      }
+      const ga4CoverageComplete = !propertyId || !ga4Coverage || ga4Coverage.expectedDateCount === 0 || ga4Coverage.missingDateCount === 0;
       const crawlRows = crawlJobId
         ? await db.all<any>(`
           SELECT
@@ -336,7 +499,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
 
       const reconciledRows = Array.from(rowsByKey.values())
         .map((row) => {
-          const flags = getFlags(row, Boolean(propertyId));
+          const flags = getFlags(row, Boolean(propertyId), ga4CoverageComplete);
           const canonicalPageKeyValue = row.crawl?.canonicalUrl ? canonicalPageKey(row.crawl.canonicalUrl) : null;
           return {
             ...row,
@@ -391,6 +554,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
       return res.json({
         meta: {
           crawlJobId,
+          ga4Coverage,
           totals,
         },
         page: {

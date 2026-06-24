@@ -63,6 +63,20 @@ export type PageReconciliationRow = {
 export type PageReconciliationResponse = {
   meta: {
     crawlJobId: string | null;
+    ga4Coverage: null | {
+      activeDateCount: number;
+      activeJobCount: number;
+      coveredDateCount: number;
+      coverageRatio: number;
+      errorJobCount: number;
+      expectedDateCount: number;
+      firstCoveredDate: string | null;
+      lastCoveredDate: string | null;
+      latestAvailableDate: string | null;
+      missingDateCount: number;
+      missingDates: string[];
+      totalRows: number;
+    };
     totals: {
       crawlErrors: number;
       issues: number;
