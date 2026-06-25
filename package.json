@@ -13,7 +13,7 @@
     "lint": "tsc --noEmit",
     "audit:prod": "npm audit --omit=dev",
     "guard:public-files": "node scripts/check-public-files.mjs --tracked",
-    "verify": "npm run guard:public-files && npm run lint && npm run check:warehouse-backfill && npm run audit:prod && npm run build",
+    "verify": "npm run guard:public-files && npm run lint && npm run check:warehouse-backfill && npm run check:gsc-summaries && npm run audit:prod && npm run build",
     "verify:docker": "node scripts/verify-docker-smoke.mjs",
     "verify:production-url": "node scripts/verify-production-url.mjs",
     "secrets:generate": "node scripts/generate-production-secrets.mjs",
@@ -23,7 +23,8 @@
     "db:backfill:gsc-summaries": "tsx --tsconfig tsconfig.server.json scripts/backfill-gsc-monthly-summaries.ts",
     "benchmark:warehouse:pages": "tsx --tsconfig tsconfig.server.json scripts/benchmark-warehouse-pages.ts",
     "start": "node .server-dist/server.js",
-    "check:warehouse-backfill": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-backfill-dedupe.ts"
+    "check:warehouse-backfill": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-backfill-dedupe.ts",
+    "check:gsc-summaries": "tsx --tsconfig tsconfig.server.json scripts/check-gsc-monthly-summary-warmup.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

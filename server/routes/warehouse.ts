@@ -30,6 +30,7 @@ import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { getBingCacheStatus } from '../services/bingWarehouse.js';
 import { upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
 import {
+  ensureGscMonthlySummariesForRange,
   getGscSummaryWindow,
   hasGscMonthlySummariesForRange,
   refreshGscMonthlySummariesForRange,
@@ -2234,13 +2235,28 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       const requestedSummaryWindow = hasDate ? null : getGscSummaryWindow(startDate, endDate);
-      const summaryWindow = requestedSummaryWindow && await hasGscMonthlySummariesForRange(
-        db,
-        { ownerId, siteUrl, startDate, endDate },
-        requiredSummaryTables,
-      )
-        ? requestedSummaryWindow
-        : null;
+      let summaryWindow: ReturnType<typeof getGscSummaryWindow> = null;
+      if (requestedSummaryWindow) {
+        try {
+          const summaryInput = { ownerId, siteUrl, startDate, endDate };
+          let hasSummaryCoverage = await hasGscMonthlySummariesForRange(
+            db,
+            summaryInput,
+            requiredSummaryTables,
+          );
+          if (!hasSummaryCoverage) {
+            await ensureGscMonthlySummariesForRange(db, summaryInput, requiredSummaryTables);
+            hasSummaryCoverage = await hasGscMonthlySummariesForRange(
+              db,
+              summaryInput,
+              requiredSummaryTables,
+            );
+          }
+          if (hasSummaryCoverage) summaryWindow = requestedSummaryWindow;
+        } catch (error) {
+          console.warn('Unable to prepare GSC monthly summaries for warehouse query', error);
+        }
+      }
 
       const getTotalRowCount = async (tableName: string, countExpression: string, extraWhere = '') => {
         const total = await db.get<any>(`
