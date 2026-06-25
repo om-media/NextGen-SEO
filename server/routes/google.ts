@@ -145,6 +145,21 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
     return summary;
   };
 
+  const refreshKnownGscSitesForUser = async (ownerId: string) => {
+    try {
+      const data = await googleApiFetchJson(db, ownerId, 'https://www.googleapis.com/webmasters/v3/sites');
+      const siteEntries = Array.isArray(data.siteEntry) ? data.siteEntry : [];
+      const knownSites = uniqueSites(siteEntries.map((site: any) => site?.siteUrl).filter(isNonEmptyString));
+      if (knownSites.length > 0) {
+        await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(knownSites), ownerId]);
+      }
+      return knownSites.length;
+    } catch (err) {
+      console.warn('Failed to refresh Google site list after connection', { ownerId, err });
+      return 0;
+    }
+  };
+
   app.get('/api/auth/google/start', (_req, res) => {
     try {
       const authUrl = buildGoogleAppAuthUrl(_req as Request);
@@ -234,6 +249,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       if (!tokens.refresh_token) {
         const existingRefreshToken = await getStoredGoogleRefreshToken(db, userId);
         if (existingRefreshToken) {
+          await refreshKnownGscSitesForUser(userId);
           const summary = await queueGoogleWarehouseBackfillForWorkspaceSites(userId);
           return sendOauthPopupResponse(res, true, formatGoogleConnectionMessage(summary, true));
         }
@@ -242,6 +258,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       }
 
       await storeGoogleRefreshToken(db, userId, tokens.refresh_token);
+      await refreshKnownGscSitesForUser(userId);
       const summary = await queueGoogleWarehouseBackfillForWorkspaceSites(userId);
       return sendOauthPopupResponse(res, true, formatGoogleConnectionMessage(summary, false));
     } catch (err: any) {
@@ -256,7 +273,6 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       const knownSites = uniqueSites(siteEntries.map((site: any) => site?.siteUrl).filter(isNonEmptyString));
       if (knownSites.length > 0) {
         await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(knownSites), req.authUser!.uid]);
-        void queueGoogleWarehouseBackfillForWorkspaceSites(req.authUser!.uid);
       }
       res.json(siteEntries);
     } catch (err: any) {

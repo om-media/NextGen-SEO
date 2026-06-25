@@ -1228,6 +1228,77 @@ async function supersedeObsoleteCoreRangeJobs(db: AppDatabase) {
   }
 }
 
+async function missingGa4DimensionWarehouseDates(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
+  const dates = recentStableWarehouseDates(input.days);
+  const sortedDates = [...dates].sort();
+  const startDate = sortedDates[0];
+  const endDate = sortedDates[sortedDates.length - 1];
+  if (!startDate || !endDate) return [];
+
+  const [dimensionRows, jobRows] = await Promise.all([
+    db.all<{ date: string; dimensionCount: number }>(`
+      SELECT date, COUNT(DISTINCT dimension) AS dimensionCount
+      FROM ga4_dimension_metrics
+      WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+      GROUP BY date
+    `, [input.ownerId, input.propertyId, input.siteUrl, startDate, endDate]),
+    db.all<{ targetDate: string; targetStartDate: string | null }>(`
+      SELECT targetStartDate, targetDate
+      FROM warehouse_jobs
+      WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ?
+        AND jobType = 'ga4-dimension-range-sync'
+        AND status IN ('queued', 'retrying', 'running')
+        AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
+    `, [input.ownerId, input.siteUrl, input.propertyId, startDate, endDate]),
+  ]);
+
+  const requiredDimensionCount = GA4_DIMENSION_SYNC_CONFIGS.length;
+  const dimensionCountsByDate = new Map(dimensionRows.map((row) => [row.date, Number(row.dimensionCount || 0)]));
+  const activeJobDates = new Set<string>();
+  for (const row of jobRows) {
+    for (const date of jobDatesWithin(row, startDate, endDate)) {
+      activeJobDates.add(date);
+    }
+  }
+
+  return dates.filter((date) => (dimensionCountsByDate.get(date) || 0) < requiredDimensionCount && !activeJobDates.has(date));
+}
+
+async function missingGa4LlmWarehouseDates(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
+  const dates = recentStableWarehouseDates(input.days);
+  const sortedDates = [...dates].sort();
+  const startDate = sortedDates[0];
+  const endDate = sortedDates[sortedDates.length - 1];
+  if (!startDate || !endDate) return [];
+
+  const [llmRows, jobRows] = await Promise.all([
+    db.all<{ date: string }>(`
+      SELECT date
+      FROM ga4_llm_referral_metrics
+      WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+      GROUP BY date
+    `, [input.ownerId, input.propertyId, input.siteUrl, startDate, endDate]),
+    db.all<{ targetDate: string; targetStartDate: string | null }>(`
+      SELECT targetStartDate, targetDate
+      FROM warehouse_jobs
+      WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ?
+        AND jobType = 'ga4-llm-range-sync'
+        AND status IN ('queued', 'retrying', 'running')
+        AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
+    `, [input.ownerId, input.siteUrl, input.propertyId, startDate, endDate]),
+  ]);
+
+  const storedDates = new Set(llmRows.map((row) => row.date));
+  const activeJobDates = new Set<string>();
+  for (const row of jobRows) {
+    for (const date of jobDatesWithin(row, startDate, endDate)) {
+      activeJobDates.add(date);
+    }
+  }
+
+  return dates.filter((date) => !storedDates.has(date) && !activeJobDates.has(date));
+}
+
 export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId?: string | null; siteUrl: string }) {
   const jobs = [];
   const missingDates = await missingCoreWarehouseDates(db, input);
@@ -1248,7 +1319,8 @@ export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?
 
 export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
   const jobs = [];
-  for (const chunk of chunkDescendingDates(recentStableWarehouseDates(input.days), LLM_RANGE_JOB_DAYS)) {
+  const missingDates = await missingGa4LlmWarehouseDates(db, input);
+  for (const chunk of chunkDescendingDates(missingDates, LLM_RANGE_JOB_DAYS)) {
     const job = await queueWarehouseSyncJob(db, {
       jobType: 'ga4-llm-range-sync',
       ownerId: input.ownerId,
@@ -1265,7 +1337,8 @@ export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: { da
 
 export async function queueWarehouseGa4DimensionBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
   const jobs = [];
-  for (const chunk of chunkDescendingDates(recentStableWarehouseDates(input.days), GA4_DIMENSION_RANGE_JOB_DAYS)) {
+  const missingDates = await missingGa4DimensionWarehouseDates(db, input);
+  for (const chunk of chunkDescendingDates(missingDates, GA4_DIMENSION_RANGE_JOB_DAYS)) {
     const job = await queueWarehouseGa4DimensionRangeJob(db, {
       endDate: chunk.endDate,
       ownerId: input.ownerId,

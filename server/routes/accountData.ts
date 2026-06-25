@@ -164,18 +164,10 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         user.activatedGa4DisplayName = user.activatedGa4DisplayName || null;
         user.googleConnected = Boolean(user.gscRefreshToken);
         user.bingConnected = Boolean(user.bingApiKey);
-        const sitesToPrime = uniqueSites([
-          ...user.unlockedSites,
-          ...user.knownSites,
-          user.activatedSiteUrl || '',
-        ]);
         delete user.gscRefreshToken;
         delete user.bingApiKey;
 
         res.json(user);
-        if (sitesToPrime.length > 0) {
-          void queueKnownSiteDataIfPossible(req.params.id, sitesToPrime);
-        }
       } else {
         res.status(404).json({ error: 'User not found' });
       }
