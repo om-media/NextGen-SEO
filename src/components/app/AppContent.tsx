@@ -298,20 +298,20 @@ export function AppContent({
             <TabsTrigger value="countries" className={dashboardTabTriggerClass}>Users</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
-            <Ga4Overview siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} annotations={visibleAnnotations} />
-            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <Ga4Overview siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} annotations={visibleAnnotations} refreshKey={warehouseRefreshKey} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="events" className="space-y-4">
-            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="eventName" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} metrics={["eventCount", "totalUsers"]} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="eventName" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} metrics={["eventCount", "totalUsers"]} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="pages" className="space-y-4">
-            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="sources" className="space-y-4">
-            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="sessionSourceMedium" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="sessionSourceMedium" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="countries" className="space-y-4">
-            <Ga4Demographics siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} />
+            <Ga4Demographics siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} refreshKey={warehouseRefreshKey} />
             <div className="mt-8 flex items-center justify-between rounded-2xl border border-border bg-card p-5 shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
               <div>
                 <h3 className="text-lg font-semibold tracking-[-0.01em] text-foreground">Detailed user data</h3>
@@ -331,14 +331,14 @@ export function AppContent({
                 </SelectContent>
               </Select>
             </div>
-            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension={ga4UserDimension} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension={ga4UserDimension} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} refreshKey={warehouseRefreshKey} />
           </TabsContent>
         </Tabs>
       )}
 
       {selectedSite && !apiError && dataSource === "ga4" && activeMenu === "LLM Traffic" && ga4Sites.some((site) => site.siteUrl === selectedSite) && (
         <div className="space-y-4">
-          <Ga4LlmTraffic siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} />
+          <Ga4LlmTraffic siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} refreshKey={warehouseRefreshKey} />
         </div>
       )}
 

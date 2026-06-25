@@ -16,6 +16,7 @@ interface Ga4LlmTrafficProps {
   dateRange: DateRange;
   isCompareMode: boolean;
   compareDateRange: DateRange;
+  refreshKey?: number;
 }
 
 function classifyLlmSource(source: string): string {
@@ -53,7 +54,7 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   window.URL.revokeObjectURL(url)
 }
 
-export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSiteUrl, dateRange, isCompareMode, compareDateRange }: Ga4LlmTrafficProps) {
+export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSiteUrl, dateRange, isCompareMode, compareDateRange, refreshKey = 0 }: Ga4LlmTrafficProps) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<any>(null)
   const [compareData, setCompareData] = useState<any>(null)
@@ -127,13 +128,13 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
           setData(primaryReport)
           setCompareData(isCompareMode ? compareReport : null)
           setCoverage(primaryReport.coverage || null)
-          const activeJobs = Number(primaryReport.coverage?.activeJobCount || 0)
-          const hasReportRows = Boolean(
-            primaryReport?.source?.rows?.length ||
-            primaryReport?.daily?.rows?.length ||
-            primaryReport?.landingPage?.rows?.length,
-          )
-          if (activeJobs > 0 && !hasReportRows) {
+          const nextCoverage = primaryReport.coverage || {}
+          const hasWarehouseWork =
+            Number(nextCoverage.activeJobCount || 0) > 0 ||
+            Number(nextCoverage.activeDateCount || 0) > 0 ||
+            Number(nextCoverage.queuedDateCount || 0) > 0 ||
+            Number(nextCoverage.missingDateCount || 0) > 0
+          if (hasWarehouseWork) {
             pollTimer = window.setTimeout(() => {
               if (isMounted) setPollKey((key) => key + 1)
             }, 10_000)
@@ -156,7 +157,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
       controller.abort()
       if (pollTimer) window.clearTimeout(pollTimer)
     }
-  }, [siteUrl, explicitWorkspaceSiteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.activatedGa4PropertyId, userProfile?.activatedSiteUrl, userProfile?.googleConnected, pollKey])
+  }, [siteUrl, explicitWorkspaceSiteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.activatedGa4PropertyId, userProfile?.activatedSiteUrl, userProfile?.googleConnected, pollKey, refreshKey])
 
 
   const formatValue = (metric: string, value: string) => {

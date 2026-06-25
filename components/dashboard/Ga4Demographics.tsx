@@ -11,6 +11,7 @@ interface Ga4DemographicsProps {
   siteUrl: string;
   workspaceSiteUrl?: string;
   dateRange?: DateRange;
+  refreshKey?: number;
 }
 
 const COLORS = ['#4285f4', '#fbbc04', '#34a853', '#ea4335', '#ff6d00', '#46bdc6'];
@@ -77,7 +78,7 @@ const aggregateCoverage = (states: Record<DemographicDimensionKey, DimensionLoad
   }), {});
 };
 
-export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4DemographicsProps) {
+export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange, refreshKey = 0 }: Ga4DemographicsProps) {
   const { userProfile } = useAuth()
   const [dimensionStates, setDimensionStates] = useState<Record<DemographicDimensionKey, DimensionLoadState>>(() => emptyDimensionState())
   const [loading, setLoading] = useState(false)
@@ -166,12 +167,12 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange }: Ga4Dem
       isCurrent = false
       controller.abort()
     }
-  }, [siteUrl, workspaceSiteUrl, dateRange, userProfile?.googleConnected, pollKey])
+  }, [siteUrl, workspaceSiteUrl, dateRange, userProfile?.googleConnected, pollKey, refreshKey])
 
   useEffect(() => {
     if (loading) return;
     const shouldPoll = Object.values(dimensionStates).some((state) => (
-      hasWarehouseWork(state.coverage) || (state.rows.length === 0 && hasCoverageGap(state.coverage)) || isPreparationMessage(state.error)
+      hasWarehouseWork(state.coverage) || hasCoverageGap(state.coverage) || isPreparationMessage(state.error)
     ));
     if (!shouldPoll) return;
 

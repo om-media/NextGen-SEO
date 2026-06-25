@@ -32,6 +32,7 @@ interface Ga4DataGridProps {
   isCompareMode?: boolean;
   compareDateRange?: DateRange;
   metrics?: string[];
+  refreshKey?: number;
 }
 
 type SortColumn = 'dimension' | 'sessions' | 'users' | 'pageviews' | 'bouncerate' | 'eventCount';
@@ -76,7 +77,7 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   window.URL.revokeObjectURL(url);
 }
 
-export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'] }: Ga4DataGridProps) {
+export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'], refreshKey = 0 }: Ga4DataGridProps) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<ExtendedGa4DataRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -208,20 +209,20 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
       isCurrent = false
       controller.abort()
     }
-  }, [siteUrl, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey, metricsKey])
+  }, [siteUrl, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey, refreshKey, metricsKey])
 
   useEffect(() => {
     if (!coverage || loading) return;
-    if (data.length > 0) return;
     const hasWarehouseWork =
       Number(coverage.activeJobCount || 0) > 0 ||
       Number(coverage.activeDateCount || 0) > 0 ||
-      Number(coverage.queuedDateCount || 0) > 0;
+      Number(coverage.queuedDateCount || 0) > 0 ||
+      Number(coverage.missingDateCount || 0) > 0;
     if (!hasWarehouseWork) return;
 
     const timeout = window.setTimeout(() => setPollKey((value) => value + 1), 10000);
     return () => window.clearTimeout(timeout);
-  }, [coverage, loading, data.length])
+  }, [coverage, loading])
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -493,6 +494,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
               compareDateRange={compareDateRange}
               filterDimension={dimension}
               filterValue={selectedRowKey}
+              refreshKey={refreshKey}
             />
           </div>
         </Card>
