@@ -26,7 +26,7 @@ import { AppHeader } from "./components/app/AppHeader"
 import { AppStatusPanels } from "./components/app/AppStatusPanels"
 import { AppToolbar } from "./components/app/AppToolbar"
 import type { SettingsDraft } from "./components/app/SettingsDialog"
-import { getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
+import { findMatchingSite, getPreferredSiteUrl, mergeUniqueSites, type SiteLike } from "./lib/siteSelection"
 import { fetchOfflineGscSites, isGa4ScopeError, isGoogleAuthError, persistKnownSites } from "./lib/siteData"
 
 type DataSource = 'gsc' | 'bing' | 'ga4' | 'blended'
@@ -416,6 +416,27 @@ function MainApp() {
     return getGa4PropertyForWorkspaceSite(availableSites, workspaceSite);
   };
 
+  const getWorkspaceSiteForGa4Property = (propertyId: string, preferredWorkspaceSite = selectedSite) => {
+    const property = accessibleGa4Sites.find((site) => site.siteUrl === propertyId);
+    if (!property) {
+      return preferredWorkspaceSite;
+    }
+
+    if (preferredWorkspaceSite && isGa4PropertyForWorkspaceSite(property, preferredWorkspaceSite)) {
+      return preferredWorkspaceSite;
+    }
+
+    const availableWorkspaceSites = accessibleWorkspaceSites.length > 0
+      ? accessibleWorkspaceSites
+      : (userProfile?.unlockedSites || []).map((siteUrl) => ({ siteUrl }));
+    const matchingWorkspaceSite = availableWorkspaceSites.find((site) => isGa4PropertyForWorkspaceSite(property, site.siteUrl));
+    if (matchingWorkspaceSite?.siteUrl) {
+      return matchingWorkspaceSite.siteUrl;
+    }
+
+    const labelMatch = findMatchingSite(property.displayName || property.siteUrl, availableWorkspaceSites, accessibleGa4Sites);
+    return labelMatch?.siteUrl || preferredWorkspaceSite;
+  };
   useEffect(() => {
     const googleConnected = Boolean(userProfile?.googleConnected)
     let cancelled = false;
@@ -608,8 +629,12 @@ function MainApp() {
 
   const handleGa4PropertySelect = (propertyId: string) => {
     explicitGa4SelectionRef.current = true;
+    const workspaceSiteForProperty = getWorkspaceSiteForGa4Property(propertyId);
+    if (workspaceSiteForProperty && workspaceSiteForProperty !== selectedSite) {
+      setSelectedSite(workspaceSiteForProperty);
+    }
     setSelectedGa4Property(propertyId);
-    setSelectedGa4PropertySite(selectedSite);
+    setSelectedGa4PropertySite(workspaceSiteForProperty || selectedSite);
   };
 
   const handleSaveGa4Property = async () => {
