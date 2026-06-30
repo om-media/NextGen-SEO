@@ -32,7 +32,7 @@ export function normalizeUserProfile(user: UserRow) {
     company: user.company || null,
     avatarUrl: user.avatarUrl || null,
     bio: user.bio || null,
-    tier: (user.tier as 'free' | 'pro' | 'enterprise') || 'free',
+    tier: (user.tier as 'free' | 'pro' | 'enterprise') || 'enterprise',
     unlockedSites: JSON.parse(user.unlockedSites || '[]'),
     knownSites: JSON.parse(user.knownSites || '[]'),
     bingConnected: Boolean(user.bingApiKey),
