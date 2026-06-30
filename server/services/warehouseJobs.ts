@@ -121,7 +121,7 @@ const GA4_DIMENSION_SYNC_CONFIGS = [
   },
   {
     dimension: 'eventName',
-    metrics: ['eventCount', 'totalUsers'],
+    metrics: ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'],
   },
 ] as const;
 const nowIso = () => new Date().toISOString();

@@ -18,6 +18,7 @@ export interface Ga4DataRow {
 
 export type Ga4RunReportOptions = {
   allowLive?: boolean;
+  autoQueue?: boolean;
   signal?: AbortSignal;
   siteUrl?: string | null;
 };
@@ -116,6 +117,7 @@ export class Ga4ApiService {
         metrics,
         dimensionFilter: body.dimensionFilter,
         allowLive: Boolean(options.allowLive),
+        autoQueue: options.autoQueue !== false,
         siteUrl: options.siteUrl || undefined,
       })
     });

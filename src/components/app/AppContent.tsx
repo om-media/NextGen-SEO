@@ -302,7 +302,7 @@ export function AppContent({
             <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="date" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="events" className="space-y-4">
-            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="eventName" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} metrics={["eventCount", "totalUsers"]} refreshKey={warehouseRefreshKey} />
+            <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="eventName" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} refreshKey={warehouseRefreshKey} />
           </TabsContent>
           <TabsContent value="pages" className="space-y-4">
             <Ga4DataGrid siteUrl={selectedSite} workspaceSiteUrl={workspaceSiteUrl} dimension="pagePath" dateRange={dateRange} isCompareMode={isCompareMode} compareDateRange={compareDateRange} refreshKey={warehouseRefreshKey} />

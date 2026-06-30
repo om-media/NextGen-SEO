@@ -86,6 +86,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
         signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          autoQueue: true,
           endDate,
           propertyId,
           siteUrl: workspaceSiteUrl,

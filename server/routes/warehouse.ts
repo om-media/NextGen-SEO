@@ -38,9 +38,7 @@ import {
 } from '../services/gscMonthlySummaries.js';
 
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
-const GA4_DIMENSION_WAREHOUSE_METRICS: Record<string, Set<string>> = {
-  eventName: new Set(['eventCount', 'totalUsers']),
-};
+const GA4_DIMENSION_WAREHOUSE_METRICS: Record<string, Set<string>> = {};
 const GA4_PAGE_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
 const GA4_DIMENSION_WAREHOUSE_DIMENSIONS = new Set([
   'browser',
