@@ -65,6 +65,16 @@ assert(
   'Already-warehoused GSC jobs must refresh reporting summaries before being superseded',
 );
 
+assert(
+  warehouseRoutes.includes('LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD = 45'),
+  'Long-range coverage checks should avoid heavyweight GSC detail table scans',
+);
+assert(
+  warehouseRoutes.includes('const gscQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscQueryRows')
+    && warehouseRoutes.includes('const gscPageQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscPageQueryRows')
+    && warehouseRoutes.includes('const gscCountryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscCountryRows'),
+  'Long-range GSC coverage should reuse lightweight site-day coverage for detail readiness',
+);
 const gscMonthlySummaries = read('server/services/gscMonthlySummaries.ts');
 assert(
   gscMonthlySummaries.includes('GSC_MONTHLY_SUMMARY_BACKFILL_INITIAL_DELAY_MS, 5_000'),

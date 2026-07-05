@@ -54,6 +54,7 @@ const GA4_WAREHOUSE_DIMENSIONS = new Set([
   ...GA4_DIMENSION_WAREHOUSE_DIMENSIONS,
 ]);
 const GA4_DIMENSION_DATASET_COUNT = GA4_DIMENSION_WAREHOUSE_DIMENSIONS.size;
+const LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD = 45;
 const GA4_RAW_DIMENSIONS: Record<string, string> = {
   browser: 'browser',
   city: 'city',
@@ -1339,6 +1340,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const effectiveStartDate = maxIsoDate(startDate, earliestAvailableDate);
       const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
       const expectedDates = eachIsoDate(effectiveStartDate, effectiveEndDate);
+      const useLightweightGscDetailCoverage = expectedDates.length >= LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD;
       const unavailableDates = endDate > latestAvailableDate
         ? eachIsoDate(maxIsoDate(startDate, addIsoDays(latestAvailableDate, 1)), endDate)
         : [];
@@ -1350,27 +1352,33 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           GROUP BY date
           ORDER BY date ASC
         `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
-        db.all<{ date: string; rowCount: number }>(`
-          SELECT date, COUNT(*) AS rowCount
-          FROM gsc_query_metrics
-          WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
-          GROUP BY date
-          ORDER BY date ASC
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
-        db.all<{ date: string; rowCount: number }>(`
-          SELECT date, COUNT(*) AS rowCount
-          FROM gsc_page_query_metrics
-          WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
-          GROUP BY date
-          ORDER BY date ASC
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
-        db.all<{ date: string; rowCount: number }>(`
-          SELECT date, COUNT(*) AS rowCount
-          FROM gsc_country_metrics
-          WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
-          GROUP BY date
-          ORDER BY date ASC
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        useLightweightGscDetailCoverage
+          ? Promise.resolve([])
+          : db.all<{ date: string; rowCount: number }>(`
+            SELECT date, COUNT(*) AS rowCount
+            FROM gsc_query_metrics
+            WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+            GROUP BY date
+            ORDER BY date ASC
+          `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        useLightweightGscDetailCoverage
+          ? Promise.resolve([])
+          : db.all<{ date: string; rowCount: number }>(`
+            SELECT date, COUNT(*) AS rowCount
+            FROM gsc_page_query_metrics
+            WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+            GROUP BY date
+            ORDER BY date ASC
+          `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        useLightweightGscDetailCoverage
+          ? Promise.resolve([])
+          : db.all<{ date: string; rowCount: number }>(`
+            SELECT date, COUNT(*) AS rowCount
+            FROM gsc_country_metrics
+            WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+            GROUP BY date
+            ORDER BY date ASC
+          `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
         effectivePropertyId
           ? db.all<{ date: string; rowCount: number }>(`
             SELECT date, COUNT(*) AS rowCount
@@ -1414,12 +1422,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         getBingCacheStatus(db, ownerId, siteUrl),
         db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [ownerId]),
       ]);
+      const gscQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscQueryRows;
+      const gscPageQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscPageQueryRows;
+      const gscCountryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscCountryRows;
       const activeJobs = warehouseJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
       const errorJobs = warehouseJobRows.filter((row) => row.status === 'error');
       const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
-      const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
-      const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
-      const gscCountryDates = new Set(gscCountryRows.map((row) => row.date));
+      const gscQueryDates = new Set(gscQueryCoverageRows.map((row) => row.date));
+      const gscPageQueryDates = new Set(gscPageQueryCoverageRows.map((row) => row.date));
+      const gscCountryDates = new Set(gscCountryCoverageRows.map((row) => row.date));
       const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
       const ga4DimensionDateCounts = new Map(ga4DimensionRows.map((row) => [row.date, toCoverageNumber(row.rowCount)]));
       const ga4LlmDates = new Set(ga4LlmRows.map((row) => row.date));
@@ -1660,9 +1671,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           propertyId: effectivePropertyId || null,
         },
         gsc: {
-          country: coverageFromRows(expectedDates, gscCountryRows),
-          pageQuery: coverageFromRows(expectedDates, gscPageQueryRows),
-          query: coverageFromRows(expectedDates, gscQueryRows),
+          country: coverageFromRows(expectedDates, gscCountryCoverageRows),
+          pageQuery: coverageFromRows(expectedDates, gscPageQueryCoverageRows),
+          query: coverageFromRows(expectedDates, gscQueryCoverageRows),
           site: coverageFromRows(expectedDates, gscSiteRows),
         },
         bing: {
@@ -1845,6 +1856,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const effectiveStartDate = maxIsoDate(startDate, earliestAvailableDate);
       const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
       const expectedDates = eachIsoDate(effectiveStartDate, effectiveEndDate);
+      const useLightweightGscDetailCoverage = expectedDates.length >= LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD;
       const requestedPropertyId = effectivePropertyId;
       const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), SEARCH_CONSOLE_HISTORY_DAYS) : SEARCH_CONSOLE_HISTORY_DAYS;
       const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, ga4DimensionRows, ga4LlmRows, jobRows] = await Promise.all([
@@ -1904,10 +1916,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             AND status IN ('queued', 'retrying', 'running')
         `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
       ]);
+      const gscQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscQueryRows;
+      const gscPageQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscPageQueryRows;
+      const gscCountryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscCountryRows;
       const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
-      const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
-      const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
-      const gscCountryDates = new Set(gscCountryRows.map((row) => row.date));
+      const gscQueryDates = new Set(gscQueryCoverageRows.map((row) => row.date));
+      const gscPageQueryDates = new Set(gscPageQueryCoverageRows.map((row) => row.date));
+      const gscCountryDates = new Set(gscCountryCoverageRows.map((row) => row.date));
       const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
       const ga4DimensionDateCounts = new Map(ga4DimensionRows.map((row) => [row.date, toCoverageNumber(row.rowCount)]));
       const ga4LlmDates = new Set(ga4LlmRows.map((row) => row.date));
