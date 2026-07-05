@@ -10,7 +10,7 @@ import {
 } from "@/src/services/dataCoverageService";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 import { AlertTriangle, CheckCircle2, Clock3, Database, RefreshCw, RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DateRange } from "react-day-picker";
 
 type DataSource = "gsc" | "bing" | "ga4" | "blended";
@@ -157,7 +157,6 @@ export function DataImportStatusPanel({
   const [loading, setLoading] = useState(false);
   const [actionState, setActionState] = useState<"idle" | "importing" | "retrying">("idle");
   const [pollKey, setPollKey] = useState(0);
-  const autoImportKeys = useRef(new Set<string>());
 
   const range = useMemo(() => getIsoDateRange(dateRange), [dateRange]);
   const stats = getDatasetStats(coverage, dataSource);
@@ -216,49 +215,6 @@ export function DataImportStatusPanel({
     };
   }, [dataSource, ga4PropertyId, pollKey, range, refreshKey, siteUrl]);
 
-  useEffect(() => {
-    if (!siteUrl || !range || !coverage || loading || actionState !== "idle") return;
-    if (stats.missingDateCount <= 0 || activeJobCount > 0 || failedJobCount > 0) return;
-
-    const key = [
-      dataSource,
-      siteUrl,
-      ga4PropertyId || "",
-      range.startDate,
-      range.endDate,
-      stats.missingDateCount,
-    ].join("|");
-    if (autoImportKeys.current.has(key)) return;
-    autoImportKeys.current.add(key);
-
-    let cancelled = false;
-    setActionState("importing");
-    setError(null);
-    queueMissingCoverageSync({
-      endDate: range.endDate,
-      maxDates: 486,
-      propertyId: dataSource === "blended" || dataSource === "ga4" ? ga4PropertyId : null,
-      siteUrl,
-      startDate: range.startDate,
-    })
-      .then(() => {
-        if (cancelled) return;
-        onCoverageChange?.();
-        setPollKey((keyValue) => keyValue + 1);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) {
-          setError(err.message || "Failed to start automatic import");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setActionState("idle");
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [actionState, activeJobCount, coverage, dataSource, failedJobCount, ga4PropertyId, loading, onCoverageChange, range, siteUrl, stats.missingDateCount]);
 
   if (!siteUrl || !range || (dataSource !== "gsc" && dataSource !== "blended" && dataSource !== "ga4")) {
     return null;

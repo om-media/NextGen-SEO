@@ -168,6 +168,13 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         delete user.bingApiKey;
 
         res.json(user);
+        if (user.googleConnected) {
+          void queueKnownSiteDataIfPossible(user.id, uniqueSites([
+            user.activatedSiteUrl || '',
+            ...user.unlockedSites,
+            ...user.knownSites,
+          ]));
+        }
       } else {
         res.status(404).json({ error: 'User not found' });
       }
