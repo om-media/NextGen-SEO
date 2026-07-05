@@ -44,4 +44,34 @@ assert(
     && accountRoutes.includes('...user.knownSites'),
   'Profile priming must include the active, unlocked, and known workspace sites',
 );
+
+const warehouseRoutes = read('server/routes/warehouse.ts');
+assert(
+  !warehouseRoutes.includes('ensureGscMonthlySummariesForRange'),
+  'Warehouse report reads must not synchronously build monthly GSC summaries',
+);
+assert(
+  /const hasSummaryCoverage = await hasGscMonthlySummariesForRange/.test(warehouseRoutes),
+  'Warehouse report reads should only use monthly summaries when coverage already exists',
+);
+
+const warehouseJobs = read('server/services/warehouseJobs.ts');
+const alreadyStoredBranch = warehouseJobs.slice(
+  warehouseJobs.indexOf('const alreadyStored = await hasRequiredCoreWarehouseRows'),
+  warehouseJobs.indexOf('const gscResult = await syncGscRange'),
+);
+assert(
+  alreadyStoredBranch.includes('await refreshGscMonthlySummariesForRange'),
+  'Already-warehoused GSC jobs must refresh reporting summaries before being superseded',
+);
+
+const gscMonthlySummaries = read('server/services/gscMonthlySummaries.ts');
+assert(
+  gscMonthlySummaries.includes('GSC_MONTHLY_SUMMARY_BACKFILL_INITIAL_DELAY_MS, 5_000'),
+  'GSC monthly summary warmup should start shortly after the app boots',
+);
+assert(
+  gscMonthlySummaries.includes('GSC_MONTHLY_SUMMARY_BACKFILL_MAX_SITES, 10'),
+  'GSC monthly summary warmup should process enough sites per pass for real workspaces',
+);
 console.log('Workspace defaults check passed');

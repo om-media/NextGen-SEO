@@ -638,7 +638,7 @@ function positiveNumber(value: unknown, fallback: number) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
-export async function backfillMissingGscMonthlySummaries(db: AppDatabase, maxSites = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_MAX_SITES, 2)) {
+export async function backfillMissingGscMonthlySummaries(db: AppDatabase, maxSites = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_MAX_SITES, 10)) {
   const sites = await db.all<{ ownerId: string; siteUrl: string; startDate: string; endDate: string }>(`
     SELECT ownerId, siteUrl, MIN(date) AS startDate, MAX(date) AS endDate
     FROM gsc_site_metrics
@@ -674,9 +674,9 @@ export function startGscMonthlySummaryBackfillWorker(db: AppDatabase) {
     return () => {};
   }
 
-  const intervalMs = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_INTERVAL_MS, 30 * 60 * 1000);
-  const initialDelayMs = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_INITIAL_DELAY_MS, 60_000);
-  const maxSitesPerRun = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_MAX_SITES, 2);
+  const intervalMs = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_INTERVAL_MS, 5 * 60 * 1000);
+  const initialDelayMs = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_INITIAL_DELAY_MS, 5_000);
+  const maxSitesPerRun = positiveNumber(process.env.GSC_MONTHLY_SUMMARY_BACKFILL_MAX_SITES, 10);
   let stopped = false;
   let running = false;
 

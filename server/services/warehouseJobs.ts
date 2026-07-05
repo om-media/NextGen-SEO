@@ -761,6 +761,12 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
     syncedStartDate = importStartDate;
     const alreadyStored = await hasRequiredCoreWarehouseRows(db, job, importStartDate, jobEndDate, propertyId);
     if (alreadyStored) {
+      await refreshGscMonthlySummariesForRange(db, {
+        endDate: jobEndDate,
+        ownerId: job.ownerId,
+        siteUrl: job.siteUrl,
+        startDate: importStartDate,
+      });
       await updateJob(db, job.id, {
         completedAt: nowIso(),
         lastError: null,
