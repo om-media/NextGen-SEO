@@ -64,6 +64,13 @@ assert(
   alreadyStoredBranch.includes('await refreshGscMonthlySummariesForRange'),
   'Already-warehoused GSC jobs must refresh reporting summaries before being superseded',
 );
+assert(
+  /FROM gsc_page_metrics/.test(warehouseJobs.slice(
+    warehouseJobs.indexOf('async function hasRequiredCoreWarehouseRows'),
+    warehouseJobs.indexOf('async function executeWarehouseJob'),
+  )),
+  'Core warehouse completion must require page-level GSC summaries for fast Pages reports',
+);
 
 assert(
   warehouseRoutes.includes('LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD = 45'),

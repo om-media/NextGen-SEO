@@ -701,7 +701,7 @@ async function hasRequiredCoreWarehouseRows(
   if (expectedDays === 0) return false;
   const propertyId = effectivePropertyId || job.propertyId || '';
 
-  const [siteRows, queryRows, pageQueryRows, ga4Rows] = await Promise.all([
+  const [siteRows, queryRows, pageQueryRows, pageRows, ga4Rows] = await Promise.all([
     db.get<{ count: number }>(`
       SELECT COUNT(DISTINCT date) AS count
       FROM gsc_site_metrics
@@ -717,6 +717,11 @@ async function hasRequiredCoreWarehouseRows(
       FROM gsc_page_query_metrics
       WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
     `, [job.ownerId, job.siteUrl, startDate, endDate]),
+    db.get<{ count: number }>(`
+      SELECT COUNT(DISTINCT date) AS count
+      FROM gsc_page_metrics
+      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+    `, [job.ownerId, job.siteUrl, startDate, endDate]),
     propertyId
       ? db.get<{ count: number }>(`
         SELECT COUNT(DISTINCT date) AS count
@@ -729,6 +734,7 @@ async function hasRequiredCoreWarehouseRows(
   return Number(siteRows?.count || 0) >= expectedDays
     && Number(queryRows?.count || 0) >= expectedDays
     && Number(pageQueryRows?.count || 0) >= expectedDays
+    && Number(pageRows?.count || 0) >= expectedDays
     && Number(ga4Rows?.count || 0) >= expectedDays;
 }
 
