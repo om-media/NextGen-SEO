@@ -87,7 +87,7 @@ const GSC_ROW_LIMIT = 25_000;
 const GSC_MAX_PAGES_PER_DATASET = 200;
 const GA4_ROW_LIMIT = 100_000;
 const GA4_MAX_PAGES_PER_DATASET = 100;
-const LLM_SOURCE_REGEXP = 'chatgpt|openai|claude|anthropic|perplexity|copilot|bing.com/chat';
+const LLM_SOURCE_REGEXP = 'chatgpt|openai|claude|anthropic|perplexity|copilot|bing\\.com/chat|gemini|bard|ai\\.google|google.*ai|you\\.com|phind|mistral|meta.*ai|grok|x\\.com/i/grok';
 export const LLM_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_LLM_RANGE_JOB_DAYS, 120, 14, 365);
 export const GA4_DIMENSION_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_GA4_DIMENSION_RANGE_JOB_DAYS, 120, 14, 365);
 const GA4_DIMENSION_SYNC_CONFIGS = [
@@ -170,6 +170,12 @@ function classifyLlmSource(source: unknown) {
   if (value.includes('claude') || value.includes('anthropic')) return 'Claude';
   if (value.includes('perplexity')) return 'Perplexity';
   if (value.includes('copilot') || value.includes('bing.com/chat')) return 'Copilot';
+  if (value.includes('gemini') || value.includes('bard') || value.includes('ai.google') || value.includes('google') && value.includes('ai')) return 'Gemini';
+  if (value.includes('you.com')) return 'You.com';
+  if (value.includes('phind')) return 'Phind';
+  if (value.includes('mistral')) return 'Mistral';
+  if (value.includes('meta') && value.includes('ai')) return 'Meta AI';
+  if (value.includes('grok') || value.includes('x.com/i/grok')) return 'Grok';
   return String(source || 'Other');
 }
 
