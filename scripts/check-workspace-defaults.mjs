@@ -18,6 +18,7 @@ assert(
 );
 
 const queryCountView = read('components/dashboard/QueryCountView.tsx');
+const overviewView = read('components/dashboard/Overview.tsx');
 const dataImportStatusPanel = read('src/components/app/DataImportStatusPanel.tsx');
 assert(
   !dataImportStatusPanel.includes('autoImportKeys'),
@@ -32,6 +33,12 @@ assert(
   !queryCountView.includes("['page', 'query'], undefined, true")
     && !queryCountView.includes('fetchLiveDateQueryRows'),
   'Visible Queries must use stored warehouse counts instead of forced live page-query reads',
+);
+assert(
+  !overviewView.includes('querySearchAnalytics(')
+    && !overviewView.includes('fetchLiveQueryCounts')
+    && !overviewView.includes('shouldPreferLiveDrilldown'),
+  'GSC overview must use stored warehouse reads instead of hidden live drilldowns',
 );
 const manualImportCount = (dataImportStatusPanel.match(/queueMissingCoverageSync\(/g) || []).length;
 assert(

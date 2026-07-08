@@ -1,9 +1,7 @@
 import { useState, useEffect, useMemo, type ReactNode } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { ComposedChart, Area, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, ReferenceLine } from "recharts"
-import { useAuth } from "@/src/contexts/AuthContext"
-import { GscApiService } from "@/src/services/gscService"
-import { addDays, differenceInCalendarDays, format, parseISO, startOfWeek, startOfMonth } from "date-fns"
+import { differenceInCalendarDays, format, parseISO, startOfWeek, startOfMonth } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
 import { Check, Database, Download, Loader2, MoreVertical, Info } from "lucide-react"
@@ -151,8 +149,7 @@ export function Overview({
   annotations = [],
   annotationControls,
   onLoadingChange,
-  refreshKey = 0,
-  useLiveData = true
+  refreshKey = 0
 }: { 
   siteUrl: string, 
   dateRange?: DateRange,
@@ -166,7 +163,6 @@ export function Overview({
   refreshKey?: number,
   useLiveData?: boolean
 }) {
-  const { userProfile } = useAuth()
   const [rawData, setRawData] = useState<any[]>([])
   const [compareRawData, setCompareRawData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -222,7 +218,6 @@ export function Overview({
       let cancelled = false
       const abortController = new AbortController()
       setLoading(true)
-      const gscService = new GscApiService(null, userProfile?.tier || 'free')
       
       const endDate = format(effectiveDateRange.to, 'yyyy-MM-dd')
       const startDate = format(effectiveDateRange.from, 'yyyy-MM-dd')
@@ -293,78 +288,9 @@ export function Overview({
         })).filter((row: any) => getDateKey(row) && getQueryKey(row));
       };
 
-      const fetchLiveQueryCounts = async (start: string, end: string) => {
-        if (!hasQueryMetric) return [];
+      const fetchPreferredQueryRows = async (start: string, end: string) => fetchWarehouseQueryRows(start, end);
 
-        const rows: any[] = [];
-        let cursor = parseISO(start);
-        const finalDate = parseISO(end);
-
-        // Query-count charts need detail rows. Fetching a whole range in one
-        // request can hit GSC row caps and create fake drops, so keep windows small.
-        while (cursor <= finalDate) {
-          const chunkEnd = addDays(cursor, 6) > finalDate ? finalDate : addDays(cursor, 6);
-          const chunkRows = await gscService.querySearchAnalytics(
-            siteUrl,
-            format(cursor, "yyyy-MM-dd"),
-            format(chunkEnd, "yyyy-MM-dd"),
-            ['date', 'query'],
-            filterGroups,
-            true
-          );
-          rows.push(...chunkRows);
-          cursor = addDays(chunkEnd, 1);
-        }
-
-        return rows.map((row: any) => {
-          const date = row.keys?.[0];
-          const query = row.keys?.[1];
-          if (typeof date !== "string" || typeof query !== "string") return null;
-          return {
-            keys: [date],
-            query,
-            queryCount: 1,
-          };
-        }).filter(Boolean);
-      };
-
-      const fetchPreferredQueryRows = async (start: string, end: string) => {
-        if (!hasQueryMetric) return [];
-
-        if (useLiveData && userProfile?.googleConnected) {
-          try {
-            return await fetchLiveQueryCounts(start, end);
-          } catch (err) {
-            console.warn("Live page query-count fetch failed; falling back to warehouse query detail.", err);
-          }
-        }
-
-        return fetchWarehouseQueryRows(start, end);
-      };
-
-      const shouldPreferLiveDrilldown = Boolean(useLiveData && filterDimension && filterValue && userProfile?.googleConnected);
-      const fetchPrimaryMetricRows = (start: string, end: string) => {
-        if (useLiveData || shouldPreferLiveDrilldown) {
-          // Exact drilldowns are bounded to one row per day, so live GSC is safer
-          // than potentially capped/stale warehouse detail for a selected query/page.
-          return gscService.querySearchAnalytics(siteUrl, start, end, ['date'], filterGroups, true);
-        }
-
-        return fetchWarehouseData(start, end);
-      };
-
-      const fetchPreferredMetricRows = async (start: string, end: string) => {
-        if (!shouldPreferLiveDrilldown) {
-          return fetchPrimaryMetricRows(start, end);
-        }
-
-        try {
-          return await fetchPrimaryMetricRows(start, end);
-        } catch (err) {
-          console.warn("Live exact GSC drilldown failed; falling back to warehouse metrics.", err);
-          return fetchWarehouseData(start, end);
-        }
-      };
+      const fetchPreferredMetricRows = async (start: string, end: string) => fetchWarehouseData(start, end);
 
       const primaryPromise = fetchPreferredMetricRows(startDate, endDate)
       const primaryQueryCountPromise = fetchPreferredQueryRows(startDate, endDate)
@@ -439,7 +365,7 @@ export function Overview({
         cancelled = true
         abortController.abort()
       }
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, refreshKey, userProfile?.googleConnected, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, refreshKey])
 
   const { chartData, summary, compareSummary } = useMemo(() => {
     const effectiveDateRange = getEffectiveGscDateRange(dateRange);
