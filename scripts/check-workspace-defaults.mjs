@@ -19,6 +19,7 @@ assert(
 
 const queryCountView = read('components/dashboard/QueryCountView.tsx');
 const overviewView = read('components/dashboard/Overview.tsx');
+const gscGridDataHook = read('components/dashboard/useGscGridData.ts');
 const dataImportStatusPanel = read('src/components/app/DataImportStatusPanel.tsx');
 assert(
   !dataImportStatusPanel.includes('autoImportKeys'),
@@ -39,6 +40,12 @@ assert(
     && !overviewView.includes('fetchLiveQueryCounts')
     && !overviewView.includes('shouldPreferLiveDrilldown'),
   'GSC overview must use stored warehouse reads instead of hidden live drilldowns',
+);
+assert(
+  !gscGridDataHook.includes('querySearchAnalytics(')
+    && !gscGridDataHook.includes('GscApiService')
+    && !gscGridDataHook.includes('shouldUseLiveApi'),
+  'GSC grid tabs must use stored warehouse reads instead of live Search Console calls',
 );
 const manualImportCount = (dataImportStatusPanel.match(/queueMissingCoverageSync\(/g) || []).length;
 assert(

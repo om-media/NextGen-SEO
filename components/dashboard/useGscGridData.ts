@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
-import { GscApiService } from "@/src/services/gscService";
 import { fetchDataCoverage, type CoverageDataset } from "@/src/services/dataCoverageService";
 import { fetchCachedWarehouseQuery } from "@/src/services/warehouseQueryClient";
 import type { GridDimension, GridRow } from "./gscGridUtils";
@@ -16,8 +15,6 @@ type UseGscGridDataParams = {
   refreshKey?: number;
   rowLimit?: number;
   siteUrl: string;
-  tier?: "free" | "pro" | "enterprise";
-  useLiveData?: boolean;
 };
 
 const INITIAL_WAREHOUSE_GRID_ROW_LIMIT = 1000;
@@ -75,30 +72,6 @@ async function fetchWarehouseData(
   };
 }
 
-function getPageQueryCounts(rows: GridRow[]) {
-  const pageQueries = new Map<string, Set<string>>();
-
-  rows.forEach((row) => {
-    const page = row.keys?.[0];
-    const query = row.keys?.[1];
-    if (!page || !query) return;
-    if (!pageQueries.has(page)) pageQueries.set(page, new Set());
-    pageQueries.get(page)!.add(query);
-  });
-
-  return new Map(Array.from(pageQueries.entries()).map(([page, queries]) => [page, queries.size]));
-}
-
-function mergePageQueryCounts(primaryRows: GridRow[], queryCounts: Map<string, number>, compareQueryCounts?: Map<string, number>) {
-  return primaryRows.map((row) => {
-    const page = row.keys[0];
-    return {
-      ...row,
-      queryCount: row.queryCount ?? queryCounts.get(page) ?? 0,
-      compareQueryCount: compareQueryCounts?.get(page) ?? 0,
-    };
-  });
-}
 
 function mergeCompareRows(primaryRows: GridRow[], compareRows: GridRow[]) {
   const compareMap = new Map(compareRows.map((row) => [row.keys[0], row]));
@@ -111,24 +84,21 @@ function mergeCompareRows(primaryRows: GridRow[], compareRows: GridRow[]) {
       compareImpressions: compareRow?.impressions || 0,
       compareCtr: compareRow?.ctr || 0,
       comparePosition: compareRow?.position || 0,
+      compareQueryCount: compareRow?.queryCount || 0,
     };
   });
 }
 
-function isGoogleAuthError(message: string) {
-  return message === "UNAUTHORIZED" || message.includes("invalid authentication credentials") || message.includes("OAuth 2 access token") || message.includes("GOOGLE_NOT_CONNECTED");
-}
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
 function isWarehouseTotalPending(
-  useLiveData: boolean,
   includeTotalRowCount: boolean,
   dimensionFilterGroups?: any[],
 ) {
-  return !useLiveData && includeTotalRowCount && !dimensionFilterGroups?.length;
+  return includeTotalRowCount && !dimensionFilterGroups?.length;
 }
 
 function getFriendlyGscError(message: string) {
@@ -136,9 +106,6 @@ function getFriendlyGscError(message: string) {
     return "This Search Console breakdown is not available from stored reporting data yet.";
   }
 
-  if (isGoogleAuthError(message)) {
-    return "Your Google data connection needs attention. Please click 'Reconnect Google Data' at the top to restore reporting access.";
-  }
 
   if (message.includes("sufficient permission")) {
     return "You do not have sufficient permission to view data for this property. Please select a different property or verify your access in Google Search Console.";
@@ -164,8 +131,6 @@ export function useGscGridData({
   refreshKey = 0,
   rowLimit = INITIAL_WAREHOUSE_GRID_ROW_LIMIT,
   siteUrl,
-  tier,
-  useLiveData = true,
 }: UseGscGridDataParams) {
   const [data, setData] = useState<GridRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -190,12 +155,11 @@ export function useGscGridData({
     setLoading(true);
     setError(null);
 
-    const gscService = new GscApiService(null, tier || "free");
     const startDate = format(dateRange.from, "yyyy-MM-dd");
     const endDate = format(dateRange.to, "yyyy-MM-dd");
 
     const canUseWarehouse = dimension === "query" || dimension === "page" || dimension === "country";
-    if (!useLiveData && !canUseWarehouse) {
+    if (!canUseWarehouse) {
       setData([]);
       setError(getFriendlyGscError("WAREHOUSE_UNSUPPORTED_DIMENSION"));
       setLoadedRowLimit(null);
@@ -204,14 +168,7 @@ export function useGscGridData({
       return;
     }
 
-    const shouldUseLiveApi = Boolean(useLiveData);
-    if (shouldUseLiveApi) {
-      setCoverage(null);
-    }
-
-    const coveragePromise = shouldUseLiveApi
-      ? Promise.resolve(null)
-      : fetchDataCoverage({ siteUrl, startDate, endDate })
+    const coveragePromise = fetchDataCoverage({ siteUrl, startDate, endDate })
           .then((result) => {
             const dataset = result.gsc[dimension];
             return {
@@ -233,49 +190,26 @@ export function useGscGridData({
       }
     });
 
-    const shouldDeferWarehouseTotal = isWarehouseTotalPending(shouldUseLiveApi, includeTotalRowCount, dimensionFilterGroups);
+    const shouldDeferWarehouseTotal = isWarehouseTotalPending(includeTotalRowCount, dimensionFilterGroups);
 
-    const primaryPromise = shouldUseLiveApi
-      ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, [dimension], dimensionFilterGroups, true)
-          .then((rows) => ({ rows, totalRowCount: rows.length }))
-      : fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups, abortController.signal, !shouldDeferWarehouseTotal);
+    const primaryPromise = fetchWarehouseData(siteUrl, dimension, startDate, endDate, rowLimit, `gsc-grid:${refreshKey}`, dimensionFilterGroups, abortController.signal, !shouldDeferWarehouseTotal);
 
     const comparePromise =
       isCompareMode && compareDateRange?.from && compareDateRange?.to
         ? (() => {
             const compareStartDate = format(compareDateRange.from!, "yyyy-MM-dd");
             const compareEndDate = format(compareDateRange.to!, "yyyy-MM-dd");
-            return shouldUseLiveApi
-              ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, [dimension], dimensionFilterGroups, true)
-                  .then((rows) => ({ rows, totalRowCount: rows.length }))
-              : fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups, abortController.signal, !shouldDeferWarehouseTotal);
+            return fetchWarehouseData(siteUrl, dimension, compareStartDate, compareEndDate, rowLimit, `gsc-grid-compare:${refreshKey}`, dimensionFilterGroups, abortController.signal, !shouldDeferWarehouseTotal);
           })()
         : Promise.resolve(undefined);
 
-    const pageQueryCountPromise =
-      dimension === "page"
-        ? (shouldUseLiveApi
-            ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ["page", "query"], undefined, true)
-            : Promise.resolve(undefined))
-        : Promise.resolve(undefined);
-
-    const comparePageQueryCountPromise =
-      dimension === "page" && isCompareMode && compareDateRange?.from && compareDateRange?.to
-        ? (() => {
-            const compareStartDate = format(compareDateRange.from!, "yyyy-MM-dd");
-            const compareEndDate = format(compareDateRange.to!, "yyyy-MM-dd");
-            return shouldUseLiveApi
-              ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ["page", "query"], undefined, true)
-              : Promise.resolve(undefined);
-          })()
-        : Promise.resolve(undefined);
 
     primaryPromise
       .then(async (primaryResult) => {
         if (cancelled) return;
         const primaryRows = primaryResult.rows;
         const primaryTotalRowCount = primaryResult.totalRowCount ?? primaryRows.length;
-        setLoadedRowLimit(shouldUseLiveApi ? null : rowLimit);
+        setLoadedRowLimit(rowLimit);
         setTotalRowCount(primaryTotalRowCount);
 
         if (shouldDeferWarehouseTotal) {
@@ -302,26 +236,7 @@ export function useGscGridData({
               }
             });
         }
-        let rowsWithPageQueryCounts = primaryRows;
-
-        if (dimension === "page") {
-          const [pageQueryRows, comparePageQueryRows] = await Promise.all([
-            pageQueryCountPromise.catch((err: Error) => {
-              console.warn("Page query counts failed; continuing with page metrics only.", err);
-              return undefined;
-            }),
-            comparePageQueryCountPromise.catch((err: Error) => {
-              console.warn("Compare page query counts failed; continuing without compare query counts.", err);
-              return undefined;
-            }),
-          ]);
-
-          rowsWithPageQueryCounts = mergePageQueryCounts(
-            primaryRows,
-            pageQueryRows ? getPageQueryCounts(pageQueryRows) : new Map(),
-            comparePageQueryRows ? getPageQueryCounts(comparePageQueryRows) : undefined,
-          );
-        }
+        const rowsWithPageQueryCounts = primaryRows;
 
         if (!isCompareMode || !comparePromise) {
           if (!cancelled) {
@@ -366,7 +281,7 @@ export function useGscGridData({
       cancelled = true;
       abortController.abort();
     };
-  }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, includeTotalRowCount, isCompareMode, refreshKey, rowLimit, siteUrl, tier, useLiveData]);
+  }, [compareDateRange, dateRange, dimension, dimensionFilterGroups, includeTotalRowCount, isCompareMode, refreshKey, rowLimit, siteUrl]);
 
   return {
     coverage,

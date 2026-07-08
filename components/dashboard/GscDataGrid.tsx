@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Check, Plus, ExternalLink, Database, AlertCircle } from "lucide-react";
-import { useAuth } from "@/src/contexts/AuthContext";
 import { saveFilter } from "@/src/services/dbService";
 import { generateGscInsights, isAiProviderUnavailableError } from "@/src/services/aiService";
 import { DateRange } from "react-day-picker";
@@ -66,8 +65,6 @@ export function GscDataGrid({
 }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [intentFilter, setIntentFilter] = useState("all");
-  const { userProfile } = useAuth();
-
   const [sortColumn, setSortColumn] = useState<SortColumn>("clicks");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
@@ -115,8 +112,6 @@ export function GscDataGrid({
     refreshKey,
     rowLimit: requestedWarehouseRowLimit,
     siteUrl,
-    tier: userProfile?.tier,
-    useLiveData,
   });
 
   useEffect(() => {
@@ -132,7 +127,7 @@ export function GscDataGrid({
     setRequestedWarehouseRowLimit(INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
     setPendingNextPageAfterLoad(false);
     setPendingExportAfterLoad(false);
-  }, [siteUrl, dimension, stableDimensionFilterGroups, dateRange, compareDateRange, isCompareMode, refreshKey, useLiveData]);
+  }, [siteUrl, dimension, stableDimensionFilterGroups, dateRange, compareDateRange, isCompareMode, refreshKey]);
 
   useEffect(() => {
     setSelectedRowKey(null);
@@ -168,14 +163,13 @@ export function GscDataGrid({
   );
   const shouldShowTotalRowCount = !hasActiveFilters && typeof totalRowCount === "number" && Number.isFinite(totalRowCount);
   const loadedRowCountLabel = `${sortedData.length.toLocaleString()}${isRowLimited ? " loaded" : ""}`;
-  const canLoadMoreWarehouseRows = Boolean(!useLiveData && isRowLimited && shouldShowTotalRowCount && totalRowCount > data.length);
+  const canLoadMoreWarehouseRows = Boolean(isRowLimited && shouldShowTotalRowCount && totalRowCount > data.length);
   const isAppendingRows = loading && data.length > 0;
   const fullWarehouseExportLimit = typeof totalRowCount === "number"
     ? Math.min(totalRowCount, FULL_WAREHOUSE_GRID_ROW_LIMIT)
     : FULL_WAREHOUSE_GRID_ROW_LIMIT;
   const canPrepareFullWarehouseExport = Boolean(
-    !useLiveData &&
-      typeof totalRowCount === "number" &&
+    typeof totalRowCount === "number" &&
       totalRowCount > data.length &&
       requestedWarehouseRowLimit < fullWarehouseExportLimit
   );
@@ -216,7 +210,7 @@ export function GscDataGrid({
   }, [currentPage, loading, pendingNextPageAfterLoad, totalPages]);
 
   useEffect(() => {
-    if (useLiveData || totalRowCount === null) {
+    if (totalRowCount === null) {
       return;
     }
 
@@ -231,7 +225,7 @@ export function GscDataGrid({
     if (currentPage === 1 && requestedWarehouseRowLimit > INITIAL_WAREHOUSE_GRID_ROW_LIMIT) {
       setRequestedWarehouseRowLimit(INITIAL_WAREHOUSE_GRID_ROW_LIMIT);
     }
-  }, [currentPage, hasActiveFilters, requestedWarehouseRowLimit, totalRowCount, useLiveData]);
+  }, [currentPage, hasActiveFilters, requestedWarehouseRowLimit, totalRowCount]);
 
   const isConnectionIssue = error?.startsWith("Your Google data connection needs attention.") ?? false;
   const isWarehousePreparationMessage = Boolean(error && /stored reporting data|breakdown is not available|being prepared/i.test(error));
@@ -248,7 +242,7 @@ export function GscDataGrid({
     Number(coverage.coveredDateCount || 0) < Number(coverage.expectedDateCount || 0)
   );
   const hasWarehouseErrors = Boolean(coverage && Number(coverage.errorJobCount || 0) > 0);
-  const shouldShowCoverageStatus = !useLiveData && hasCoverage && (hasActiveWarehouseWork || hasCoverageGap || hasWarehouseErrors || sortedData.length === 0);
+  const shouldShowCoverageStatus = hasCoverage && (hasActiveWarehouseWork || hasCoverageGap || hasWarehouseErrors || sortedData.length === 0);
   const coverageLabel = coverage
     ? `${Number(coverage.coveredDateCount || 0).toLocaleString()} / ${Number(coverage.expectedDateCount || 0).toLocaleString()} days ready`
     : "";
