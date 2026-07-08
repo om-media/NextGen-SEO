@@ -2430,6 +2430,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             if (!shouldReturnTotalOnly) rows = await db.all<any>(`
               SELECT MIN(page) AS page,
                      pageKey,
+                     SUM(queryCount) AS queryCount,
                      SUM(clicks) as clicks,
                      SUM(impressions) as impressions,
                      CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
@@ -2545,6 +2546,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         if (!shouldReturnTotalOnly) rows = await db.all<any>(`
           SELECT MIN(page) AS page,
                  COALESCE(NULLIF(pageKey, ''), MIN(page)) AS pageKey,
+                 SUM(queryCount) AS queryCount,
                  SUM(clicks) as clicks,
                  SUM(impressions) as impressions,
                  CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
@@ -2981,4 +2983,3 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     }
   });
 }
-

@@ -117,7 +117,6 @@ export function QueryCountView({
     setLoadingTable(true)
     setError(null)
     
-    const gscService = new GscApiService(null, userProfile?.tier || 'free')
     const startDate = format(dateRange.from, 'yyyy-MM-dd')
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     
@@ -152,18 +151,14 @@ export function QueryCountView({
     }
 
     const promises = [
-      useLiveData 
-        ? gscService.querySearchAnalytics(siteUrl, startDate, endDate, ['page', 'query'], undefined, true)
-        : fetchWarehouseData(startDate, endDate)
+      fetchWarehouseData(startDate, endDate)
     ];
 
     if (isCompareMode && compareDateRange?.from && compareDateRange?.to) {
       const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
       const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
       promises.push(
-        useLiveData
-          ? gscService.querySearchAnalytics(siteUrl, compareStartDate, compareEndDate, ['page', 'query'], undefined, true)
-          : fetchWarehouseData(compareStartDate, compareEndDate)
+        fetchWarehouseData(compareStartDate, compareEndDate)
       )
     }
 

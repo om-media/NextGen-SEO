@@ -54,6 +54,10 @@ assert(
   /const hasSummaryCoverage = await hasGscMonthlySummariesForRange/.test(warehouseRoutes),
   'Warehouse report reads should only use monthly summaries when coverage already exists',
 );
+assert(
+  (warehouseRoutes.match(/SUM\(queryCount\) AS queryCount/g) || []).length >= 2,
+  'Warehouse page-summary reads must expose stored visible-query counts',
+);
 
 const warehouseJobs = read('server/services/warehouseJobs.ts');
 const alreadyStoredBranch = warehouseJobs.slice(
