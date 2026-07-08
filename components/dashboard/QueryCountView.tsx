@@ -2,9 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { useAuth } from "@/src/contexts/AuthContext"
-import { GscApiService } from "@/src/services/gscService"
-import { addDays, format, parseISO } from "date-fns"
+import { format, parseISO } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Download } from "lucide-react"
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -81,8 +79,7 @@ export function QueryCountView({
   dateRange,
   isCompareMode,
   compareDateRange,
-  refreshKey = 0,
-  useLiveData = true
+  refreshKey = 0
 }: { 
   siteUrl: string, 
   dateRange?: DateRange,
@@ -91,7 +88,6 @@ export function QueryCountView({
   refreshKey?: number,
   useLiveData?: boolean
 }) {
-  const { userProfile } = useAuth()
   
   const [tableData, setTableData] = useState<any[]>([])
   const [chartData, setChartData] = useState<any[]>([])
@@ -243,7 +239,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingTable(false)
       })
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, refreshKey, userProfile?.googleConnected, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, refreshKey])
 
   // Fetch Chart Data (Historic Trend of Unique Queries)
   useEffect(() => {
@@ -251,7 +247,6 @@ export function QueryCountView({
     
     setLoadingChart(true)
     
-    const gscService = new GscApiService(null, userProfile?.tier || 'free')
     const startDate = format(dateRange.from, 'yyyy-MM-dd')
     const endDate = format(dateRange.to, 'yyyy-MM-dd')
     
@@ -284,39 +279,7 @@ export function QueryCountView({
       })).filter((row: any) => typeof row.keys?.[0] === "string" && row.keys[0].length > 0)
     }
 
-    const fetchLiveDateQueryRows = async (start: string, end: string) => {
-      const rows: any[] = [];
-      let cursor = parseISO(start);
-      const finalDate = parseISO(end);
-
-      // Unique-query counts are extremely sensitive to row caps. Fetch one day at
-      // a time so a busy day cannot steal rows from the rest of the range.
-      while (cursor <= finalDate) {
-        const day = format(cursor, 'yyyy-MM-dd');
-        const dayRows = await gscService.querySearchAnalytics(siteUrl, day, day, ['date', 'query'], filterGroups, true);
-        rows.push(...dayRows);
-        cursor = addDays(cursor, 1);
-      }
-
-      return rows;
-    };
-
-    const fetchQueryCountRows = async (start: string, end: string) => {
-      const warehouseRows = await fetchWarehouseData(start, end);
-      if (warehouseRows.some((row: any) => Number(row.queryCount) > 0)) {
-        return warehouseRows;
-      }
-
-      if (useLiveData && userProfile?.googleConnected) {
-        try {
-          return await fetchLiveDateQueryRows(start, end);
-        } catch (err) {
-          console.warn("Daily live query-count fetch failed; using warehouse counts.", err);
-        }
-      }
-
-      return warehouseRows;
-    };
+    const fetchQueryCountRows = async (start: string, end: string) => fetchWarehouseData(start, end);
 
     const promises = [
       fetchQueryCountRows(startDate, endDate)
@@ -396,7 +359,7 @@ export function QueryCountView({
       .finally(() => {
         setLoadingChart(false)
       })
-  }, [siteUrl, dateRange, isCompareMode, compareDateRange, refreshKey, selectedPage, userProfile?.googleConnected, userProfile?.tier, useLiveData])
+  }, [siteUrl, dateRange, isCompareMode, compareDateRange, refreshKey, selectedPage])
 
   const sortedTableData = useMemo(() => {
     return [...tableData].sort((a, b) => {

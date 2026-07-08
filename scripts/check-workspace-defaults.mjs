@@ -17,6 +17,7 @@ assert(
   'Profiles with no stored tier must normalize to the full workspace default tier',
 );
 
+const queryCountView = read('components/dashboard/QueryCountView.tsx');
 const dataImportStatusPanel = read('src/components/app/DataImportStatusPanel.tsx');
 assert(
   !dataImportStatusPanel.includes('autoImportKeys'),
@@ -27,6 +28,11 @@ assert(
   'Missing range imports should be lifecycle-driven, not triggered by the visible report panel',
 );
 
+assert(
+  !queryCountView.includes("['page', 'query'], undefined, true")
+    && !queryCountView.includes('fetchLiveDateQueryRows'),
+  'Visible Queries must use stored warehouse counts instead of forced live page-query reads',
+);
 const manualImportCount = (dataImportStatusPanel.match(/queueMissingCoverageSync\(/g) || []).length;
 assert(
   manualImportCount === 1,
