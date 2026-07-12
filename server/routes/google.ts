@@ -21,6 +21,7 @@ import type { UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { resolveWorkspaceGa4Property } from '../services/ga4Mappings.js';
 import { getInitialRegistrationTier } from '../services/registrationTier.js';
+import { syncBingSites } from '../services/bingWarehouse.js';
 
 function sendOauthPopupResponse(res: Response, success: boolean, message: string) {
   const escapedMessage = message
@@ -160,6 +161,31 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
     }
   };
 
+  const queueGoogleWorkspaceSiteImports = async (ownerId: string) => {
+    const summary = await queueGoogleWarehouseBackfillForWorkspaceSites(ownerId);
+    try {
+      const user = await db.get<{ activatedSiteUrl?: string | null; bingApiKey?: string | null; knownSites?: string | null; unlockedSites?: string | null }>(
+        'SELECT activatedSiteUrl, bingApiKey, knownSites, unlockedSites FROM users WHERE id = ?',
+        [ownerId],
+      );
+      const bingApiKey = isNonEmptyString(user?.bingApiKey) ? user.bingApiKey.trim() : '';
+      if (bingApiKey) {
+        await syncBingSites(db, {
+          apiKey: bingApiKey,
+          ownerId,
+          siteUrls: uniqueSites([
+            ...(isNonEmptyString(user?.activatedSiteUrl) ? [user!.activatedSiteUrl.trim()] : []),
+            ...parseStringArray(user?.unlockedSites),
+            ...parseStringArray(user?.knownSites),
+          ]),
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to queue Google-connected Bing imports', { ownerId, err });
+    }
+    return summary;
+  };
+
   app.get('/api/auth/google/start', (_req, res) => {
     try {
       const authUrl = buildGoogleAppAuthUrl(_req as Request);
@@ -250,7 +276,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
         const existingRefreshToken = await getStoredGoogleRefreshToken(db, userId);
         if (existingRefreshToken) {
           await refreshKnownGscSitesForUser(userId);
-          const summary = await queueGoogleWarehouseBackfillForWorkspaceSites(userId);
+          const summary = await queueGoogleWorkspaceSiteImports(userId);
           return sendOauthPopupResponse(res, true, formatGoogleConnectionMessage(summary, true));
         }
 
@@ -259,7 +285,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
 
       await storeGoogleRefreshToken(db, userId, tokens.refresh_token);
       await refreshKnownGscSitesForUser(userId);
-      const summary = await queueGoogleWarehouseBackfillForWorkspaceSites(userId);
+      const summary = await queueGoogleWorkspaceSiteImports(userId);
       return sendOauthPopupResponse(res, true, formatGoogleConnectionMessage(summary, false));
     } catch (err: any) {
       return sendOauthPopupResponse(res, false, err.message || 'Google connection failed.');
@@ -274,6 +300,7 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       if (knownSites.length > 0) {
         await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(knownSites), req.authUser!.uid]);
       }
+      await queueGoogleWorkspaceSiteImports(req.authUser!.uid);
       res.json(siteEntries);
     } catch (err: any) {
       res.status(err.status || 500).json(err.payload || { error: err.message });
@@ -321,6 +348,19 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       const data = await googleApiFetchJson(db, req.authUser!.uid, 'https://analyticsadmin.googleapis.com/v1beta/accountSummaries');
       res.json(data.accountSummaries || []);
     } catch (err: any) {
+      const storedProperties = await db.all<{ displayName: string | null; propertyId: string }>('SELECT propertyId, displayName FROM workspace_ga4_mappings WHERE ownerId = ? UNION SELECT activatedGa4PropertyId AS propertyId, activatedGa4DisplayName AS displayName FROM users WHERE id = ? AND activatedGa4PropertyId IS NOT NULL', [req.authUser!.uid, req.authUser!.uid]);
+      if (storedProperties.length > 0) {
+        res.json([{
+          displayName: 'Stored workspace data',
+          name: 'accountSummaries/stored-workspace',
+          propertySummaries: storedProperties.map((property) => ({
+            displayName: property.displayName || property.propertyId,
+            property: property.propertyId,
+            propertyType: 'PROPERTY_TYPE_ORDINARY',
+          })),
+        }]);
+        return;
+      }
       res.status(err.status || 500).json(err.payload || { error: err.message });
     }
   });

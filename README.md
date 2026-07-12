@@ -34,6 +34,7 @@ Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) d
 - **Blended Data View**: combine search demand, engagement, crawl evidence, and search signals into page-level decisions (GSC+GA4+Crawl data).
 - **Bing data support**: bring Bing Webmaster data into the same reporting surface.
 - **Crawl inventory**: crawl sites, track indexability, canonicals, titles, headings, links, render modes, and crawl freshness.
+- **Contextual internal links**: rank sentence-level opportunities with built-in BGE-M3 embeddings, pgvector retrieval, exact anchor placement, editorial review, exports, and implementation annotations.
 - **Rank tracking**: monitor keywords by site, country, device, position, landing page, and movement.
 - **Content anylsis**: monitor and audit your content and it's performance
 - **AI-assisted analysis**: generate SEO insights and content audits.
@@ -50,7 +51,7 @@ Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) d
 
 ## Run Locally
 
-**Prerequisites:** Node.js 22+
+**Prerequisites:** Node.js 22+ and Docker Desktop (or Docker Engine with Compose)
 
 1. Install dependencies:
    ```bash
@@ -72,6 +73,8 @@ Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) d
    ```bash
    npm run dev
    ```
+
+The development command starts PostgreSQL/pgvector and the managed BGE-M3 embedding worker through Docker. On the first run, the official BAAI/bge-m3 model downloads into a persistent Docker volume; later starts reuse it. Ollama is not required for the default Built-in BGE-M3 provider.
 <br>
 
 ## Production Build

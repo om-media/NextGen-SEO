@@ -7,6 +7,7 @@ import { registerLocalAuthRoutes } from './routes/auth.js';
 import { registerCrawlRoutes } from './routes/crawl.js';
 import { registerBlendedRoutes } from './routes/blended.js';
 import { registerIndexingRoutes } from './routes/indexing.js';
+import { registerInternalLinkRoutes } from './routes/internalLinks.js';
 import { registerLogRoutes } from './routes/logs.js';
 import { registerGoogleRoutes } from './routes/google.js';
 import { registerRankTrackingRoutes } from './routes/rankTracking.js';
@@ -14,11 +15,8 @@ import { registerReconciliationRoutes } from './routes/reconciliation.js';
 import { registerWarehouseRoutes } from './routes/warehouse.js';
 import { registerWorkspaceCrudRoutes } from './routes/workspaceCrud.js';
 import { authRateLimit, securityHeaders } from './middleware/security.js';
-import { startBingDailyScheduler } from './services/bingWarehouse.js';
-import { startCrawlQueueWorker } from './services/crawl.js';
-import { startGscMonthlySummaryBackfillWorker } from './services/gscMonthlySummaries.js';
-import { startRankTrackingScheduler } from './services/rankTracking.js';
-import { startWarehouseDailyScheduler, startWarehouseJobWorker } from './services/warehouseJobs.js';
+import { startRuntimeServices } from './runtimeRoles.js';
+
 
 export type SyncJobState = {
   current: number;
@@ -46,6 +44,21 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
   app.use(express.json({ limit: '50mb' }));
   app.disable('x-powered-by');
 
+  const databaseStatus = () => {
+    const diagnostics = db.getDiagnostics?.();
+    return {
+      dialect: db.dialect,
+      ...(diagnostics?.pool ? {
+        pool: {
+          idle: diagnostics.pool.idleCount,
+          max: diagnostics.pool.max,
+          total: diagnostics.pool.totalCount,
+          waiting: diagnostics.pool.waitingCount,
+        },
+      } : {}),
+    };
+  };
+
   app.use('/api/auth/login', authRateLimit);
   app.use('/api/auth/register', authRateLimit);
   app.use('/api/auth/google/start', authRateLimit);
@@ -53,9 +66,7 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
   app.get('/api/health', (_req, res) => {
     res.json({
       ok: true,
-      database: {
-        dialect: db.dialect,
-      },
+      database: databaseStatus(),
       timestamp: new Date().toISOString(),
     });
   });
@@ -65,9 +76,7 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
       await db.get('SELECT 1 AS ok');
       res.json({
         ok: true,
-        database: {
-          dialect: db.dialect,
-        },
+        database: databaseStatus(),
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -91,21 +100,10 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
   registerReconciliationRoutes(app, db);
   registerRankTrackingRoutes(app, db);
   registerIndexingRoutes(app, db, syncJobs, getSyncJobKey);
+  registerInternalLinkRoutes(app, db);
 
   if (startWorkers) {
-    const stopWorkers = [
-      startCrawlQueueWorker(db),
-      startBingDailyScheduler(db),
-      startWarehouseJobWorker(db),
-      startWarehouseDailyScheduler(db),
-      startGscMonthlySummaryBackfillWorker(db),
-      startRankTrackingScheduler(db),
-    ];
-    app.locals.stopBackgroundWorkers = () => {
-      for (const stop of stopWorkers) {
-        stop?.();
-      }
-    };
+    app.locals.stopBackgroundWorkers = startRuntimeServices(db, 'all');
   }
 
   return app;

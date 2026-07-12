@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: nextgen_seo
       POSTGRES_USER: nextgen_seo
@@ -12,8 +12,31 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+    restart: unless-stopped
     volumes:
       - postgres-dev-data:/var/lib/postgresql/data
 
+  embedding-worker:
+    build:
+      context: ./services/embedding-worker
+    environment:
+      EMBEDDING_BATCH_SIZE: "16"
+      EMBEDDING_CPU_THREADS: "4"
+      EMBEDDING_DEVICE: "cpu"
+      EMBEDDING_MODEL: "BAAI/bge-m3"
+      EMBEDDING_MODEL_CACHE: "/models"
+    ports:
+      - "127.0.0.1:8091:8091"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 90
+      start_period: 15m
+    restart: unless-stopped
+    volumes:
+      - bge-m3-model-cache:/models
+
 volumes:
+  bge-m3-model-cache:
   postgres-dev-data:

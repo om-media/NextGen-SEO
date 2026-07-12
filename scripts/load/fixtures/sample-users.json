@@ -1,0 +1,21 @@
+[
+  {
+    "id": "vu-001",
+    "siteUrl": "https://example.com/",
+    "propertyId": "REPLACE_GA4_PROPERTY_ID",
+    "sessionCookie": "nextgen_session=REPLACE_SESSION_COOKIE"
+  },
+  {
+    "id": "vu-002",
+    "siteUrl": "https://example.com/",
+    "propertyId": "REPLACE_GA4_PROPERTY_ID",
+    "bearerToken": "REPLACE_BEARER_TOKEN"
+  },
+  {
+    "id": "vu-003",
+    "siteUrl": "https://example.org/",
+    "propertyId": "REPLACE_GA4_PROPERTY_ID",
+    "email": "load-user@example.org",
+    "password": "REPLACE_LONG_PASSWORD"
+  }
+]

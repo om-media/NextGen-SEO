@@ -291,6 +291,54 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     return whereClause;
   };
 
+  const countGroupedWarehouseRows = async (
+    groupedSql: string,
+    queryParams: Record<string, unknown>,
+  ) => {
+    const total = await db.get<any>(`
+      SELECT COUNT(*) AS totalRowCount
+      FROM (${groupedSql}) grouped
+    `, queryParams);
+    return toFiniteNumber(total?.totalRowCount);
+  };
+
+  const runGroupedWarehouseQuery = async (
+    groupedSql: string,
+    orderClause: string,
+    queryParams: Record<string, unknown>,
+    includeTotal: boolean,
+    totalOnly: boolean,
+  ) => {
+    if (includeTotal) {
+      if (totalOnly) {
+        return {
+          rows: [] as any[],
+          totalRowCount: await countGroupedWarehouseRows(groupedSql, queryParams),
+        };
+      }
+
+      const rowsWithTotal = await db.all<any>(`
+        SELECT grouped.*, COUNT(*) OVER() AS totalRowCount
+        FROM (${groupedSql}) grouped
+        ${orderClause}
+        LIMIT @limit OFFSET @offset
+      `, queryParams);
+      const totalRowCount = rowsWithTotal.length > 0
+        ? toFiniteNumber(rowsWithTotal[0]?.totalRowCount)
+        : await countGroupedWarehouseRows(groupedSql, queryParams);
+      return { rows: rowsWithTotal, totalRowCount };
+    }
+
+    return {
+      rows: await db.all<any>(`
+        SELECT grouped.*
+        FROM (${groupedSql}) grouped
+        ${orderClause}
+        LIMIT @limit OFFSET @offset
+      `, queryParams),
+    };
+  };
+
   const fetchLiveGa4Report = async (
     ownerId: string,
     propertyId: string,
@@ -2219,9 +2267,11 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       const selectCols = selectClauseElements.length > 0 ? `${selectClauseElements.join(', ')}, ` : '';
-      const queryCountCol = ((hasPage && !hasQuery) || (wantsQueryCount && hasDate && !hasQuery))
+      const queryCountCol = (hasPage && !hasQuery)
         ? "COUNT(DISTINCT NULLIF(query, '')) as queryCount,"
-        : '';
+        : (wantsQueryCount && hasDate && !hasQuery)
+          ? "COUNT(NULLIF(query, '')) as queryCount,"
+          : '';
       const groupByClause = groupByClauseElements.length > 0 ? `GROUP BY ${groupByClauseElements.join(', ')}` : '';
 
       let whereClause = 'WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @startDate AND date <= @endDate';
@@ -2232,7 +2282,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
       let rows: any[] = [];
       let totalRowCount: number | undefined;
-      let totalRowCountPromise: Promise<number> | undefined;
       const shouldIncludeTotal = includeTotal === true;
       const shouldReturnTotalOnly = shouldIncludeTotal && totalOnly === true;
       let requiredSummaryTables: GscMonthlySummaryTable[] = ['gsc_site_monthly_metrics'];
@@ -2261,16 +2310,6 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           console.warn('Unable to prepare GSC monthly summaries for warehouse query', error);
         }
       }
-
-      const getTotalRowCount = async (tableName: string, countExpression: string, extraWhere = '') => {
-        const total = await db.get<any>(`
-          SELECT COUNT(DISTINCT ${countExpression}) AS totalRowCount
-          FROM ${tableName}
-          ${whereClause}
-          ${extraWhere}
-        `, params);
-        return toFiniteNumber(total?.totalRowCount);
-      };
 
       const buildSummarySourceSql = (tableName: string, summaryTableName: string, kind: 'site' | 'query' | 'country' | 'page' | 'pageQuery') => {
         if (!summaryWindow) return null;
@@ -2385,6 +2424,11 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         };
       };
 
+      let groupedSql: string | null = null;
+      let groupedParams: Record<string, unknown> = params;
+      let fallbackGroupedSql: string | null = null;
+      let fallbackGroupedParams: Record<string, unknown> = params;
+
       if (summaryWindow && !hasDate) {
         if (hasCountry) {
           const summarySource = buildSummarySourceSql('gsc_country_metrics', 'gsc_country_monthly_metrics', 'country');
@@ -2395,15 +2439,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               dimensionFilterGroups,
               siteUrl,
             );
-            if (shouldIncludeTotal) {
-              totalRowCountPromise = db.get<any>(`
-                SELECT COUNT(DISTINCT country) AS totalRowCount
-                FROM (${summarySource.sql}) source
-                ${summaryWhereClause}
-                  AND country <> ''
-              `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
-            }
-            if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+            groupedSql = `
               SELECT country,
                      SUM(clicks) as clicks,
                      SUM(impressions) as impressions,
@@ -2413,21 +2449,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               ${summaryWhereClause}
                 AND country <> ''
               GROUP BY country
-              ORDER BY clicks DESC, impressions DESC
-              LIMIT @limit OFFSET @offset
-            `, summarySource.params);
+            `;
+            groupedParams = summarySource.params;
           }
         } else if (hasPage && !hasQuery && !hasPageFilter) {
           const summarySource = buildSummarySourceSql('gsc_page_metrics', 'gsc_page_monthly_metrics', 'page');
           if (summarySource) {
-            if (shouldIncludeTotal) {
-              totalRowCountPromise = db.get<any>(`
-                SELECT COUNT(DISTINCT pageKey) AS totalRowCount
-                FROM (${summarySource.sql}) source
-                WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND pageKey <> ''
-              `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
-            }
-            if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+            groupedSql = `
               SELECT MIN(page) AS page,
                      pageKey,
                      SUM(queryCount) AS queryCount,
@@ -2438,9 +2466,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               FROM (${summarySource.sql}) source
               WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND pageKey <> ''
               GROUP BY pageKey
-              ORDER BY clicks DESC, impressions DESC
-              LIMIT @limit OFFSET @offset
-            `, summarySource.params);
+            `;
+            groupedParams = summarySource.params;
           }
         } else if (hasPage || (hasQuery && hasPageFilter)) {
           const summarySource = buildSummarySourceSql('gsc_page_query_metrics', 'gsc_page_query_monthly_metrics', 'pageQuery');
@@ -2451,17 +2478,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               dimensionFilterGroups,
               siteUrl,
             );
-            if (shouldIncludeTotal) {
-              const blankFilter = hasQuery ? "AND query <> ''" : "AND pageKey <> ''";
-              totalRowCountPromise = db.get<any>(`
-                SELECT COUNT(DISTINCT ${hasQuery ? 'query' : 'pageKey'}) AS totalRowCount
-                FROM (${summarySource.sql}) source
-                ${summaryWhereClause}
-                ${blankFilter}
-              `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
-            }
             const blankFilter = hasQuery ? "AND query <> ''" : "AND pageKey <> ''";
-            if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+            groupedSql = `
               SELECT ${selectCols}
                      ${queryCountCol}
                      SUM(clicks) as clicks,
@@ -2472,9 +2490,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               ${summaryWhereClause}
               ${blankFilter}
               ${groupByClause}
-              ${orderClause}
-              LIMIT @limit OFFSET @offset
-            `, summarySource.params);
+            `;
+            groupedParams = summarySource.params;
           }
         } else if (hasQuery) {
           const summarySource = buildSummarySourceSql('gsc_query_metrics', 'gsc_query_monthly_metrics', 'query');
@@ -2485,15 +2502,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               dimensionFilterGroups,
               siteUrl,
             );
-            if (shouldIncludeTotal) {
-              totalRowCountPromise = db.get<any>(`
-                SELECT COUNT(DISTINCT query) AS totalRowCount
-                FROM (${summarySource.sql}) source
-                ${summaryWhereClause}
-                  AND query <> ''
-              `, summarySource.params).then((row) => toFiniteNumber(row?.totalRowCount));
-            }
-            if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+            groupedSql = `
               SELECT ${selectCols}
                      SUM(clicks) as clicks,
                      SUM(impressions) as impressions,
@@ -2503,30 +2512,27 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               ${summaryWhereClause}
                 AND query <> ''
               ${groupByClause}
-              ${orderClause}
-              LIMIT @limit OFFSET @offset
-            `, summarySource.params);
+            `;
+            groupedParams = summarySource.params;
           }
         } else {
           const summarySource = buildSummarySourceSql('gsc_site_metrics', 'gsc_site_monthly_metrics', 'site');
-          if (summarySource && !shouldReturnTotalOnly) rows = await db.all<any>(`
-            SELECT ${selectCols}
-                   SUM(clicks) as clicks,
-                   SUM(impressions) as impressions,
-                   CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
-                   CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
-            FROM (${summarySource.sql}) source
-            WHERE ownerId = @ownerId AND siteUrl = @siteUrl
-            ${groupByClause}
-            ${orderClause}
-            LIMIT @limit OFFSET @offset
-          `, summarySource.params);
+          if (summarySource) {
+            groupedSql = `
+              SELECT ${selectCols}
+                     SUM(clicks) as clicks,
+                     SUM(impressions) as impressions,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                     CASE WHEN SUM(impressions) > 0 THEN SUM(positionSum)*1.0/SUM(impressions) ELSE 0 END as position
+              FROM (${summarySource.sql}) source
+              WHERE ownerId = @ownerId AND siteUrl = @siteUrl
+              ${groupByClause}
+            `;
+            groupedParams = summarySource.params;
+          }
         }
       } else if (hasCountry) {
-        if (shouldIncludeTotal) {
-          totalRowCountPromise = getTotalRowCount('gsc_country_metrics', 'country', "AND country <> ''");
-        }
-        if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+        groupedSql = `
           SELECT ${selectCols}
                  SUM(clicks) as clicks,
                  SUM(impressions) as impressions,
@@ -2536,14 +2542,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ${whereClause}
             AND country <> ''
           ${groupByClause}
-          ${orderClause}
-          LIMIT @limit OFFSET @offset
-        `, params);
+        `;
       } else if (hasPage && !hasQuery && !hasPageFilter) {
-        if (shouldIncludeTotal) {
-          totalRowCountPromise = getTotalRowCount('gsc_page_metrics', 'pageKey', "AND pageKey <> ''");
-        }
-        if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+        groupedSql = `
           SELECT MIN(page) AS page,
                  COALESCE(NULLIF(pageKey, ''), MIN(page)) AS pageKey,
                  SUM(queryCount) AS queryCount,
@@ -2555,42 +2556,22 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ${whereClause}
             AND pageKey <> ''
           GROUP BY pageKey
-          ORDER BY clicks DESC, impressions DESC
-          LIMIT @limit OFFSET @offset
-        `, params);
-        if (!shouldReturnTotalOnly && rows.length === 0) {
-          if (shouldIncludeTotal) {
-            totalRowCountPromise = getTotalRowCount(
-              'gsc_page_query_metrics',
-              "COALESCE(NULLIF(pageKey, ''), page)",
-              "AND COALESCE(NULLIF(pageKey, ''), page) <> ''",
-            );
-          }
-          rows = await db.all<any>(`
-            SELECT MIN(page) AS page,
-                   COALESCE(NULLIF(pageKey, ''), page) AS pageKey,
-                   COUNT(DISTINCT query) as queryCount,
-                   SUM(clicks) as clicks,
-                   SUM(impressions) as impressions,
-                   CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
-                   CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
-            FROM gsc_page_query_metrics
-            ${whereClause}
-              AND COALESCE(NULLIF(pageKey, ''), page) <> ''
-            GROUP BY COALESCE(NULLIF(pageKey, ''), page)
-            ORDER BY clicks DESC, impressions DESC
-            LIMIT @limit OFFSET @offset
-          `, params);
-        }
+        `;
+        fallbackGroupedSql = `
+          SELECT MIN(page) AS page,
+                 COALESCE(NULLIF(pageKey, ''), page) AS pageKey,
+                 COUNT(DISTINCT query) as queryCount,
+                 SUM(clicks) as clicks,
+                 SUM(impressions) as impressions,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
+          FROM gsc_page_query_metrics
+          ${whereClause}
+            AND COALESCE(NULLIF(pageKey, ''), page) <> ''
+          GROUP BY COALESCE(NULLIF(pageKey, ''), page)
+        `;
       } else if (wantsQueryCount && hasDate && hasPage && hasPageFilter && !hasQuery) {
-        if (shouldIncludeTotal) {
-          totalRowCountPromise = getTotalRowCount(
-            'gsc_page_metrics',
-            "COALESCE(NULLIF(pageKey, ''), page)",
-            "AND COALESCE(NULLIF(pageKey, ''), page) <> ''",
-          );
-        }
-        if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+        groupedSql = `
           SELECT ${selectCols}
                  SUM(queryCount) as queryCount,
                  SUM(clicks) as clicks,
@@ -2601,89 +2582,81 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ${whereClause}
             AND COALESCE(NULLIF(pageKey, ''), page) <> ''
           ${groupByClause}
-          ${orderClause}
-          LIMIT @limit OFFSET @offset
-        `, params);
+        `;
       } else if (hasPage || (hasQuery && hasPageFilter)) {
-        if (shouldIncludeTotal) {
-          totalRowCountPromise = getTotalRowCount(
-            'gsc_page_query_metrics',
-            hasQuery ? 'query' : "COALESCE(NULLIF(pageKey, ''), page)",
-            hasQuery ? "AND query <> ''" : "AND COALESCE(NULLIF(pageKey, ''), page) <> ''",
-          );
-        }
         const blankFilter = hasQuery ? "AND query <> ''" : "AND COALESCE(NULLIF(pageKey, ''), page) <> ''";
-        if (!shouldReturnTotalOnly) rows = await db.all<any>(`
-          SELECT ${selectCols} 
-                 ${queryCountCol}
-                 SUM(clicks) as clicks, 
-                 SUM(impressions) as impressions, 
-                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr, 
-                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
-          FROM gsc_page_query_metrics
-          ${whereClause}
-          ${blankFilter}
-          ${groupByClause}
-          ${orderClause}
-          LIMIT @limit OFFSET @offset
-        `, params);
-      } else if (wantsQueryCount && hasDate && !hasQuery) {
-        if (!shouldReturnTotalOnly) rows = await db.all<any>(`
+        groupedSql = `
           SELECT ${selectCols}
                  ${queryCountCol}
                  SUM(clicks) as clicks,
                  SUM(impressions) as impressions,
                  CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
                  CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
-          FROM gsc_query_metrics
+          FROM gsc_page_query_metrics
+          ${whereClause}
+          ${blankFilter}
+          ${groupByClause}
+        `;
+      } else if (wantsQueryCount && hasDate && !hasQuery) {
+        groupedSql = `
+          SELECT ${selectCols}
+                 SUM(queryCount) as queryCount,
+                 SUM(clicks) as clicks,
+                 SUM(impressions) as impressions,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
+          FROM gsc_site_metrics
           ${whereClause}
           ${groupByClause}
-          ${orderClause}
-          LIMIT @limit OFFSET @offset
-        `, params);
+        `;
       } else if (hasQuery) {
-        if (shouldIncludeTotal) {
-          totalRowCountPromise = getTotalRowCount('gsc_query_metrics', 'query', "AND query <> ''");
-        }
-        if (!shouldReturnTotalOnly) rows = await db.all<any>(`
-                 SELECT ${selectCols} 
-                 SUM(clicks) as clicks, 
-                 SUM(impressions) as impressions, 
-                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr, 
+        groupedSql = `
+          SELECT ${selectCols}
+                 SUM(clicks) as clicks,
+                 SUM(impressions) as impressions,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
                  CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
           FROM gsc_query_metrics
           ${whereClause}
             AND query <> ''
           ${groupByClause}
-          ${orderClause}
-          LIMIT @limit OFFSET @offset
-        `, params);
+        `;
       } else {
-        if (!shouldReturnTotalOnly) rows = await db.all<any>(`
-                 SELECT ${selectCols} 
-                 SUM(clicks) as clicks, 
-                 SUM(impressions) as impressions, 
-                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr, 
+        groupedSql = `
+          SELECT ${selectCols}
+                 SUM(clicks) as clicks,
+                 SUM(impressions) as impressions,
+                 CASE WHEN SUM(impressions) > 0 THEN SUM(clicks)*1.0/SUM(impressions) ELSE 0 END as ctr,
                  CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions)*1.0/SUM(impressions) ELSE 0 END as position
           FROM gsc_site_metrics
           ${whereClause}
           ${groupByClause}
-          ${orderClause}
-          LIMIT @limit OFFSET @offset
-        `, params);
+        `;
       }
 
-      if (totalRowCountPromise) {
-        totalRowCount = await totalRowCountPromise;
-      }
-
-      if (shouldReturnTotalOnly && hasPage && !hasQuery && !hasPageFilter && Number(totalRowCount || 0) === 0) {
-        totalRowCount = await getTotalRowCount(
-          'gsc_page_query_metrics',
-          "COALESCE(NULLIF(pageKey, ''), page)",
+      if (groupedSql) {
+        const result = await runGroupedWarehouseQuery(
+          groupedSql,
+          orderClause,
+          groupedParams,
+          shouldIncludeTotal,
+          shouldReturnTotalOnly,
         );
+        rows = result.rows;
+        totalRowCount = result.totalRowCount;
       }
 
+      if (fallbackGroupedSql && Number(totalRowCount || 0) === 0 && rows.length === 0) {
+        const fallbackResult = await runGroupedWarehouseQuery(
+          fallbackGroupedSql,
+          orderClause,
+          fallbackGroupedParams,
+          shouldIncludeTotal,
+          shouldReturnTotalOnly,
+        );
+        rows = fallbackResult.rows;
+        totalRowCount = fallbackResult.totalRowCount;
+      }
       if (shouldReturnTotalOnly) {
         res.json({ rows: [], totalRowCount });
         return;

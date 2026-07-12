@@ -65,6 +65,13 @@ assert(
   'Profile priming must include the active, unlocked, and known workspace sites',
 );
 
+const database = read('server/database.ts');
+assert(
+  database.includes('ALTER TABLE gsc_site_metrics ADD COLUMN IF NOT EXISTS queryCount INTEGER')
+    && database.includes('backfillGscSiteQueryCounts'),
+  'Existing warehouses must migrate and backfill daily visible-query summary counts',
+);
+
 const warehouseRoutes = read('server/routes/warehouse.ts');
 assert(
   !warehouseRoutes.includes('ensureGscMonthlySummariesForRange'),
@@ -78,8 +85,18 @@ assert(
   (warehouseRoutes.match(/SUM\(queryCount\) AS queryCount/g) || []).length >= 2,
   'Warehouse page-summary reads must expose stored visible-query counts',
 );
+assert(
+  warehouseRoutes.includes('FROM gsc_site_metrics')
+    && warehouseRoutes.includes('SUM(queryCount) as queryCount'),
+  'Daily visible-query charts must read stored site summaries instead of scanning query detail rows',
+);
 
 const warehouseJobs = read('server/services/warehouseJobs.ts');
+assert(
+  warehouseJobs.includes('const dateQueryCount = dateQueryRows.filter')
+    && warehouseJobs.includes('position, queryCount) VALUES'),
+  'GSC syncs must persist daily visible-query counts in site summaries',
+);
 const alreadyStoredBranch = warehouseJobs.slice(
   warehouseJobs.indexOf('const alreadyStored = await hasRequiredCoreWarehouseRows'),
   warehouseJobs.indexOf('const gscResult = await syncGscRange'),

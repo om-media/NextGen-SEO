@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { CheckCircle2, ExternalLink, Loader2, ShieldAlert } from "lucide-react";
+import { InternalLinkProviderSettings } from "./InternalLinkProviderSettings";
 import type { UserProfile } from "../../contexts/AuthContext";
 
 type DataSource = "gsc" | "bing" | "ga4" | "blended";
@@ -236,6 +237,8 @@ export function SettingsDialog({
                 />
                 <p className="text-xs text-muted-foreground">Enter a new key to connect Bing, or leave this blank to keep the existing connection unchanged.</p>
               </div>
+
+              <InternalLinkProviderSettings />
 
               <div className="rounded-2xl border border-dashed border-border bg-card p-5 shadow-sm">
                 <p className="text-sm font-medium">Need help getting your Bing API key?</p>

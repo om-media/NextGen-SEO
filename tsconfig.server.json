@@ -11,6 +11,8 @@
   },
   "include": [
     "server.ts",
+    "worker.ts",
+    "databasePrepare.ts",
     "server/**/*.ts",
     "scripts/**/*.ts"
   ]

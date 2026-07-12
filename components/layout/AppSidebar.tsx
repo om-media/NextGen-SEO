@@ -10,7 +10,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { BarChart3, LayoutDashboard, Settings, Sparkles, Bot, Target, Server, FileSearch, Globe2, PanelsTopLeft } from "lucide-react"
+import { BarChart3, LayoutDashboard, Settings, Sparkles, Bot, Target, Server, FileSearch, Globe2, PanelsTopLeft, Link2 } from "lucide-react"
 
 const baseItems = [
   { title: "Dashboard", icon: LayoutDashboard },
@@ -19,6 +19,7 @@ const baseItems = [
   { title: "Server Logs", icon: Server },
   { title: "Page Indexing", icon: FileSearch },
   { title: "Crawl Inventory", icon: Globe2 },
+  { title: "Internal Links", icon: Link2 },
   { title: "LLM Traffic", icon: Bot },
   { title: "AI Content Auditor", icon: Sparkles },
   { title: "Settings", icon: Settings },

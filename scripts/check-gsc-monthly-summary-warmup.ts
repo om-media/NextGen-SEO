@@ -4,6 +4,7 @@ import {
   ALL_GSC_MONTHLY_SUMMARY_TABLES,
   ensureGscMonthlySummariesForRange,
   hasGscMonthlySummariesForRange,
+  getGscMonthlySummaryCoverage,
 } from '../server/services/gscMonthlySummaries.js';
 
 class MemoryDatabase implements AppDatabase {
@@ -194,6 +195,10 @@ for (const row of rows) {
   await db.run('INSERT INTO gsc_page_metrics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [ownerId, siteUrl, row.date, row.page, row.pageKey, row.clicks, row.impressions, ctr, row.position, 1]);
 }
 
+const beforeCoverage = await getGscMonthlySummaryCoverage(db, input, ALL_GSC_MONTHLY_SUMMARY_TABLES);
+assert(beforeCoverage.expectedMonthStarts.join(',') === '2026-02-01,2026-03-01', 'coverage should target the full interior months');
+assert(beforeCoverage.tables.some((table) => table.missingMonthStarts.length > 0), 'coverage should report missing months before warm-up');
+
 const before = await hasGscMonthlySummariesForRange(db, input, ALL_GSC_MONTHLY_SUMMARY_TABLES);
 assert(before === false, 'monthly summary coverage should be missing before warm-up');
 
@@ -204,6 +209,9 @@ const after = await hasGscMonthlySummariesForRange(db, input, ALL_GSC_MONTHLY_SU
 assert(after === true, 'monthly summary coverage should exist after warm-up');
 
 const secondWarm = await ensureGscMonthlySummariesForRange(db, input, ALL_GSC_MONTHLY_SUMMARY_TABLES);
+const afterCoverage = await getGscMonthlySummaryCoverage(db, input, ALL_GSC_MONTHLY_SUMMARY_TABLES);
+assert(afterCoverage.tables.every((table) => table.missingMonthStarts.length === 0), 'coverage should report full monthly coverage after warm-up');
+
 assert(secondWarm === false, 'warm-up should be a no-op once coverage exists');
 
 const alpha = await db.get<{ clicks: number; impressions: number; positionSum: number }>(`

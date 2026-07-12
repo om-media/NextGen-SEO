@@ -4,7 +4,7 @@ import { initializeDatabase } from '../server/database.js';
 import {
   ALL_GSC_MONTHLY_SUMMARY_TABLES,
   backfillMissingGscMonthlySummaries,
-  hasGscMonthlySummariesForRange,
+  getGscMonthlySummaryCoverage,
 } from '../server/services/gscMonthlySummaries.js';
 
 dotenv.config({ path: '.env.local' });
@@ -23,12 +23,17 @@ async function main() {
         LIMIT 5
       `);
       for (const site of sites) {
+        const coverage = await getGscMonthlySummaryCoverage(db, site, ALL_GSC_MONTHLY_SUMMARY_TABLES);
         console.log(`${site.siteUrl} ${site.startDate}..${site.endDate}`);
-        console.log(`  all=${await hasGscMonthlySummariesForRange(db, site)}`);
-        for (const table of ALL_GSC_MONTHLY_SUMMARY_TABLES) {
-          console.log(`  ${table}=${await hasGscMonthlySummariesForRange(db, site, [table])}`);
+        console.log(`  fullCoverage=${coverage.hasFullCoverage} expectedMonths=${coverage.expectedMonthStarts.length}`);
+        for (const table of coverage.tables) {
+          console.log(`  ${table.tableName}=${table.hasFullCoverage} available=${table.availableMonthStarts.length} missing=${table.missingMonthStarts.length}`);
+          if (table.missingMonthStarts.length > 0) {
+            console.log(`    missingMonths=${table.missingMonthStarts.join(',')}`);
+          }
         }
       }
+      return;
     }
     await backfillMissingGscMonthlySummaries(db);
     const elapsedMs = performance.now() - startedAt;

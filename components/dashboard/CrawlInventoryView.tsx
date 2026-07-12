@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { AlertCircle, CheckCircle2, Download, Eye, Globe2, History, Loader2, RefreshCw, Search, ShieldAlert } from "lucide-react";
+import { AlertCircle, CheckCircle2, CircleStop, Download, Eye, Globe2, History, Loader2, RefreshCw, Search, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
+import type { QueueMetadata } from "@/src/services/queueMetadata";
 import { getPlanCrawlLimits } from "@/shared/plans";
 import { useAuth } from "@/src/contexts/AuthContext";
 import {
@@ -101,9 +102,26 @@ function resolveStartUrl(value: string | null | undefined, siteUrl: string) {
   return "";
 }
 
+function crawlProcessedCount(job: CrawlJob | null) {
+  if (!job) return 0;
+  return Math.min(
+    Math.max(Number(job.discoveredCount || 0), 0),
+    Math.max(Number(job.crawledCount || 0), 0) + Math.max(Number(job.errorCount || 0), 0) + Math.max(Number(job.skippedCount || 0), 0),
+  );
+}
+function formatQueueWait(seconds: number | null) {
+  if (seconds === null) return "Learning from recent runs";
+  if (seconds < 60) return "Under a minute";
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `About ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `About ${hours}h ${remainder}m` : `About ${hours}h`;
+}
+
 function formatJobLabel(job: CrawlJob) {
   const status = job.status.charAt(0).toUpperCase() + job.status.slice(1);
-  const counts = `${formatNumber(job.crawledCount)}/${formatNumber(job.discoveredCount)}`;
+  const counts = `${formatNumber(crawlProcessedCount(job))}/${formatNumber(job.discoveredCount)} processed`;
   return `${status} - ${formatRelativeTime(job.startedAt || job.updatedAt || null)} - ${counts}`;
 }
 
@@ -181,6 +199,8 @@ function exportLinksCsv(rows: CrawlLinkRow[]) {
     "From Page Key",
     "To URL",
     "To Page Key",
+    "Anchor Text",
+    "Context Text",
     "Depth",
     "Discovered At",
   ];
@@ -195,6 +215,8 @@ function exportLinksCsv(rows: CrawlLinkRow[]) {
     row.fromPageKey,
     row.toUrl,
     row.toPageKey,
+    row.anchorText || "",
+    row.contextText || "",
     row.depth,
     row.discoveredAt || "",
   ]);
@@ -217,6 +239,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
   const { userProfile } = useAuth();
   const crawlLimits = getPlanCrawlLimits(userProfile?.tier);
   const [job, setJob] = useState<CrawlJob | null>(null);
+  const [queue, setQueue] = useState<QueueMetadata | null>(null);
   const [jobs, setJobs] = useState<CrawlJob[]>([]);
   const [summary, setSummary] = useState<CrawlSummary | null>(null);
   const [rows, setRows] = useState<CrawlPageRow[]>([]);
@@ -241,7 +264,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
   const [respectRobots, setRespectRobots] = useState(true);
   const [includeQueryStrings, setIncludeQueryStrings] = useState(false);
   const [userAgent, setUserAgent] = useState("NextGenSEO-Crawler/1.0");
-  const hasAutoStartedRef = useRef(false);
+
   const resolvedStartUrl = useMemo(() => resolveStartUrl(defaultStartUrl, siteUrl), [defaultStartUrl, siteUrl]);
   const activeJobId = selectedJobId || job?.id || null;
 
@@ -249,8 +272,8 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
   const totalPages = Math.max(1, Math.ceil(pageTotal / pageSize));
   const progress = useMemo(() => {
     if (!job?.discoveredCount) return 0;
-    return Math.min(100, Math.round((job.crawledCount / job.discoveredCount) * 100));
-  }, [job?.crawledCount, job?.discoveredCount]);
+    return Math.min(100, Math.round((crawlProcessedCount(job) / job.discoveredCount) * 100));
+  }, [job?.crawledCount, job?.discoveredCount, job?.errorCount, job?.skippedCount]);
   const canCancelActiveJob = Boolean(job?.id && ["queued", "retrying", "running"].includes(job.status));
   const issueTotal =
     (summary?.errorPages || 0) +
@@ -314,11 +337,12 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
     setSelectedJobId("");
     setJobs([]);
     setJob(null);
+    setQueue(null);
     setSummary(null);
     setRows([]);
     setPageTotal(0);
     setHasLoadedJobs(false);
-    hasAutoStartedRef.current = false;
+
   }, [siteUrl]);
 
   const loadJobs = async () => {
@@ -326,6 +350,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
     setJobsLoading(true);
     try {
       const result = await fetchCrawlJobs(siteUrl);
+      setQueue(result.queue ?? null);
       const nextJobs = result.jobs.length > 0 ? result.jobs : job ? [job] : [];
       setJobs(nextJobs);
       if (!selectedJobId && nextJobs[0]) {
@@ -344,6 +369,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
     if (!siteUrl) return;
     const result = await fetchCrawlStatus(siteUrl, jobId ?? activeJobId);
     setJob(result.job);
+    setQueue(result.queue ?? null);
     setSummary(result.summary);
   };
 
@@ -361,6 +387,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
         siteUrl,
       });
       setJob(result.job);
+      setQueue(result.queue ?? null);
       setSummary(result.summary);
       setRows(result.rows);
       setPageTotal(result.page.total);
@@ -461,10 +488,10 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
     const timer = window.setInterval(() => {
       loadStatus().catch(() => {});
       loadPages().catch(() => {});
-    }, 5000);
+    }, queue?.autoRefreshMs ?? 5000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job?.status, siteUrl, pageIndex, searchTerm, selectedJobId, issueFilter]);
+  }, [job?.status, queue?.autoRefreshMs, siteUrl, pageIndex, searchTerm, selectedJobId, issueFilter]);
 
   const handleStart = async (options: { silent?: boolean } = {}) => {
     if (!siteUrl) return;
@@ -486,11 +513,14 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
         setSelectedJobId(result.job.id);
         setPageIndex(0);
         setJob(result.job);
+        setQueue(result.queue ?? null);
         setSummary(null);
       }
       if (!options.silent) {
-        toast.success("Crawl queued", {
-          description: `The crawler is now collecting pages for ${siteUrl}.`,
+        toast.success(result.alreadyRunning ? "Crawl already active" : "Crawl queued", {
+          description: result.alreadyRunning
+            ? `The existing crawl for ${siteUrl} is still in progress.`
+            : `The crawler is now collecting pages for ${siteUrl}.`,
         });
       }
       await loadJobs();
@@ -512,6 +542,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
     try {
       const result = await cancelCrawl({ jobId: job.id, siteUrl });
       setJob(result.job);
+      setQueue(result.queue ?? null);
       await loadJobs();
       await loadPages(result.job.id, pageIndex);
       toast.success("Crawl cancelled", {
@@ -525,17 +556,6 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
     }
   };
 
-  useEffect(() => {
-    if (!siteUrl || !hasLoadedJobs || jobs.length > 0 || job || starting || hasAutoStartedRef.current) {
-      return;
-    }
-
-    hasAutoStartedRef.current = true;
-    handleStart({ silent: true }).catch((err) => {
-      setError(err.message || "Failed to start crawl");
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasLoadedJobs, job, jobs.length, siteUrl, starting]);
 
   const displayedRows = rows;
 
@@ -550,7 +570,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
               <StatusPill job={job} />
             </div>
             <CardDescription className="max-w-3xl">
-              Technical page analysis for the current site. The app starts collection automatically and keeps the latest crawl ready for review.
+              Technical page analysis for the current site, with crawl history and explicit controls for each run.
             </CardDescription>
           </div>
           <div className="flex flex-col gap-3 lg:items-end">
@@ -559,6 +579,26 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
               <div className="font-medium text-foreground">{siteUrl}</div>
             </div>
             <div className="flex flex-wrap gap-2 lg:justify-end">
+              {canCancelActiveJob ? (
+                <Button
+                  className="h-10 rounded-xl"
+                  variant="outline"
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                >
+                  {cancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CircleStop className="mr-2 h-4 w-4" />}
+                  Cancel crawl
+                </Button>
+              ) : (
+                <Button
+                  className="h-10 rounded-xl"
+                  onClick={() => handleStart()}
+                  disabled={starting || !resolvedStartUrl}
+                >
+                  {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                  {starting ? "Queuing crawl..." : "Start fresh crawl"}
+                </Button>
+              )}
               <Button
                 className="h-10 rounded-xl"
                 variant="outline"
@@ -614,7 +654,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
                     <SelectItem value="__latest__">Latest crawl</SelectItem>
                     {jobs.map((entry) => (
                       <SelectItem key={entry.id} value={entry.id}>
-                        {`${entry.status.charAt(0).toUpperCase() + entry.status.slice(1)} - ${formatRelativeTime(entry.startedAt || entry.updatedAt || null)} - ${formatNumber(entry.crawledCount)}/${formatNumber(entry.discoveredCount)}`}
+                        {`${entry.status.charAt(0).toUpperCase() + entry.status.slice(1)} - ${formatRelativeTime(entry.startedAt || entry.updatedAt || null)} - ${formatNumber(crawlProcessedCount(entry))}/${formatNumber(entry.discoveredCount)} processed`}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -630,8 +670,8 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
                   {starting || canCancelActiveJob
                     ? "The app is collecting crawl data in the background. Results update here as pages are processed."
                     : job
-                      ? "The latest crawl is ready. New analysis runs are started automatically when a site is activated."
-                      : "The app will start the first crawl automatically for this site."}
+                      ? "The latest crawl is ready. Start a fresh crawl when you want to refresh the inventory."
+                      : "No crawl has been started for this site yet."}
                 </div>
               </div>
             </div>
@@ -640,12 +680,33 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium text-foreground">Progress</span>
                 <span className="text-muted-foreground">
-                  {job ? `${formatNumber(job.crawledCount)} of ${formatNumber(job.discoveredCount)} crawled` : "Waiting for first crawl"}
+                  {job ? `${formatNumber(crawlProcessedCount(job))} of ${formatNumber(job.discoveredCount)} URLs processed` : "Waiting for first crawl"}
                 </span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-muted">
                 <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progress}%` }} />
               </div>
+              {queue && canCancelActiveJob && (
+                <div className="grid gap-3 border-y border-border py-3 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Queue</p>
+                    <p className="mt-1 text-sm font-semibold text-foreground">
+                      {queue.position ? `Position ${queue.position}` : job?.status === "running" ? "Running now" : "Preparing"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Workload</p>
+                    <p className="mt-1 text-sm font-semibold capitalize text-foreground">{queue.workloadState}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">{job?.status === "running" ? "Remaining" : "Estimated start"}</p>
+                    <p className="mt-1 text-sm font-semibold text-foreground">
+                      {formatQueueWait(job?.status === "running" ? queue.estimatedCompletionInSeconds : queue.estimatedStartInSeconds)}
+                    </p>
+                  </div>
+                  <p className="sm:col-span-3 text-xs text-muted-foreground">{queue.message}</p>
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-border bg-card p-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Started</p>

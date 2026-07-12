@@ -4,7 +4,7 @@ import { requireAuth, requireMatchingParam } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
 import { getPlanCrawlLimits } from '../../shared/plans.js';
-import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats } from '../services/bingWarehouse.js';
+import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats, syncBingSites } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
@@ -78,32 +78,32 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
   };
 
-  const queueInitialBingSyncIfPossible = async (ownerId: string, apiKey?: string | null) => {
+  const queueInitialBingSyncIfPossible = async (ownerId: string, apiKey?: string | null, siteUrls?: string[]) => {
     const normalizedApiKey = typeof apiKey === 'string' ? apiKey.trim() : '';
     if (!normalizedApiKey) return;
 
     try {
-      const user = await db.get<{ activatedSiteUrl?: string | null; knownSites?: string | null; unlockedSites?: string | null }>(
-        'SELECT activatedSiteUrl, knownSites, unlockedSites FROM users WHERE id = ?',
-        [ownerId],
-      );
-      if (!user) return;
+      const candidateSites = siteUrls && siteUrls.length > 0
+        ? uniqueSites(siteUrls)
+        : await (async () => {
+          const user = await db.get<{ activatedSiteUrl?: string | null; knownSites?: string | null; unlockedSites?: string | null }>(
+            'SELECT activatedSiteUrl, knownSites, unlockedSites FROM users WHERE id = ?',
+            [ownerId],
+          );
+          if (!user) return [];
+          return uniqueSites([
+            typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl : '',
+            ...parseStoredSites(user.unlockedSites),
+            ...parseStoredSites(user.knownSites),
+          ]);
+        })();
+      if (candidateSites.length === 0) return;
 
-      const candidateSites = uniqueSites([
-        typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl : '',
-        ...parseStoredSites(user.unlockedSites),
-        ...parseStoredSites(user.knownSites),
-      ]);
-
-      for (const siteUrl of candidateSites) {
-        try {
-          if (await canAccessSite(db, ownerId, siteUrl)) {
-            await syncBingQueryStats(db, { apiKey: normalizedApiKey, ownerId, siteUrl });
-          }
-        } catch (err) {
-          console.warn('Failed to sync initial Bing data', { ownerId, siteUrl, err });
-        }
-      }
+      await syncBingSites(db, {
+        apiKey: normalizedApiKey,
+        ownerId,
+        siteUrls: candidateSites,
+      });
     } catch (err) {
       console.warn('Failed to start initial Bing data sync', { ownerId, err });
     }
@@ -116,8 +116,9 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         gscRefreshToken?: string | null;
         tier?: string | null;
         unlockedSites?: string | null;
+        bingApiKey?: string | null;
       }>(
-        'SELECT activatedGa4PropertyId, activatedSiteUrl, gscRefreshToken, tier, unlockedSites FROM users WHERE id = ?',
+        'SELECT activatedGa4PropertyId, activatedSiteUrl, gscRefreshToken, tier, unlockedSites, bingApiKey FROM users WHERE id = ?',
         [ownerId],
       );
       if (!user) return;
@@ -141,6 +142,8 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
           siteUrl,
         });
       }
+
+      await queueInitialBingSyncIfPossible(ownerId, user.bingApiKey, accessibleSites);
     } catch (err) {
       console.warn('Failed to queue known site data priming', { ownerId, err });
     }
@@ -243,7 +246,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier, unlockedSites, onboardingCompleted FROM users WHERE id = ?', [req.params.id]);
+      const user = await db.get<any>('SELECT tier, unlockedSites, onboardingCompleted, bingApiKey FROM users WHERE id = ?', [req.params.id]);
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
       }
@@ -269,6 +272,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       if (onboardingCompleted && activatedSiteUrl) {
         await queueInitialCrawlIfNeeded(req.params.id, activatedSiteUrl, user.tier);
         await queueInitialWarehouseSyncIfPossible(req.params.id, activatedSiteUrl, activatedGa4PropertyId || null);
+        await queueInitialBingSyncIfPossible(req.params.id, user.bingApiKey, [activatedSiteUrl]);
       }
       res.json({
         success: true,
@@ -289,7 +293,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
     }
 
     try {
-      const user = await db.get<any>('SELECT tier, unlockedSites FROM users WHERE id = ?', [req.params.id]);
+      const user = await db.get<any>('SELECT tier, unlockedSites, bingApiKey FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
       if (!(await canAccessSite(db, req.params.id, activatedSiteUrl))) {
         return res.status(403).json({ error: 'Activate this site before making it the workspace default.' });
@@ -297,6 +301,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       await db.run('UPDATE users SET activatedSiteUrl = ? WHERE id = ?', [activatedSiteUrl, req.params.id]);
       await queueInitialCrawlIfNeeded(req.params.id, activatedSiteUrl, user.tier);
       await queueInitialWarehouseSyncIfPossible(req.params.id, activatedSiteUrl);
+      await queueInitialBingSyncIfPossible(req.params.id, user.bingApiKey, [activatedSiteUrl]);
       res.json({ success: true, activatedSiteUrl });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -373,6 +378,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       }
       await queueInitialCrawlIfNeeded(req.params.id, siteUrl, user.tier);
       await queueInitialWarehouseSyncIfPossible(req.params.id, siteUrl);
+      await queueInitialBingSyncIfPossible(req.params.id, user.bingApiKey, [siteUrl]);
       res.json({ success: true, unlockedSites });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

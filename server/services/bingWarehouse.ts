@@ -11,6 +11,12 @@ const toNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+class BingQueryStatsError extends Error {
+  constructor(public readonly status: number, public readonly siteUrl: string) {
+    super('Bing query stats request failed with ' + status);
+  }
+}
+
 function parseStringArray(value: unknown) {
   if (!value || typeof value !== 'string') return [];
   try {
@@ -21,18 +27,61 @@ function parseStringArray(value: unknown) {
   }
 }
 
-function normalizeBingRows(data: any) {
+export function collectWorkspaceSiteUrls(user: {
+  activatedSiteUrl?: string | null;
+  knownSites?: string | null;
+  unlockedSites?: string | null;
+}) {
+  const sites = new Set<string>();
+  if (typeof user.activatedSiteUrl === 'string' && user.activatedSiteUrl.trim()) {
+    sites.add(user.activatedSiteUrl.trim());
+  }
+  for (const site of parseStringArray(user.unlockedSites)) {
+    sites.add(site.trim());
+  }
+  for (const site of parseStringArray(user.knownSites)) {
+    sites.add(site.trim());
+  }
+  return [...sites];
+}
+
+export function normalizeBingRows(data: any) {
   const rows = Array.isArray(data?.d) ? data.d : [];
-  return rows
-    .map((row: any) => ({
-      AvgClickPosition: toNumber(row.AvgClickPosition),
-      AvgImpressionPosition: toNumber(row.AvgImpressionPosition),
-      Clicks: toNumber(row.Clicks),
-      Ctr: toNumber(row.Ctr),
-      Impressions: toNumber(row.Impressions),
-      Query: String(row.Query || '').trim(),
-    }))
-    .filter((row) => row.Query);
+  const byQuery = new Map<string, {
+    AvgClickPosition: number;
+    AvgImpressionPosition: number;
+    Clicks: number;
+    Impressions: number;
+    Query: string;
+  }>();
+
+  for (const rawRow of rows) {
+    const query = String(rawRow?.Query || '').trim();
+    if (!query) continue;
+    const clicks = toNumber(rawRow.Clicks);
+    const impressions = toNumber(rawRow.Impressions);
+    const current = byQuery.get(query) || {
+      AvgClickPosition: 0,
+      AvgImpressionPosition: 0,
+      Clicks: 0,
+      Impressions: 0,
+      Query: query,
+    };
+    current.AvgClickPosition += toNumber(rawRow.AvgClickPosition) * Math.max(clicks, 1);
+    current.AvgImpressionPosition += toNumber(rawRow.AvgImpressionPosition) * Math.max(impressions, 1);
+    current.Clicks += clicks;
+    current.Impressions += impressions;
+    byQuery.set(query, current);
+  }
+
+  return Array.from(byQuery.values()).map((row) => ({
+    AvgClickPosition: row.Clicks > 0 ? row.AvgClickPosition / row.Clicks : row.AvgClickPosition,
+    AvgImpressionPosition: row.Impressions > 0 ? row.AvgImpressionPosition / row.Impressions : row.AvgImpressionPosition,
+    Clicks: row.Clicks,
+    Ctr: row.Impressions > 0 ? row.Clicks / row.Impressions : 0,
+    Impressions: row.Impressions,
+    Query: row.Query,
+  }));
 }
 
 export async function listCachedBingQueryStats(db: AppDatabase, ownerId: string, siteUrl: string) {
@@ -72,7 +121,7 @@ export async function getBingCacheStatus(db: AppDatabase, ownerId: string, siteU
 export async function syncBingQueryStats(db: AppDatabase, input: { apiKey: string; ownerId: string; siteUrl: string }) {
   const response = await fetch(`https://ssl.bing.com/webmaster/api.svc/json/GetQueryStats?siteUrl=${encodeURIComponent(input.siteUrl)}&apikey=${input.apiKey}`);
   if (!response.ok) {
-    throw new Error(`Bing query stats request failed with ${response.status}`);
+    throw new BingQueryStatsError(response.status, input.siteUrl);
   }
 
   const data = await response.json();
@@ -104,6 +153,31 @@ export async function syncBingQueryStats(db: AppDatabase, input: { apiKey: strin
   return { fetchedAt, rows };
 }
 
+export async function syncBingSites(db: AppDatabase, input: { apiKey: string; ownerId: string; siteUrls: string[] }) {
+  const apiKey = String(input.apiKey || '').trim();
+  if (!apiKey) {
+    return { attemptedSites: [], syncedSites: [] as string[] };
+  }
+
+  const attemptedSites = Array.from(new Set(input.siteUrls.map((siteUrl) => siteUrl.trim()).filter(Boolean)));
+  const syncedSites: string[] = [];
+
+  for (const siteUrl of attemptedSites) {
+    try {
+      if (!(await canAccessSite(db, input.ownerId, siteUrl))) continue;
+      await syncBingQueryStats(db, { apiKey, ownerId: input.ownerId, siteUrl });
+      syncedSites.push(siteUrl);
+    } catch (error: any) {
+      const message = error instanceof BingQueryStatsError
+        ? 'Bing query stats request failed with ' + error.status
+        : error?.message || 'Bing query stats refresh failed';
+      console.warn('[bing] Workspace query stats sync skipped', { message, ownerId: input.ownerId, siteUrl });
+    }
+  }
+
+  return { attemptedSites, syncedSites };
+}
+
 export async function getFreshBingQueryStats(db: AppDatabase, input: { apiKey: string; ownerId: string; siteUrl: string }) {
   const status = await getBingCacheStatus(db, input.ownerId, input.siteUrl);
   if (status.isFresh) {
@@ -126,6 +200,22 @@ export async function getFreshBingQueryStats(db: AppDatabase, input: { apiKey: s
   }
 }
 
+export async function runBingDailySchedulerTick(db: AppDatabase) {
+  const users = await db.all<any>(`
+    SELECT id, tier, activatedSiteUrl, knownSites, unlockedSites, bingApiKey
+    FROM users
+    WHERE bingApiKey IS NOT NULL AND bingApiKey != ''
+  `);
+
+  for (const user of users) {
+    await syncBingSites(db, {
+      apiKey: user.bingApiKey,
+      ownerId: user.id,
+      siteUrls: collectWorkspaceSiteUrls(user),
+    });
+  }
+}
+
 export function startBingDailyScheduler(db: AppDatabase) {
   let stopped = false;
   let running = false;
@@ -134,34 +224,7 @@ export function startBingDailyScheduler(db: AppDatabase) {
     if (stopped || running) return;
     running = true;
     try {
-      const users = await db.all<any>(`
-        SELECT id, tier, activatedSiteUrl, knownSites, unlockedSites, bingApiKey
-        FROM users
-        WHERE bingApiKey IS NOT NULL AND bingApiKey != ''
-      `);
-
-      for (const user of users) {
-        const sites = new Set<string>();
-        if (typeof user.activatedSiteUrl === 'string' && user.activatedSiteUrl.trim()) {
-          sites.add(user.activatedSiteUrl.trim());
-        }
-        for (const site of parseStringArray(user.unlockedSites)) {
-          sites.add(site.trim());
-        }
-        for (const site of parseStringArray(user.knownSites)) {
-          sites.add(site.trim());
-        }
-
-        for (const siteUrl of sites) {
-          try {
-            if (await canAccessSite(db, user.id, siteUrl)) {
-              await syncBingQueryStats(db, { apiKey: user.bingApiKey, ownerId: user.id, siteUrl });
-            }
-          } catch (error) {
-            console.warn('[bing] Daily query stats refresh failed', { error, ownerId: user.id, siteUrl });
-          }
-        }
-      }
+      await runBingDailySchedulerTick(db);
     } catch (error) {
       console.error('[bing] Daily scheduler failed:', error);
     } finally {

@@ -26,6 +26,7 @@ const Ga4LlmTraffic = lazy(() => import("@/components/dashboard/Ga4LlmTraffic").
 const Ga4Demographics = lazy(() => import("@/components/dashboard/Ga4Demographics").then((module) => ({ default: module.Ga4Demographics })));
 const BingDataGrid = lazy(() => import("@/components/dashboard/BingDataGrid").then((module) => ({ default: module.BingDataGrid })));
 const CrawlInventoryView = lazy(() => import("@/components/dashboard/CrawlInventoryView").then((module) => ({ default: module.CrawlInventoryView })));
+const InternalLinksView = lazy(() => import("@/components/dashboard/InternalLinksView").then((module) => ({ default: module.InternalLinksView })));
 const LogAnalyzerView = lazy(() => import("@/components/dashboard/LogAnalyzerView").then((module) => ({ default: module.LogAnalyzerView })));
 const PageIndexingView = lazy(() => import("@/components/dashboard/PageIndexingView").then((module) => ({ default: module.PageIndexingView })));
 const RawDataView = lazy(() => import("@/components/dashboard/RawDataView").then((module) => ({ default: module.RawDataView })));
@@ -60,7 +61,7 @@ type AppContentProps = {
   onGscDashboardTabChange: (value: GscDashboardTab) => void;
   onOpenSettings: (tab?: "profile" | "workspace" | "integrations") => void;
   onActivateWorkspaceSite: (siteUrl: string) => Promise<void>;
-  onOpenSiteWorkspace: (siteUrl: string, menu: "Dashboard" | "Crawl Inventory" | "Raw Data" | "Reconciliation") => void;
+  onOpenSiteWorkspace: (siteUrl: string, menu: "Dashboard" | "Crawl Inventory" | "Internal Links" | "Raw Data" | "Reconciliation") => void;
   selectedSite: string;
   workspaceSiteUrl?: string;
   setShowSystemAnnotations: (value: boolean) => void;
@@ -366,6 +367,12 @@ export function AppContent({
             siteUrl={selectedSite}
             defaultStartUrl={userProfile?.activatedSiteUrl || (selectedSite.startsWith("http") ? selectedSite : null)}
           />
+        </div>
+      )}
+
+      {selectedSite && !apiError && activeMenu === "Internal Links" && (
+        <div className="space-y-4">
+          <InternalLinksView siteUrl={selectedSite} dateRange={dateRange} />
         </div>
       )}
 

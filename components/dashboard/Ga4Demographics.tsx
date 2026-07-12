@@ -155,7 +155,15 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange, refreshK
         setError(hardErrors.length > 0 ? hardErrors.join(' | ') : null);
       } catch (err: any) {
         if (!isCurrent || err?.name === "AbortError") return
-        setError(err.message || 'Failed to fetch breakdown data')
+        if (err.message === "UNAUTHORIZED") {
+          setError("Your session expired. Sign in again to load stored Analytics data.")
+        } else if (err.message === "Failed to fetch") {
+          setError("Network error: Unable to load the stored Analytics user breakdowns right now.")
+        } else if (/not warehoused|being prepared|not ready|history import|stored warehouse/i.test(err.message)) {
+          setError("Analytics data is still updating for these user breakdowns. Existing stored rows stay available while the background import catches up.")
+        } else {
+          setError(err.message || 'Failed to fetch breakdown data')
+        }
         console.error(err)
       } finally {
         if (isCurrent) setLoading(false)

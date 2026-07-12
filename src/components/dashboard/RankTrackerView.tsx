@@ -35,6 +35,33 @@ type RankTrackingStatus = {
   today: string;
 };
 
+type TrackedKeyword = {
+  currentPosition: number | null;
+  device: string;
+  id: string;
+  keyword: string;
+  lastUpdated: string | null;
+  location: string;
+  previousPosition?: number | null;
+  rankingUrl: string | null;
+  targetDomain?: string | null;
+};
+
+type RankHistoryRow = {
+  date: string;
+  position: number;
+};
+
+type RankHistoryPoint = {
+  date: string;
+  position: number;
+  positionRaw: number;
+};
+
+function formatIsoDateDaysAgo(daysAgo: number) {
+  return new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+}
+
 function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   if (rows.length === 0) return;
   const headers = Object.keys(rows[0]);
@@ -67,7 +94,7 @@ function formatRankDate(value: string | null | undefined) {
 
 export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
   const { userProfile } = useAuth()
-  const [keywords, setKeywords] = useState<any[]>([])
+  const [keywords, setKeywords] = useState<TrackedKeyword[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -90,7 +117,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
   
   // Selection & History
   const [selectedKeywordId, setSelectedKeywordId] = useState<string | null>(null)
-  const [historyData, setHistoryData] = useState<any[]>([])
+  const [historyData, setHistoryData] = useState<RankHistoryPoint[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
 
   const fetchKeywords = async () => {
@@ -98,7 +125,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
     try {
       const res = await authFetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`)
       if (res.ok) {
-        const data = await res.json()
+        const data = await res.json() as TrackedKeyword[]
         setKeywords(data)
         if (data.length > 0 && !selectedKeywordId) {
           setSelectedKeywordId(data[0].id)
@@ -127,9 +154,9 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
     try {
       const res = await authFetch(`/api/rank-tracking/history?keywordId=${id}`)
       if (res.ok) {
-        const data = await res.json()
+        const data = await res.json() as RankHistoryRow[]
         // Format for Recharts
-        setHistoryData(data.map((d: any) => ({
+        setHistoryData(data.map((d) => ({
           date: d.date,
           // We invert position so chart goes UP when rank improves (rank 1 is highest)
           positionRaw: d.position,
@@ -157,10 +184,22 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
   }, [selectedKeywordId])
 
   const handleAddKeywords = async () => {
-    const keywordArray = newKeywords.split(',').map(k => k.trim()).filter(k => k.length > 0)
+    const keywordArray = Array.from(new Set(newKeywords.split(',').map(k => k.trim()).filter(k => k.length > 0)))
     if (keywordArray.length === 0) return
 
     try {
+      let initialPositions: Record<string, number> = {}
+      try {
+        initialPositions = await new GscApiService(null).getStoredQueryPositions(
+          siteUrl,
+          formatIsoDateDaysAgo(16),
+          formatIsoDateDaysAgo(2),
+          keywordArray,
+        )
+      } catch (error) {
+        console.warn("Stored GSC rank discovery failed; adding keywords without seeded positions.", error)
+      }
+
       const res = await authFetch('/api/rank-tracking/keywords', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -169,7 +208,8 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
           keywords: keywordArray,
           location: newLocation,
           device: newDevice,
-          targetDomain: newTargetDomain.trim()
+          targetDomain: newTargetDomain.trim(),
+          initialPositions
         })
       })
       if (res.ok) {
@@ -178,9 +218,6 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
         setAddDialogOpen(false)
         await fetchKeywords() // Pull the keywords locally instantly
         await fetchRankStatus()
-        
-        // Trigger a fresh sync with live hints automatically.
-        handleSync(true); // pass true to indicate it is an auto-sync and avoid blocking
       }
     } catch (e) {
       console.error(e)
@@ -211,13 +248,13 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
       
       // Fetch latest keywords to guarantee we don't use stale state after adding
       const currentKeywordsRes = await authFetch(`/api/rank-tracking/keywords?siteUrl=${encodeURIComponent(siteUrl)}`);
-      const currentKeywordsData = currentKeywordsRes.ok ? await currentKeywordsRes.json() : [];
+      const currentKeywordsData = currentKeywordsRes.ok ? await currentKeywordsRes.json() as TrackedKeyword[] : [];
 
       try {
          // Google Search Console typically lags by 2-3 days. 
          // End the window 2 days ago to avoid 0-impression null zones, and look back 14 days total.
-         const end = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-         const start = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; 
+         const end = formatIsoDateDaysAgo(2);
+         const start = formatIsoDateDaysAgo(16);
          
          if (userProfile?.googleConnected && currentKeywordsData.length > 0) {
            const liveService = new GscApiService(null, 'free');
@@ -326,7 +363,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
       if (res.ok) {
         await fetchKeywords()
         await fetchRankStatus()
-        if (selectedKeywordId) fetchHistory(selectedKeywordId)
+        if (selectedKeywordId) await fetchHistory(selectedKeywordId)
       }
     } catch (e) {
       console.error(e)
@@ -381,7 +418,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
           <h2 className="text-xl font-semibold tracking-[-0.01em] text-[#0F172A]">
             Rank Tracker <Badge variant="outline" className="ml-2 border-[#0F3D2E]/20 bg-[#EAF4EC] text-[#0F3D2E]">Beta</Badge>
           </h2>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-[#647067]">Monitor daily Google keyword rankings with our Hybrid Engine.</p>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-[#647067]">Monitor stored ranking history and run fresh Google rank collection when you need an updated read.</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={exportKeywords} disabled={loading || keywords.length === 0}>
@@ -390,7 +427,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
           </Button>
           <Button variant="outline" size="sm" onClick={handleSync} disabled={loading || syncing || keywords.length === 0}>
             <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Refreshing" : "Refresh"}
+            {syncing ? "Collecting" : "Collect fresh ranks"}
           </Button>
           
           <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
@@ -471,7 +508,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
           {rankStatus.staleCount > 0 && (
             <Button variant="outline" size="sm" onClick={handleSync} disabled={loading || syncing}>
               <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-              Refresh stale ranks
+              Collect fresh ranks
             </Button>
           )}
         </div>
@@ -641,7 +678,7 @@ export function RankTrackerView({ siteUrl }: RankTrackerViewProps) {
             )}
           </CardContent>
           <CardFooter className="border-t border-[#E6ECE8] bg-[#FBFCFB] py-3 text-xs text-muted-foreground">
-             Data powered by Google Search Console integration and anonymous SERP checks.
+             History is stored locally. Fresh refreshes use Google Search Console integration and anonymous SERP checks.
           </CardFooter>
         </Card>
       </div>

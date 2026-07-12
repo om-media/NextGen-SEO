@@ -14,6 +14,32 @@ type CrawlUrlOptions = {
   includeQueryStrings: boolean;
 };
 
+const CRAWL_SENTENCE_EXTRACTION_VERSION = 2;
+
+type CrawlLinkSnapshot = {
+  anchorText: string | null;
+  contextText: string | null;
+  url: string;
+};
+
+type CrawlTextBlockSnapshot = {
+  blockIndex: number;
+  blockType: string;
+  text: string;
+  textHash: string;
+};
+
+type CrawlSentenceSnapshot = {
+  boilerplateScore: number;
+  extractionVersion: number;
+  headingText: string | null;
+  linkDensity: number;
+  paragraphIndex: number;
+  sentenceIndex: number;
+  sentenceText: string;
+  textHash: string;
+};
+
 export type CrawlJobRecord = {
   attemptCount: number | null;
   completedAt: string | null;
@@ -76,6 +102,8 @@ export type CrawlPageRecord = {
 export type CrawlLinkRecord = {
   depth: number;
   discoveredAt: string | null;
+  anchorText: string | null;
+  contextText: string | null;
   fromPageKey: string;
   fromUrl: string;
   jobId: string;
@@ -180,7 +208,17 @@ type CrawlQueueItem = {
   url: string;
 };
 
-const DEFAULT_CONCURRENCY = 4;
+type ClaimedCrawlJobRecord = CrawlJobRecord & {
+  lockedAt: string;
+};
+
+type CrawlJobProgressSnapshot = Pick<
+  CrawlJobRecord,
+  'crawledCount' | 'discoveredCount' | 'errorCount' | 'queuedCount' | 'skippedCount'
+>;
+
+const DEFAULT_CRAWL_PAGE_CONCURRENCY = 4;
+const DEFAULT_CRAWL_JOB_WORKERS = 2;
 const DEFAULT_MAX_DEPTH = 4;
 const DEFAULT_MAX_PAGES = 25000;
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -189,8 +227,26 @@ const RENDER_TIMEOUT_MS = 30000;
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_SITEMAP_URLS = 50000;
 const CRAWLER_USER_AGENT = 'NextGenSEO-Crawler/1.0';
-const CRAWL_QUEUE_POLL_MS = 5000;
-const CRAWL_RUNNING_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_CRAWL_QUEUE_POLL_MS = 5000;
+const DEFAULT_CRAWL_RUNNING_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_CRAWL_HEARTBEAT_MS = 30000;
+const CRAWL_PROGRESS_BATCH_SIZE = 5;
+const CRAWL_SQLITE_CLAIM_BATCH_SIZE = 12;
+let crawlSqliteClaimTail: Promise<void> = Promise.resolve();
+
+async function withCrawlSqliteClaimLock<T>(callback: () => Promise<T>): Promise<T> {
+  const previous = crawlSqliteClaimTail;
+  let release!: () => void;
+  crawlSqliteClaimTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await callback();
+  } finally {
+    release();
+  }
+}
 let renderBrowserPromise: Promise<Browser> | null = null;
 
 class CrawlCancelledError extends Error {
@@ -200,9 +256,79 @@ class CrawlCancelledError extends Error {
   }
 }
 
+class CrawlLeaseLostError extends Error {
+  constructor() {
+    super('Crawl worker lease was lost.');
+    this.name = 'CrawlLeaseLostError';
+  }
+}
+
+function getCrawlProgressSnapshot(
+  seen: Set<string>,
+  queue: CrawlQueueItem[],
+  nextIndex: number,
+  counters: { crawledCount: number; errorCount: number; skippedCount: number },
+): CrawlJobProgressSnapshot {
+  return {
+    crawledCount: counters.crawledCount,
+    discoveredCount: seen.size,
+    errorCount: counters.errorCount,
+    queuedCount: Math.max(0, queue.length - nextIndex),
+    skippedCount: counters.skippedCount,
+  };
+}
+
+function attachCrawlProgressSnapshot<T>(error: T, snapshot: CrawlJobProgressSnapshot): T {
+  if (error && typeof error === 'object') {
+    Object.assign(error as Record<string, unknown>, { crawlProgressSnapshot: snapshot });
+  }
+  return error;
+}
+
+function readCrawlProgressSnapshot(error: unknown): CrawlJobProgressSnapshot | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+  const candidate = (error as { crawlProgressSnapshot?: CrawlJobProgressSnapshot }).crawlProgressSnapshot;
+  if (!candidate) {
+    return null;
+  }
+  return {
+    crawledCount: toFiniteNumber(candidate.crawledCount),
+    discoveredCount: toFiniteNumber(candidate.discoveredCount),
+    errorCount: toFiniteNumber(candidate.errorCount),
+    queuedCount: toFiniteNumber(candidate.queuedCount),
+    skippedCount: toFiniteNumber(candidate.skippedCount),
+  };
+}
+
 const toFiniteNumber = (value: unknown) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+};
+
+const toBoundedInteger = (value: unknown, fallback: number, min: number, max: number) => {
+  const number = Math.trunc(Number(value));
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+};
+
+const getCrawlPageConcurrency = () =>
+  toBoundedInteger(process.env.CRAWL_PAGE_CONCURRENCY, DEFAULT_CRAWL_PAGE_CONCURRENCY, 1, 16);
+
+const getCrawlJobWorkerCount = () =>
+  toBoundedInteger(process.env.CRAWL_JOB_CONCURRENCY ?? process.env.CRAWL_JOB_WORKERS, DEFAULT_CRAWL_JOB_WORKERS, 1, 16);
+
+const getCrawlQueuePollMs = () =>
+  toBoundedInteger(process.env.CRAWL_QUEUE_POLL_MS, DEFAULT_CRAWL_QUEUE_POLL_MS, 250, 60000);
+
+const getCrawlRunningLockTimeoutMs = () =>
+  toBoundedInteger(process.env.CRAWL_LOCK_TIMEOUT_MS, DEFAULT_CRAWL_RUNNING_LOCK_TIMEOUT_MS, 30000, 60 * 60 * 1000);
+
+const getCrawlHeartbeatIntervalMs = () => {
+  const lockTimeoutMs = getCrawlRunningLockTimeoutMs();
+  const fallback = Math.max(1000, Math.min(DEFAULT_CRAWL_HEARTBEAT_MS, Math.floor(lockTimeoutMs / 3)));
+  return Math.max(1000, Math.min(lockTimeoutMs - 1000, toBoundedInteger(process.env.CRAWL_HEARTBEAT_MS, fallback, 1000, lockTimeoutMs)));
 };
 
 const nowIso = () => new Date().toISOString();
@@ -443,6 +569,98 @@ async function collectSitemapUrls(startUrl: string, sitemapUrl: string | null | 
   return { rules, urls: Array.from(urls) };
 }
 
+function cleanText(value: string, maxLength = 320) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}...` : text;
+}
+
+function hashText(value: string) {
+  return crypto.createHash('sha1').update(value).digest('hex');
+}
+
+function clampScore(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function splitSentences(text: string) {
+  return cleanText(text, 1200)
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
+    .map((sentence) => cleanText(sentence, 420))
+    .filter((sentence) => sentence.length >= 55 && sentence.split(/\s+/).length >= 8);
+}
+
+function extractTextBlocks($: cheerio.CheerioAPI): CrawlTextBlockSnapshot[] {
+  const blocks: CrawlTextBlockSnapshot[] = [];
+  const seen = new Set<string>();
+  $('main h1, main h2, main h3, main p, main li, article h1, article h2, article h3, article p, article li, body h1, body h2, body h3, body p, body li').each((_, element) => {
+    if (blocks.length >= 120) return false;
+    const blockType = String(element.tagName || 'text').toLowerCase();
+    const text = cleanText($(element).text(), 420);
+    if (text.length < 45 && !/^h[1-3]$/.test(blockType)) return;
+    const textHash = hashText(text.toLowerCase());
+    if (seen.has(textHash)) return;
+    seen.add(textHash);
+    blocks.push({ blockIndex: blocks.length, blockType, text, textHash });
+  });
+  return blocks;
+}
+
+function getNearestHeadingText($: cheerio.CheerioAPI, element: any) {
+  const heading = $(element).prevAll('h1,h2,h3').first().text()
+    || $(element).parent().prevAll('h1,h2,h3').first().text()
+    || $(element).closest('section,article,main').prevAll('h1,h2,h3').first().text()
+    || $('main h1, article h1, h1').first().text();
+  return cleanText(heading, 180) || null;
+}
+
+function linkDensityFor($: cheerio.CheerioAPI, element: any, text: string) {
+  const linkText = cleanText($(element).find('a').text(), 1600);
+  return text.length > 0 ? clampScore(linkText.length / text.length) : 0;
+}
+
+function boilerplateScoreFor($: cheerio.CheerioAPI, element: any, text: string, linkDensity: number) {
+  const container = $(element).closest('nav,footer,aside,header,[role="navigation"],[class*="nav"],[class*="footer"],[class*="sidebar"],[class*="menu"],[class*="toc"],[class*="breadcrumb"],[class*="related"],[class*="share"],[class*="cookie"],[class*="newsletter"],[class*="cta"],[id*="nav"],[id*="footer"],[id*="sidebar"],[id*="toc"]');
+  const lower = text.toLowerCase();
+  const words = text.split(/\s+/).filter(Boolean).length;
+  let score = 0;
+  if (container.length) score += 0.6;
+  if (linkDensity > 0.45) score += 0.3;
+  else if (linkDensity > 0.28) score += 0.18;
+  if (/\b(table of contents|subscribe|newsletter|related posts|share this|privacy policy|cookie|contact us|read more|click here)\b/.test(lower)) score += 0.25;
+  if (words < 12) score += 0.1;
+  return clampScore(score);
+}
+
+function extractSentences($: cheerio.CheerioAPI): CrawlSentenceSnapshot[] {
+  const sentences: CrawlSentenceSnapshot[] = [];
+  const seen = new Set<string>();
+  $('main p, main li, article p, article li, body p, body li').each((paragraphIndex, element) => {
+    if (sentences.length >= 250) return false;
+    const paragraphText = cleanText($(element).text(), 1600);
+    if (!paragraphText || $(element).find('a').length > 4) return;
+    const linkDensity = linkDensityFor($, element, paragraphText);
+    const boilerplateScore = boilerplateScoreFor($, element, paragraphText, linkDensity);
+    if (boilerplateScore >= 0.65) return;
+    const headingText = getNearestHeadingText($, element);
+    splitSentences(paragraphText).slice(0, 6).forEach((sentenceText, sentenceIndex) => {
+      const textHash = hashText(sentenceText.toLowerCase());
+      if (seen.has(textHash)) return;
+      seen.add(textHash);
+      sentences.push({
+        boilerplateScore,
+        extractionVersion: CRAWL_SENTENCE_EXTRACTION_VERSION,
+        headingText,
+        linkDensity,
+        paragraphIndex,
+        sentenceIndex,
+        sentenceText,
+        textHash,
+      });
+    });
+  });
+  return sentences;
+}
+
 function extractPageSnapshot(html: string, responseHeaders: Headers, finalUrl: string, startUrl: string, options: CrawlUrlOptions) {
   const $ = cheerio.load(html);
   const title = $('title').first().text().trim() || null;
@@ -450,7 +668,7 @@ function extractPageSnapshot(html: string, responseHeaders: Headers, finalUrl: s
   const canonicalHref = $('link[rel="canonical"]').attr('href')?.trim() || null;
   const canonicalUrl = canonicalHref ? normalizeAbsoluteUrl(canonicalHref, finalUrl, options) : null;
   const h1Items = $('h1')
-    .map((_, element) => $(element).text().replace(/\s+/g, ' ').trim())
+    .map((_, element) => cleanText($(element).text(), 180))
     .get()
     .filter(Boolean);
   const h2Count = $('h2').length;
@@ -460,7 +678,7 @@ function extractPageSnapshot(html: string, responseHeaders: Headers, finalUrl: s
   const xRobots = responseHeaders.get('x-robots-tag')?.toLowerCase() || '';
   const noindex = robotsMeta.includes('noindex') || xRobots.includes('noindex') ? 1 : 0;
   const contentType = responseHeaders.get('content-type') || null;
-  const internalLinks: string[] = [];
+  const internalLinks: CrawlLinkSnapshot[] = [];
 
   $('a[href]').each((_, element) => {
     const href = $(element).attr('href')?.trim() || '';
@@ -470,7 +688,9 @@ function extractPageSnapshot(html: string, responseHeaders: Headers, finalUrl: s
       const linkUrl = new URL(normalized);
       const startHost = new URL(startUrl).hostname;
       if (isInternalHost(linkUrl.hostname, startHost)) {
-        internalLinks.push(normalized);
+        const anchorText = cleanText($(element).text(), 180) || null;
+        const contextText = cleanText($(element).closest('p, li, section, article, div').text(), 360) || anchorText;
+        internalLinks.push({ anchorText, contextText, url: normalized });
       }
     } catch {
       // Ignore invalid links.
@@ -487,11 +707,12 @@ function extractPageSnapshot(html: string, responseHeaders: Headers, finalUrl: s
     metaDescription,
     noindex,
     outgoingLinkCount: $('a[href]').length,
+    sentences: extractSentences($),
+    textBlocks: extractTextBlocks($),
     title,
     wordCount,
   };
 }
-
 async function upsertCrawlPage(db: AppDatabase, page: CrawlPageRecord) {
   await db.run(
     `
@@ -566,27 +787,81 @@ async function upsertCrawlLinks(
   jobId: string,
   fromUrl: string,
   fromPageKey: string,
-  links: string[],
+  links: CrawlLinkSnapshot[],
   depth: number,
   discoveredAt: string,
 ) {
-  for (const toUrl of links) {
-    const toPageKey = buildPageKey(toUrl, siteUrl);
+  for (const link of links) {
+    const toPageKey = buildPageKey(link.url, siteUrl);
     await db.run(
       `
-        INSERT INTO crawl_links (ownerId, siteUrl, jobId, fromUrl, toUrl, fromPageKey, toPageKey, discoveredAt, depth)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO crawl_links (ownerId, siteUrl, jobId, fromUrl, toUrl, fromPageKey, toPageKey, anchorText, contextText, discoveredAt, depth)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(ownerId, siteUrl, jobId, fromUrl, toUrl) DO UPDATE SET
           fromPageKey=excluded.fromPageKey,
           toPageKey=excluded.toPageKey,
+          anchorText=excluded.anchorText,
+          contextText=excluded.contextText,
           discoveredAt=excluded.discoveredAt,
           depth=excluded.depth
       `,
-      [ownerId, siteUrl, jobId, fromUrl, toUrl, fromPageKey, toPageKey, discoveredAt, depth],
+      [ownerId, siteUrl, jobId, fromUrl, link.url, fromPageKey, toPageKey, link.anchorText, link.contextText, discoveredAt, depth],
     );
   }
 }
 
+async function replaceCrawlSentences(
+  db: AppDatabase,
+  ownerId: string,
+  siteUrl: string,
+  jobId: string,
+  pageUrl: string,
+  pageKey: string,
+  sentences: CrawlSentenceSnapshot[],
+) {
+  await db.run(
+    'DELETE FROM crawl_page_sentences WHERE ownerId = ? AND siteUrl = ? AND jobId = ? AND pageUrl = ?',
+    [ownerId, siteUrl, jobId, pageUrl],
+  );
+
+  const createdAt = nowIso();
+  for (const sentence of sentences) {
+    await db.run(
+      `
+        INSERT INTO crawl_page_sentences (
+          ownerId, siteUrl, jobId, pageUrl, pageKey, paragraphIndex, sentenceIndex, sentenceText, textHash,
+          headingText, linkDensity, boilerplateScore, extractionVersion, embeddingStatus, createdAt
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [ownerId, siteUrl, jobId, pageUrl, pageKey, sentence.paragraphIndex, sentence.sentenceIndex, sentence.sentenceText, sentence.textHash, sentence.headingText, sentence.linkDensity, sentence.boilerplateScore, sentence.extractionVersion, 'local-ready', createdAt],
+    );
+  }
+}
+async function replaceCrawlTextBlocks(
+  db: AppDatabase,
+  ownerId: string,
+  siteUrl: string,
+  jobId: string,
+  pageUrl: string,
+  pageKey: string,
+  blocks: CrawlTextBlockSnapshot[],
+) {
+  await db.run(
+    'DELETE FROM crawl_page_text_blocks WHERE ownerId = ? AND siteUrl = ? AND jobId = ? AND pageUrl = ?',
+    [ownerId, siteUrl, jobId, pageUrl],
+  );
+
+  for (const block of blocks) {
+    await db.run(
+      `
+        INSERT INTO crawl_page_text_blocks (ownerId, siteUrl, jobId, pageUrl, pageKey, blockIndex, blockType, text, textHash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [ownerId, siteUrl, jobId, pageUrl, pageKey, block.blockIndex, block.blockType, block.text, block.textHash],
+    );
+  }
+}
 async function updateCrawlJob(db: AppDatabase, jobId: string, fields: Partial<CrawlJobRecord>) {
   const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
   if (entries.length === 0) return;
@@ -602,6 +877,50 @@ async function updateCrawlJob(db: AppDatabase, jobId: string, fields: Partial<Cr
 async function isCrawlJobCancelled(db: AppDatabase, jobId: string) {
   const row = await db.get<{ status?: string }>('SELECT status FROM crawl_jobs WHERE id = ?', [jobId]);
   return row?.status === 'cancelled';
+}
+
+async function getCrawlJobLeaseError(db: AppDatabase, jobId: string) {
+  const row = await db.get<{ status?: string }>('SELECT status FROM crawl_jobs WHERE id = ?', [jobId]);
+  return row?.status === 'cancelled' ? new CrawlCancelledError() : new CrawlLeaseLostError();
+}
+
+async function refreshOwnedCrawlJobLease(db: AppDatabase, job: ClaimedCrawlJobRecord, fields: Partial<CrawlJobRecord> = {}) {
+  const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
+  const nextLockedAt = nowIso();
+  const updatedAt = nowIso();
+  const sets = entries.map(([key]) => key + ' = ?').concat('lockedAt = ?', 'updatedAt = ?').join(', ');
+  const values = entries.map(([, value]) => value);
+  values.push(nextLockedAt, updatedAt, job.id, job.lockedAt);
+
+  const result = await db.run(
+    "UPDATE crawl_jobs SET " + sets + " WHERE id = ? AND status = 'running' AND lockedAt = ?",
+    values,
+  );
+
+  if (result.changes === 0) {
+    throw await getCrawlJobLeaseError(db, job.id);
+  }
+
+  Object.assign(job, fields, { lockedAt: nextLockedAt, updatedAt });
+}
+
+async function finalizeOwnedCrawlJob(db: AppDatabase, job: ClaimedCrawlJobRecord, fields: Partial<CrawlJobRecord>) {
+  const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
+  const updatedAt = nowIso();
+  const sets = entries.map(([key]) => key + ' = ?').concat('lockedAt = NULL', 'updatedAt = ?').join(', ');
+  const values = entries.map(([, value]) => value);
+  values.push(updatedAt, job.id, job.lockedAt);
+
+  const result = await db.run(
+    "UPDATE crawl_jobs SET " + sets + " WHERE id = ? AND status = 'running' AND lockedAt = ?",
+    values,
+  );
+
+  if (result.changes === 0) {
+    throw await getCrawlJobLeaseError(db, job.id);
+  }
+
+  Object.assign(job, fields, { updatedAt });
 }
 
 async function computeInboundCounts(db: AppDatabase, ownerId: string, siteUrl: string, jobId: string) {
@@ -629,7 +948,9 @@ async function processCrawlPage(
   seen: Set<string>,
   queue: CrawlQueueItem[],
   counters: { crawledCount: number; errorCount: number; skippedCount: number },
+  ensureJobActive: () => Promise<void>,
 ) {
+  await ensureJobActive();
   const startHost = new URL(input.startUrl).hostname;
   const urlOptions = { includeQueryStrings: Boolean(input.includeQueryStrings) };
   const normalizedUrl = normalizeAbsoluteUrl(item.url, input.startUrl, urlOptions);
@@ -662,7 +983,7 @@ async function processCrawlPage(
     const discoveredAt = item.discoveredAt;
     const pageKey = buildPageKey(finalUrl, input.siteUrl);
 
-    let internalLinks: string[] = [];
+    let internalLinks: CrawlLinkSnapshot[] = [];
     let contentType = rendered?.contentType || responseHeaders.get('content-type') || null;
     let title: string | null = null;
     let metaDescription: string | null = null;
@@ -673,6 +994,8 @@ async function processCrawlPage(
     let wordCount = 0;
     let noindex = 0;
     let outgoingLinkCount = 0;
+    let sentences: CrawlSentenceSnapshot[] = [];
+    let textBlocks: CrawlTextBlockSnapshot[] = [];
 
     if (contentType?.includes('text/html')) {
       const contentLength = Number(responseHeaders.get('content-length') || '0');
@@ -695,9 +1018,12 @@ async function processCrawlPage(
       wordCount = snapshot.wordCount;
       noindex = snapshot.noindex;
       internalLinks = snapshot.internalLinks;
+      sentences = snapshot.sentences;
+      textBlocks = snapshot.textBlocks;
       outgoingLinkCount = snapshot.outgoingLinkCount;
     }
 
+    await ensureJobActive();
     await db.transaction(async () => {
       await upsertCrawlPage(db, {
         canonicalUrl,
@@ -728,6 +1054,9 @@ async function processCrawlPage(
         wordCount,
       });
 
+      await replaceCrawlSentences(db, input.ownerId, input.siteUrl, input.jobId, normalizedUrl, pageKey, sentences);
+      await replaceCrawlTextBlocks(db, input.ownerId, input.siteUrl, input.jobId, normalizedUrl, pageKey, textBlocks);
+
       if (internalLinks.length > 0) {
         await upsertCrawlLinks(
           db,
@@ -746,7 +1075,7 @@ async function processCrawlPage(
     if (item.depth < input.maxDepth) {
       for (const link of internalLinks) {
         if (seen.size >= input.maxPages) break;
-        const normalizedLink = normalizeAbsoluteUrl(link, finalUrl, urlOptions);
+        const normalizedLink = normalizeAbsoluteUrl(link.url, finalUrl, urlOptions);
         if (!normalizedLink) continue;
         const linkUrl = new URL(normalizedLink);
         if (!isInternalHost(linkUrl.hostname, startHost)) continue;
@@ -766,6 +1095,9 @@ async function processCrawlPage(
     counters.crawledCount += 1;
     return { responseTimeMs, finalUrl, pageKey, statusCode, url: normalizedUrlObject.toString() };
   } catch (error: any) {
+    if (error instanceof CrawlCancelledError || error instanceof CrawlLeaseLostError) {
+      throw error;
+    }
     counters.errorCount += 1;
     await db.transaction(async () => {
       await upsertCrawlPage(db, {
@@ -970,7 +1302,7 @@ async function createQueuedCrawlJob(db: AppDatabase, input: StartCrawlInput & { 
   return (await db.get<CrawlJobRecord>('SELECT * FROM crawl_jobs WHERE id = ?', [jobId])) || null;
 }
 
-async function executeCrawlJob(db: AppDatabase, job: CrawlJobRecord) {
+async function executeCrawlJob(db: AppDatabase, job: ClaimedCrawlJobRecord) {
   const includeQueryStrings = Boolean(job.includeQueryStrings);
   const urlOptions = { includeQueryStrings };
   const userAgent = String(job.userAgent || CRAWLER_USER_AGENT).trim() || CRAWLER_USER_AGENT;
@@ -982,129 +1314,191 @@ async function executeCrawlJob(db: AppDatabase, job: CrawlJobRecord) {
 
   const maxDepth = Math.max(0, Math.min(Number(job.maxDepth ?? DEFAULT_MAX_DEPTH), 10));
   const maxPages = Math.max(1, Math.min(Number(job.maxPages ?? DEFAULT_MAX_PAGES), 100000));
-  const { rules, urls: sitemapUrls } = await collectSitemapUrls(startUrl, job.sitemapUrl || null, {
-    includeQueryStrings,
-    respectRobots,
-    userAgent,
-  });
-  const seen = new Set<string>();
-  const queue: CrawlQueueItem[] = [];
-  const enqueue = (url: string, depth: number, discoveredFrom: string, discoveredFromUrl: string | null) => {
-    if (seen.size >= maxPages) return;
-    const normalized = normalizeAbsoluteUrl(url, startUrl, urlOptions);
-    if (!normalized || seen.has(normalized)) return;
-    const normalizedUrlObject = new URL(normalized);
-    if (!isInternalHost(normalizedUrlObject.hostname, new URL(startUrl).hostname)) return;
-    if (!isPathAllowed(normalizedUrlObject.pathname, rules)) return;
-    seen.add(normalized);
-    queue.push({
-      depth,
-      discoveredAt: nowIso(),
-      discoveredFrom,
-      discoveredFromUrl,
-      url: normalized,
-    });
-  };
-
-  enqueue(startUrl, 0, 'seed', null);
-  sitemapUrls.forEach((url) => enqueue(url, 0, 'sitemap', job.sitemapUrl || null));
-  const previousSeedRows = await db.all<{ normalizedUrl: string | null; url: string | null }>(`
-    SELECT normalizedUrl, url
-    FROM crawl_pages
-    WHERE ownerId = ? AND siteUrl = ?
-      AND jobId = (
-        SELECT id
-        FROM crawl_jobs
-        WHERE ownerId = ? AND siteUrl = ? AND id != ? AND status IN ('completed', 'error')
-        ORDER BY completedAt DESC, updatedAt DESC
-        LIMIT 1
-      )
-    ORDER BY depth ASC, url ASC
-    LIMIT ?
-  `, [job.ownerId, job.siteUrl, job.ownerId, job.siteUrl, job.id, maxPages]);
-  previousSeedRows.forEach((row) => enqueue(row.normalizedUrl || row.url || '', 0, 'previous-crawl', null));
-
+  const pageConcurrency = getCrawlPageConcurrency();
+  const heartbeatIntervalMs = getCrawlHeartbeatIntervalMs();
   const counters = {
     crawledCount: 0,
     errorCount: 0,
     skippedCount: 0,
   };
-
+  const seen = new Set<string>();
+  const queue: CrawlQueueItem[] = [];
+  const inFlight = new Set<Promise<void>>();
   let nextIndex = 0;
-  let activeCount = 0;
+  let leaseError: Error | null = null;
+  let lastPersistedProcessedCount = 0;
+  let heartbeatPending = false;
+  let leaseUpdateChain: Promise<void> = Promise.resolve();
 
-  const persistProgress = async (status: string = 'running') => {
-    if (await isCrawlJobCancelled(db, job.id)) {
-      throw new CrawlCancelledError();
+  const runLeaseMutation = async (action: () => Promise<void>) => {
+    const next = leaseUpdateChain.then(action, action);
+    leaseUpdateChain = next.catch(() => undefined);
+    await next;
+  };
+
+  const ensureJobActive = async () => {
+    if (leaseError) {
+      throw leaseError;
     }
+    if (await isCrawlJobCancelled(db, job.id)) {
+      leaseError = new CrawlCancelledError();
+      throw leaseError;
+    }
+  };
 
-    await updateCrawlJob(db, job.id, {
-      crawledCount: counters.crawledCount,
-      discoveredCount: seen.size,
-      errorCount: counters.errorCount,
-      queuedCount: Math.max(0, queue.length - nextIndex),
-      skippedCount: counters.skippedCount,
-      status,
+  const persistProgress = async (force = false) => {
+    const processedCount = counters.crawledCount + counters.errorCount + counters.skippedCount;
+    if (!force && processedCount - lastPersistedProcessedCount < CRAWL_PROGRESS_BATCH_SIZE) {
+      return;
+    }
+    lastPersistedProcessedCount = processedCount;
+    await runLeaseMutation(async () => {
+      await ensureJobActive();
+      await refreshOwnedCrawlJobLease(db, job, {
+        crawledCount: counters.crawledCount,
+        discoveredCount: seen.size,
+        errorCount: counters.errorCount,
+        queuedCount: Math.max(0, queue.length - nextIndex),
+        skippedCount: counters.skippedCount,
+        status: 'running',
+      });
     });
   };
 
-  const worker = async () => {
-    while (true) {
-      if (await isCrawlJobCancelled(db, job.id)) {
-        throw new CrawlCancelledError();
-      }
-
-      if (nextIndex >= queue.length) {
-        if (activeCount === 0) break;
-        await sleep(100);
-        continue;
-      }
-
-      const item = queue[nextIndex++];
-      activeCount += 1;
-      try {
-        await processCrawlPage(
-          db,
-          {
-            maxDepth,
-            maxPages,
-            includeQueryStrings,
-            jobId: job.id,
-            ownerId: job.ownerId,
-            renderMode: job.renderMode === 'javascript' ? 'javascript' : 'html',
-            respectRobots,
-            rules,
-            sitemapUrl: job.sitemapUrl,
-            siteUrl: job.siteUrl,
-            startUrl,
-            userAgent,
-          },
-          item,
-          seen,
-          queue,
-          counters,
-        );
-      } finally {
-        activeCount -= 1;
-        if ((counters.crawledCount + counters.errorCount) % 5 === 0) {
-          await persistProgress('running');
-        }
-      }
+  const heartbeat = async () => {
+    try {
+      await runLeaseMutation(async () => {
+        await ensureJobActive();
+        await refreshOwnedCrawlJobLease(db, job);
+      });
+    } catch (error) {
+      leaseError = error instanceof Error ? error : new CrawlLeaseLostError();
+      throw leaseError;
     }
   };
 
-  await Promise.all(Array.from({ length: DEFAULT_CONCURRENCY }, () => worker()));
-  if (await isCrawlJobCancelled(db, job.id)) {
-    throw new CrawlCancelledError();
+  const heartbeatTimer = setInterval(() => {
+    if (heartbeatPending || leaseError) {
+      return;
+    }
+    heartbeatPending = true;
+    void heartbeat().catch(() => undefined).finally(() => {
+      heartbeatPending = false;
+    });
+  }, heartbeatIntervalMs);
+
+  try {
+    await ensureJobActive();
+    const { rules, urls: sitemapUrls } = await collectSitemapUrls(startUrl, job.sitemapUrl || null, {
+      includeQueryStrings,
+      respectRobots,
+      userAgent,
+    });
+    const enqueue = (url: string, depth: number, discoveredFrom: string, discoveredFromUrl: string | null) => {
+      if (seen.size >= maxPages) return;
+      const normalized = normalizeAbsoluteUrl(url, startUrl, urlOptions);
+      if (!normalized || seen.has(normalized)) return;
+      const normalizedUrlObject = new URL(normalized);
+      if (!isInternalHost(normalizedUrlObject.hostname, new URL(startUrl).hostname)) return;
+      if (!isPathAllowed(normalizedUrlObject.pathname, rules)) return;
+      seen.add(normalized);
+      queue.push({
+        depth,
+        discoveredAt: nowIso(),
+        discoveredFrom,
+        discoveredFromUrl,
+        url: normalized,
+      });
+    };
+
+    enqueue(startUrl, 0, 'seed', null);
+    sitemapUrls.forEach((url) => enqueue(url, 0, 'sitemap', job.sitemapUrl || null));
+    const previousSeedRows = await db.all<{ normalizedUrl: string | null; url: string | null }>(
+      `
+        SELECT normalizedUrl, url
+        FROM crawl_pages
+        WHERE ownerId = ? AND siteUrl = ?
+          AND jobId = (
+            SELECT id
+            FROM crawl_jobs
+            WHERE ownerId = ? AND siteUrl = ? AND id != ? AND status IN ('completed', 'error')
+            ORDER BY completedAt DESC, updatedAt DESC
+            LIMIT 1
+          )
+        ORDER BY depth ASC, url ASC
+        LIMIT ?
+      `,
+      [job.ownerId, job.siteUrl, job.ownerId, job.siteUrl, job.id, maxPages],
+    );
+    previousSeedRows.forEach((row) => enqueue(row.normalizedUrl || row.url || '', 0, 'previous-crawl', null));
+
+    while (nextIndex < queue.length || inFlight.size > 0) {
+      await ensureJobActive();
+
+      while (nextIndex < queue.length && inFlight.size < pageConcurrency) {
+        const item = queue[nextIndex++];
+        let task: Promise<void>;
+        task = (async () => {
+          await processCrawlPage(
+            db,
+            {
+              maxDepth,
+              maxPages,
+              includeQueryStrings,
+              jobId: job.id,
+              ownerId: job.ownerId,
+              renderMode: job.renderMode === 'javascript' ? 'javascript' : 'html',
+              respectRobots,
+              rules,
+              sitemapUrl: job.sitemapUrl,
+              siteUrl: job.siteUrl,
+              startUrl,
+              userAgent,
+            },
+            item,
+            seen,
+            queue,
+            counters,
+            ensureJobActive,
+          );
+          await persistProgress();
+        })().finally(() => {
+          inFlight.delete(task);
+        });
+        inFlight.add(task);
+      }
+
+      if (inFlight.size === 0) {
+        break;
+      }
+
+      await Promise.race(inFlight);
+    }
+
+    await Promise.all(Array.from(inFlight));
+    await ensureJobActive();
+    await computeInboundCounts(db, job.ownerId, job.siteUrl, job.id);
+    await runLeaseMutation(async () => {
+      await ensureJobActive();
+      await finalizeOwnedCrawlJob(db, job, {
+        completedAt: nowIso(),
+        crawledCount: counters.crawledCount,
+        discoveredCount: seen.size,
+        errorCount: counters.errorCount,
+        lastError: null,
+        nextRunAt: null,
+        queuedCount: 0,
+        skippedCount: counters.skippedCount,
+        status: 'completed',
+      });
+    });
+  } catch (error) {
+    throw attachCrawlProgressSnapshot(error, getCrawlProgressSnapshot(seen, queue, nextIndex, counters));
+  } finally {
+    clearInterval(heartbeatTimer);
+    await Promise.allSettled(Array.from(inFlight));
+    await leaseUpdateChain;
   }
-  await computeInboundCounts(db, job.ownerId, job.siteUrl, job.id);
-  await persistProgress('completed');
-  await updateCrawlJob(db, job.id, {
-    completedAt: nowIso(),
-    lockedAt: null,
-    queuedCount: 0,
-    status: 'completed',
-  });
 }
 
 async function markCrawlJobCancelled(db: AppDatabase, job: CrawlJobRecord) {
@@ -1118,8 +1512,43 @@ async function markCrawlJobCancelled(db: AppDatabase, job: CrawlJobRecord) {
   });
 }
 
+async function markOwnedCrawlJobCancelled(db: AppDatabase, job: ClaimedCrawlJobRecord, progress?: CrawlJobProgressSnapshot | null) {
+  await finalizeOwnedCrawlJob(db, job, {
+    completedAt: nowIso(),
+    crawledCount: progress?.crawledCount,
+    discoveredCount: progress?.discoveredCount,
+    errorCount: progress?.errorCount,
+    lastError: null,
+    nextRunAt: null,
+    queuedCount: 0,
+    skippedCount: progress?.skippedCount,
+    status: 'cancelled',
+  });
+}
+
+async function syncCancelledCrawlJobProgress(db: AppDatabase, jobId: string, progress?: CrawlJobProgressSnapshot | null) {
+  if (!progress) {
+    return;
+  }
+
+  await db.run(
+    `
+      UPDATE crawl_jobs
+      SET crawledCount = ?,
+          discoveredCount = ?,
+          errorCount = ?,
+          queuedCount = 0,
+          skippedCount = ?,
+          updatedAt = ?
+      WHERE id = ?
+        AND status = 'cancelled'
+    `,
+    [progress.crawledCount, progress.discoveredCount, progress.errorCount, progress.skippedCount, nowIso(), jobId],
+  );
+}
+
 async function recoverInterruptedCrawlJobs(db: AppDatabase) {
-  const cutoff = new Date(Date.now() - CRAWL_RUNNING_LOCK_TIMEOUT_MS).toISOString();
+  const cutoff = new Date(Date.now() - getCrawlRunningLockTimeoutMs()).toISOString();
   await db.run(
     `
       UPDATE crawl_jobs
@@ -1135,48 +1564,148 @@ async function recoverInterruptedCrawlJobs(db: AppDatabase) {
   );
 }
 
-async function claimNextQueuedCrawlJob(db: AppDatabase) {
-  const now = nowIso();
-  const job = await db.get<CrawlJobRecord>(
-    `
-      SELECT *
-      FROM crawl_jobs
-      WHERE status IN ('queued', 'retrying')
-        AND (nextRunAt IS NULL OR nextRunAt <= ?)
-      ORDER BY nextRunAt ASC, updatedAt ASC
-      LIMIT 1
-    `,
-    [now],
-  );
-
-  if (!job) {
-    return null;
-  }
-
-  const result = await db.run(
-    `
-      UPDATE crawl_jobs
-      SET status = 'running',
-          attemptCount = COALESCE(attemptCount, 0) + 1,
-          startedAt = COALESCE(startedAt, ?),
-          updatedAt = ?,
-          lockedAt = ?,
-          completedAt = NULL,
-          lastError = NULL
-      WHERE id = ?
-        AND status IN ('queued', 'retrying')
-    `,
-    [now, now, now, job.id],
-  );
-
-  if (result.changes === 0) {
-    return null;
-  }
-
-  return (await db.get<CrawlJobRecord>('SELECT * FROM crawl_jobs WHERE id = ?', [job.id])) || null;
+async function claimNextQueuedCrawlJobPostgres(db: AppDatabase) {
+  const claim = db.transaction(async () => {
+    await db.exec('SELECT pg_advisory_xact_lock(864203198)');
+    const now = nowIso();
+    return db.get<ClaimedCrawlJobRecord>(
+      `
+        WITH ranked AS (
+          SELECT
+            j.id,
+            ROW_NUMBER() OVER (
+              PARTITION BY j.ownerId, j.siteUrl
+              ORDER BY COALESCE(j.nextRunAt, j.updatedAt) ASC, j.updatedAt ASC, j.id ASC
+            ) AS siteRank,
+            (
+              SELECT COUNT(*)
+              FROM crawl_jobs running_owner
+              WHERE running_owner.status = 'running'
+                AND running_owner.ownerId = j.ownerId
+            ) AS ownerRunningCount
+          FROM crawl_jobs j
+          WHERE j.status IN ('queued', 'retrying')
+            AND (j.nextRunAt IS NULL OR j.nextRunAt <= ?)
+            AND NOT EXISTS (
+              SELECT 1
+              FROM crawl_jobs running_site
+              WHERE running_site.status = 'running'
+                AND running_site.ownerId = j.ownerId
+                AND running_site.siteUrl = j.siteUrl
+            )
+        ),
+        candidate AS (
+          SELECT j.id
+          FROM crawl_jobs j
+          INNER JOIN ranked ON ranked.id = j.id
+          WHERE ranked.siteRank = 1
+          ORDER BY ranked.ownerRunningCount ASC, COALESCE(j.nextRunAt, j.updatedAt) ASC, j.updatedAt ASC, j.id ASC
+          LIMIT 1
+          FOR UPDATE OF j SKIP LOCKED
+        )
+        UPDATE crawl_jobs j
+        SET status = 'running',
+            attemptCount = COALESCE(attemptCount, 0) + 1,
+            startedAt = COALESCE(startedAt, ?),
+            updatedAt = ?,
+            lockedAt = ?,
+            completedAt = NULL,
+            lastError = NULL
+        FROM candidate
+        WHERE j.id = candidate.id
+        RETURNING j.*
+      `,
+      [now, now, now, now],
+    );
+  });
+  return (await claim()) || null;
 }
 
-async function markCrawlJobForRetry(db: AppDatabase, job: CrawlJobRecord, error: unknown) {
+async function claimNextQueuedCrawlJobSqlite(db: AppDatabase) {
+  const claim = db.transaction(async () => {
+    const now = nowIso();
+    const candidates = await db.all<CrawlJobRecord>(
+      `
+        WITH ranked AS (
+          SELECT
+            j.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY j.ownerId, j.siteUrl
+              ORDER BY COALESCE(j.nextRunAt, j.updatedAt) ASC, j.updatedAt ASC, j.id ASC
+            ) AS siteRank,
+            (
+              SELECT COUNT(*)
+              FROM crawl_jobs running_owner
+              WHERE running_owner.status = 'running'
+                AND running_owner.ownerId = j.ownerId
+            ) AS ownerRunningCount
+          FROM crawl_jobs j
+          WHERE j.status IN ('queued', 'retrying')
+            AND (j.nextRunAt IS NULL OR j.nextRunAt <= ?)
+            AND NOT EXISTS (
+              SELECT 1
+              FROM crawl_jobs running_site
+              WHERE running_site.status = 'running'
+                AND running_site.ownerId = j.ownerId
+                AND running_site.siteUrl = j.siteUrl
+            )
+        )
+        SELECT *
+        FROM ranked
+        WHERE siteRank = 1
+        ORDER BY ownerRunningCount ASC, COALESCE(nextRunAt, updatedAt) ASC, updatedAt ASC, id ASC
+        LIMIT ?
+      `,
+      [now, CRAWL_SQLITE_CLAIM_BATCH_SIZE],
+    );
+
+    for (const candidate of candidates) {
+      const result = await db.run(
+        `
+          UPDATE crawl_jobs
+          SET status = 'running',
+              attemptCount = COALESCE(attemptCount, 0) + 1,
+              startedAt = COALESCE(startedAt, ?),
+              updatedAt = ?,
+              lockedAt = ?,
+              completedAt = NULL,
+              lastError = NULL
+          WHERE id = ?
+            AND status IN ('queued', 'retrying')
+            AND (nextRunAt IS NULL OR nextRunAt <= ?)
+            AND NOT EXISTS (
+              SELECT 1
+              FROM crawl_jobs running_site
+              WHERE running_site.status = 'running'
+                AND running_site.ownerId = ?
+                AND running_site.siteUrl = ?
+                AND running_site.id <> ?
+            )
+        `,
+        [now, now, now, candidate.id, now, candidate.ownerId, candidate.siteUrl, candidate.id],
+      );
+
+      if (result.changes > 0) {
+        return (await db.get<ClaimedCrawlJobRecord>('SELECT * FROM crawl_jobs WHERE id = ?', [candidate.id])) || null;
+      }
+    }
+
+    return null;
+  });
+
+  return withCrawlSqliteClaimLock(() => claim());
+}
+
+async function claimNextQueuedCrawlJob(db: AppDatabase) {
+  return db.dialect === 'postgres' ? claimNextQueuedCrawlJobPostgres(db) : claimNextQueuedCrawlJobSqlite(db);
+}
+
+async function markOwnedCrawlJobForRetry(
+  db: AppDatabase,
+  job: ClaimedCrawlJobRecord,
+  error: unknown,
+  progress?: CrawlJobProgressSnapshot | null,
+) {
   const attemptCount = Number(job.attemptCount || 0);
   const maxAttempts = Number(job.maxAttempts || DEFAULT_MAX_ATTEMPTS);
   const message = error instanceof Error ? error.message : 'Crawl failed';
@@ -1184,46 +1713,95 @@ async function markCrawlJobForRetry(db: AppDatabase, job: CrawlJobRecord, error:
   const retryDelayMs = Math.min(30 * 60 * 1000, 60 * 1000 * Math.max(1, attemptCount));
   const nextRunAt = new Date(Date.now() + retryDelayMs).toISOString();
 
-  await updateCrawlJob(db, job.id, {
+  await finalizeOwnedCrawlJob(db, job, {
     completedAt: shouldRetry ? null : nowIso(),
+    crawledCount: progress?.crawledCount,
+    discoveredCount: progress?.discoveredCount,
+    errorCount: progress?.errorCount,
     lastError: message,
-    lockedAt: null,
     nextRunAt: shouldRetry ? nextRunAt : null,
+    queuedCount: 0,
+    skippedCount: progress?.skippedCount,
     status: shouldRetry ? 'retrying' : 'error',
   });
 }
 
 export function startCrawlQueueWorker(db: AppDatabase) {
   let stopped = false;
-  let running = false;
+  let ticking = false;
+  const activeJobs = new Set<Promise<void>>();
+  const pollMs = getCrawlQueuePollMs();
+  const maxConcurrentJobs = getCrawlJobWorkerCount();
 
-  const tick = async () => {
-    if (stopped || running) return;
-    running = true;
-    try {
-      await recoverInterruptedCrawlJobs(db);
-      const job = await claimNextQueuedCrawlJob(db);
-      if (job) {
+  const launchJob = (job: ClaimedCrawlJobRecord) => {
+    let task: Promise<void>;
+    task = (async () => {
+      try {
+        await executeCrawlJob(db, job);
+      } catch (error) {
+        const progress = readCrawlProgressSnapshot(error);
+        if (error instanceof CrawlLeaseLostError) {
+          return;
+        }
+        if (error instanceof CrawlCancelledError) {
+          try {
+            await markOwnedCrawlJobCancelled(db, job, progress);
+          } catch (finalizeError) {
+            if (finalizeError instanceof CrawlCancelledError) {
+              await syncCancelledCrawlJobProgress(db, job.id, progress);
+              return;
+            }
+            if (!(finalizeError instanceof CrawlLeaseLostError)) {
+              throw finalizeError;
+            }
+          }
+          return;
+        }
         try {
-          await executeCrawlJob(db, job);
-        } catch (error) {
-          if (error instanceof CrawlCancelledError) {
-            await markCrawlJobCancelled(db, job);
-          } else {
-            await markCrawlJobForRetry(db, job, error);
+          await markOwnedCrawlJobForRetry(db, job, error, progress);
+        } catch (finalizeError) {
+          if (finalizeError instanceof CrawlCancelledError) {
+            await syncCancelledCrawlJobProgress(db, job.id, progress);
+            return;
+          }
+          if (!(finalizeError instanceof CrawlLeaseLostError)) {
+            throw finalizeError;
           }
         }
+      }
+    })()
+      .catch((error) => {
+        console.error('[crawl] Job execution failed:', error);
+      })
+      .finally(() => {
+        activeJobs.delete(task);
+        void tick();
+      });
+    activeJobs.add(task);
+  };
+
+  const tick = async () => {
+    if (stopped || ticking) return;
+    ticking = true;
+    try {
+      await recoverInterruptedCrawlJobs(db);
+      while (!stopped && activeJobs.size < maxConcurrentJobs) {
+        const job = await claimNextQueuedCrawlJob(db);
+        if (!job) {
+          break;
+        }
+        launchJob(job);
       }
     } catch (error) {
       console.error('[crawl] Queue worker failed:', error);
     } finally {
-      running = false;
+      ticking = false;
     }
   };
 
   const timer = setInterval(() => {
     void tick();
-  }, CRAWL_QUEUE_POLL_MS);
+  }, pollMs);
 
   void tick();
 
@@ -1393,8 +1971,15 @@ async function listCrawlLinks(
   const where = ['ownerId = ?', 'siteUrl = ?', 'jobId = ?'];
   if (search) {
     const term = `%${search.trim().toLowerCase()}%`;
-    where.push('(LOWER(fromUrl) LIKE ? OR LOWER(toUrl) LIKE ? OR LOWER(fromPageKey) LIKE ? OR LOWER(toPageKey) LIKE ?)');
-    params.push(term, term, term, term);
+    where.push(`(
+      LOWER(fromUrl) LIKE ?
+      OR LOWER(toUrl) LIKE ?
+      OR LOWER(fromPageKey) LIKE ?
+      OR LOWER(toPageKey) LIKE ?
+      OR LOWER(COALESCE(anchorText, '')) LIKE ?
+      OR LOWER(COALESCE(contextText, '')) LIKE ?
+    )`);
+    params.push(term, term, term, term, term, term);
   }
 
   const total = await db.get<any>(
@@ -1403,7 +1988,7 @@ async function listCrawlLinks(
   );
   const rows = await db.all<CrawlLinkRecord>(
     `
-      SELECT siteUrl, fromUrl, toUrl, fromPageKey, toPageKey, discoveredAt, depth
+      SELECT siteUrl, fromUrl, toUrl, fromPageKey, toPageKey, anchorText, contextText, discoveredAt, depth
       FROM crawl_links
       WHERE ${where.join(' AND ')}
       ORDER BY depth ASC, fromUrl ASC, toUrl ASC
@@ -1422,6 +2007,11 @@ async function listCrawlLinks(
     rows,
   };
 }
+
+export const __crawlQueueTestUtils = {
+  claimNextQueuedCrawlJob,
+  recoverInterruptedCrawlJobs,
+};
 
 export async function getCrawlStatus(db: AppDatabase, ownerId: string, siteUrl: string, jobId?: string | null): Promise<CrawlStatusResponse> {
   const job = await getCrawlJob(db, ownerId, siteUrl, jobId);

@@ -25,7 +25,59 @@ export type AppDatabase = {
   all: <T = unknown>(sql: string, params?: QueryParams) => Promise<T[]>;
   run: (sql: string, params?: QueryParams) => Promise<RunResult>;
   transaction: <Args extends unknown[], T>(callback: (...args: Args) => T | Promise<T>) => (...args: Args) => Promise<T>;
+  getDiagnostics?: () => DatabaseDiagnostics;
   close?: () => Promise<void>;
+};
+
+export type PostgresPoolSettings = {
+  max: number;
+  min: number;
+  idleTimeoutMillis: number;
+  connectionTimeoutMillis: number;
+  maxLifetimeSeconds: number;
+  queryTimeoutMs: number;
+  statementTimeoutMs: number;
+  idleInTransactionSessionTimeoutMs: number;
+  keepAlive: boolean;
+  keepAliveInitialDelayMillis: number;
+  applicationName: string;
+};
+
+export type DatabaseDiagnostics = {
+  dialect: 'sqlite' | 'postgres';
+  pool?: {
+    max: number;
+    min: number;
+    totalCount: number;
+    idleCount: number;
+    waitingCount: number;
+    idleTimeoutMillis: number;
+    connectionTimeoutMillis: number;
+    maxLifetimeSeconds: number;
+    queryTimeoutMs: number;
+    statementTimeoutMs: number;
+    idleInTransactionSessionTimeoutMs: number;
+    keepAlive: boolean;
+    keepAliveInitialDelayMillis: number;
+    applicationName: string;
+  };
+  transactions?: {
+    activeDepth: number;
+    poisoned: boolean;
+    started: number;
+    nestedStarted: number;
+    committed: number;
+    rolledBack: number;
+    failures: number;
+    savepoints: number;
+  };
+  errors?: {
+    idleClientRecoverable: number;
+    idleClientFatal: number;
+    lastIdleClientErrorCode?: string;
+    lastIdleClientErrorMessage?: string;
+    lastIdleClientErrorAt?: string;
+  };
 };
 
 const commonSchemaSql = `
@@ -100,6 +152,7 @@ const commonSchemaSql = `
     impressions INTEGER,
     ctr REAL,
     position REAL,
+    queryCount INTEGER,
     PRIMARY KEY (ownerId, siteUrl, date)
   );
 
@@ -402,9 +455,134 @@ const commonSchemaSql = `
     toUrl TEXT,
     fromPageKey TEXT,
     toPageKey TEXT,
+    anchorText TEXT,
+    contextText TEXT,
     discoveredAt TEXT,
     depth INTEGER,
     PRIMARY KEY (ownerId, siteUrl, jobId, fromUrl, toUrl)
+  );
+
+  CREATE TABLE IF NOT EXISTS crawl_page_text_blocks (
+    ownerId TEXT,
+    siteUrl TEXT,
+    jobId TEXT,
+    pageUrl TEXT,
+    pageKey TEXT,
+    blockIndex INTEGER,
+    blockType TEXT,
+    text TEXT,
+    textHash TEXT,
+    PRIMARY KEY (ownerId, siteUrl, jobId, pageUrl, blockIndex)
+  );
+  CREATE TABLE IF NOT EXISTS crawl_page_sentences (
+    ownerId TEXT,
+    siteUrl TEXT,
+    jobId TEXT,
+    pageUrl TEXT,
+    pageKey TEXT,
+    paragraphIndex INTEGER,
+    sentenceIndex INTEGER,
+    sentenceText TEXT,
+    textHash TEXT,
+    embeddingStatus TEXT,
+    createdAt TEXT,
+    PRIMARY KEY (ownerId, siteUrl, jobId, pageKey, paragraphIndex, sentenceIndex)
+  );
+
+  CREATE TABLE IF NOT EXISTS internal_link_embedding_cache (
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    inputType TEXT NOT NULL,
+    textHash TEXT NOT NULL,
+    text TEXT,
+    vectorJson TEXT NOT NULL,
+    dimensions INTEGER,
+    tokenCount INTEGER,
+    useCount INTEGER DEFAULT 0,
+    createdAt TEXT,
+    lastUsedAt TEXT,
+    PRIMARY KEY (provider, model, inputType, textHash)
+  );
+
+  CREATE TABLE IF NOT EXISTS internal_link_provider_settings (
+    ownerId TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    apiKeyEncrypted TEXT,
+    baseUrl TEXT,
+    embeddingModel TEXT,
+    reviewModel TEXT,
+    enabled INTEGER DEFAULT 1,
+    createdAt TEXT,
+    updatedAt TEXT,
+    PRIMARY KEY (ownerId, provider)
+  );
+
+  CREATE TABLE IF NOT EXISTS internal_link_analysis_jobs (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT,
+    siteUrl TEXT,
+    crawlJobId TEXT,
+    startDate TEXT,
+    endDate TEXT,
+    status TEXT,
+    progressTotal INTEGER,
+    progressCompleted INTEGER,
+    provider TEXT,
+    embeddingProvider TEXT,
+    embeddingModel TEXT,
+    reviewProvider TEXT,
+    reviewModel TEXT,
+    maxPages INTEGER,
+    maxSentencesPerPage INTEGER,
+    maxRecommendations INTEGER,
+    estimatedLocalUnits INTEGER,
+    estimatedEmbeddingTokens INTEGER,
+    estimatedHostedEmbeddingCost REAL,
+    estimatedReviewTokens INTEGER,
+    estimatedHostedReviewCost REAL,
+    actualEmbeddingTokens INTEGER,
+    actualReviewTokens INTEGER,
+    actualCost REAL,
+    startedAt TEXT,
+    updatedAt TEXT,
+    completedAt TEXT,
+    lastError TEXT,
+    lockedAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS internal_link_opportunities (
+    id TEXT PRIMARY KEY,
+    jobId TEXT,
+    ownerId TEXT,
+    siteUrl TEXT,
+    crawlJobId TEXT,
+    sourceUrl TEXT,
+    sourcePageKey TEXT,
+    sourceTitle TEXT,
+    sourceSentence TEXT,
+    paragraphIndex INTEGER,
+    sentenceIndex INTEGER,
+    anchorText TEXT,
+    anchorStart INTEGER,
+    anchorEnd INTEGER,
+    targetUrl TEXT,
+    targetPageKey TEXT,
+    targetTitle TEXT,
+    readerBenefit TEXT,
+    confidence TEXT,
+    priorityScore INTEGER,
+    scoreBreakdown TEXT,
+    opportunityType TEXT,
+    status TEXT,
+    userNote TEXT,
+    stale INTEGER DEFAULT 0,
+    provider TEXT,
+    modelVersion TEXT,
+    annotationId TEXT,
+    createdAt TEXT,
+    updatedAt TEXT,
+    implementedAt TEXT,
+    UNIQUE (ownerId, siteUrl, crawlJobId, sourcePageKey, targetPageKey, anchorText)
   );
 `;
 
@@ -494,6 +672,17 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_pagekey ON crawl_pages(ownerId, siteUrl, pageKey);
   CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job ON crawl_links(ownerId, siteUrl, jobId);
   CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_tourl ON crawl_links(ownerId, siteUrl, jobId, toUrl);
+  CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_keys ON crawl_links(ownerId, siteUrl, jobId, fromPageKey, toPageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_text_blocks_owner_site_job_key ON crawl_page_text_blocks(ownerId, siteUrl, jobId, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_key ON crawl_page_sentences(ownerId, siteUrl, jobId, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_hash ON crawl_page_sentences(ownerId, siteUrl, jobId, textHash);
+  CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_quality_hash ON crawl_page_sentences(ownerId, siteUrl, jobId, extractionVersion, linkDensity, boilerplateScore, textHash);
+  CREATE INDEX IF NOT EXISTS idx_internal_link_embedding_cache_model ON internal_link_embedding_cache(provider, model, inputType, lastUsedAt);
+  CREATE INDEX IF NOT EXISTS idx_internal_link_provider_settings_owner_enabled ON internal_link_provider_settings(ownerId, enabled, provider);
+  CREATE INDEX IF NOT EXISTS idx_internal_link_jobs_owner_site_status ON internal_link_analysis_jobs(ownerId, siteUrl, status, updatedAt);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_link_jobs_active_unique ON internal_link_analysis_jobs(ownerId, siteUrl) WHERE status IN ('queued', 'running');
+  CREATE INDEX IF NOT EXISTS idx_internal_link_opps_owner_site_status ON internal_link_opportunities(ownerId, siteUrl, status, stale, priorityScore);
+  CREATE INDEX IF NOT EXISTS idx_internal_link_opps_job ON internal_link_opportunities(jobId, priorityScore);
 `;
 
 const camelCaseColumns: Record<string, string> = {
@@ -588,6 +777,62 @@ const camelCaseColumns: Record<string, string> = {
   tourl: 'toUrl',
   frompagekey: 'fromPageKey',
   topagekey: 'toPageKey',
+  contexttext: 'contextText',
+  pageurl: 'pageUrl',
+  blockindex: 'blockIndex',
+  blocktype: 'blockType',
+  texthash: 'textHash',
+  embeddingstatus: 'embeddingStatus',
+  apikeyencrypted: 'apiKeyEncrypted',
+  baseurl: 'baseUrl',
+  inputtype: 'inputType',
+  vectorjson: 'vectorJson',
+  tokencount: 'tokenCount',
+  usecount: 'useCount',
+  lastusedat: 'lastUsedAt',
+  paragraphindex: 'paragraphIndex',
+  sentenceindex: 'sentenceIndex',
+  sentencetext: 'sentenceText',
+  headingtext: 'headingText',
+  linkdensity: 'linkDensity',
+  boilerplatescore: 'boilerplateScore',
+  extractionversion: 'extractionVersion',
+  crawljobid: 'crawlJobId',
+  progresscompleted: 'progressCompleted',
+  progresstotal: 'progressTotal',
+  embeddingprovider: 'embeddingProvider',
+  embeddingmodel: 'embeddingModel',
+  reviewprovider: 'reviewProvider',
+  reviewmodel: 'reviewModel',
+  maxpages: 'maxPages',
+  maxsentencesperpage: 'maxSentencesPerPage',
+  maxrecommendations: 'maxRecommendations',
+  estimatedlocalunits: 'estimatedLocalUnits',
+  estimatedhostedembeddingcost: 'estimatedHostedEmbeddingCost',
+  estimatedhostedreviewcost: 'estimatedHostedReviewCost',
+  estimatedembeddingtokens: 'estimatedEmbeddingTokens',
+  estimatedreviewtokens: 'estimatedReviewTokens',
+  actualembeddingtokens: 'actualEmbeddingTokens',
+  actualreviewtokens: 'actualReviewTokens',
+  actualcost: 'actualCost',
+  sourceurl: 'sourceUrl',
+  sourcepagekey: 'sourcePageKey',
+  sourcetitle: 'sourceTitle',
+  sourcesentence: 'sourceSentence',
+  anchortext: 'anchorText',
+  anchorstart: 'anchorStart',
+  anchorend: 'anchorEnd',
+  targeturl: 'targetUrl',
+  targetpagekey: 'targetPageKey',
+  targettitle: 'targetTitle',
+  readerbenefit: 'readerBenefit',
+  priorityscore: 'priorityScore',
+  scorebreakdown: 'scoreBreakdown',
+  opportunitytype: 'opportunityType',
+  usernote: 'userNote',
+  modelversion: 'modelVersion',
+  annotationid: 'annotationId',
+  implementedat: 'implementedAt',
   totalusers: 'totalUsers',
   pageviews: 'pageViews',
   bouncerate: 'bounceRate',
@@ -646,6 +891,206 @@ function bindPostgresParams(sql: string, params?: QueryParams) {
   return { sql: normalizeSqlForPostgres(boundSql), values };
 }
 
+type PostgresTransactionHealth = {
+  poisonedBy?: Error;
+};
+
+type PostgresTransactionContext = {
+  client: pg.PoolClient;
+  depth: number;
+  health: PostgresTransactionHealth;
+};
+
+type PostgresRuntimeCounters = {
+  started: number;
+  nestedStarted: number;
+  committed: number;
+  rolledBack: number;
+  failures: number;
+  savepoints: number;
+  idleClientRecoverable: number;
+  idleClientFatal: number;
+  lastIdleClientErrorCode?: string;
+  lastIdleClientErrorMessage?: string;
+  lastIdleClientErrorAt?: string;
+};
+
+const recoverableIdlePostgresErrorCodes = new Set([
+  '57P01',
+  '57P02',
+  '57P03',
+  '53300',
+  '08000',
+  '08003',
+  '08006',
+  '08P01',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+]);
+
+const recoverableIdlePostgresErrnos = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+]);
+
+function parseIntegerEnv(name: string, defaultValue: number, minimum = 0) {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return defaultValue;
+  }
+
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`[db] ${name} must be a non-negative integer. Received "${raw}".`);
+  }
+
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`[db] ${name} must be at least ${minimum}. Received ${raw}.`);
+  }
+
+  return value;
+}
+
+function parseBooleanEnv(name: string, defaultValue: boolean) {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) {
+    return defaultValue;
+  }
+
+  if (['1', 'true', 'yes', 'on'].includes(raw)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'off'].includes(raw)) {
+    return false;
+  }
+
+  throw new Error(`[db] ${name} must be a boolean. Received "${process.env[name]}".`);
+}
+
+function parseStringEnv(name: string, defaultValue: string) {
+  const raw = process.env[name]?.trim();
+  return raw || defaultValue;
+}
+
+export function validatePostgresPoolSettings(settings: PostgresPoolSettings) {
+  const errors: string[] = [];
+
+  if (settings.max < 1) {
+    errors.push('POSTGRES_POOL_MAX must be at least 1.');
+  }
+  if (settings.min > settings.max) {
+    errors.push('POSTGRES_POOL_MIN cannot exceed POSTGRES_POOL_MAX.');
+  }
+  if (settings.connectionTimeoutMillis < 1) {
+    errors.push('POSTGRES_CONNECTION_TIMEOUT_MS must be at least 1.');
+  }
+  if (settings.idleTimeoutMillis < 0) {
+    errors.push('POSTGRES_IDLE_TIMEOUT_MS cannot be negative.');
+  }
+  if (settings.maxLifetimeSeconds < 0) {
+    errors.push('POSTGRES_POOL_MAX_LIFETIME_SECONDS cannot be negative.');
+  }
+  if (settings.queryTimeoutMs < 0) {
+    errors.push('POSTGRES_QUERY_TIMEOUT_MS cannot be negative.');
+  }
+  if (settings.statementTimeoutMs < 0) {
+    errors.push('POSTGRES_STATEMENT_TIMEOUT_MS cannot be negative.');
+  }
+  if (settings.idleInTransactionSessionTimeoutMs < 0) {
+    errors.push('POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS cannot be negative.');
+  }
+  if (settings.keepAliveInitialDelayMillis < 0) {
+    errors.push('POSTGRES_KEEP_ALIVE_INITIAL_DELAY_MS cannot be negative.');
+  }
+  if (!settings.applicationName.trim()) {
+    errors.push('POSTGRES_APPLICATION_NAME cannot be blank.');
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`[db] Invalid PostgreSQL pool configuration:\n- ${errors.join('\n- ')}`);
+  }
+}
+
+export function getPostgresPoolSettingsFromEnv(): PostgresPoolSettings {
+  const settings: PostgresPoolSettings = {
+    max: parseIntegerEnv('POSTGRES_POOL_MAX', 20, 1),
+    min: parseIntegerEnv('POSTGRES_POOL_MIN', 0, 0),
+    idleTimeoutMillis: parseIntegerEnv('POSTGRES_IDLE_TIMEOUT_MS', 30000, 0),
+    connectionTimeoutMillis: parseIntegerEnv('POSTGRES_CONNECTION_TIMEOUT_MS', 10000, 1),
+    maxLifetimeSeconds: parseIntegerEnv('POSTGRES_POOL_MAX_LIFETIME_SECONDS', 1800, 0),
+    queryTimeoutMs: parseIntegerEnv('POSTGRES_QUERY_TIMEOUT_MS', 0, 0),
+    statementTimeoutMs: parseIntegerEnv('POSTGRES_STATEMENT_TIMEOUT_MS', 0, 0),
+    idleInTransactionSessionTimeoutMs: parseIntegerEnv('POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS', 120000, 0),
+    keepAlive: parseBooleanEnv('POSTGRES_KEEP_ALIVE', true),
+    keepAliveInitialDelayMillis: parseIntegerEnv('POSTGRES_KEEP_ALIVE_INITIAL_DELAY_MS', 10000, 0),
+    applicationName: parseStringEnv('POSTGRES_APPLICATION_NAME', 'gscplus'),
+  };
+
+  validatePostgresPoolSettings(settings);
+  return settings;
+}
+
+function validatePostgresConnectionString(databaseUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error('[db] DATABASE_URL/POSTGRES_URL must be a valid PostgreSQL connection string.');
+  }
+
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
+    throw new Error(`[db] Expected a postgres:// or postgresql:// connection string, received ${parsed.protocol}`);
+  }
+
+  if (!parsed.pathname || parsed.pathname === '/') {
+    throw new Error('[db] PostgreSQL connection string must include a database name.');
+  }
+}
+
+function formatErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function combineDatabaseErrors(message: string, errors: unknown[]) {
+  const details = errors
+    .filter((error) => error !== undefined && error !== null)
+    .map((error) => formatErrorMessage(error));
+  return new Error(`${message} ${details.join(' | ')}`.trim());
+}
+
+export function isRecoverablePostgresPoolError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const candidate = error as { code?: string; errno?: string };
+  return recoverableIdlePostgresErrorCodes.has(candidate.code || '') || recoverableIdlePostgresErrnos.has(candidate.errno || '');
+}
+
+function formatPostgresPoolSettings(settings: PostgresPoolSettings) {
+  return [
+    `pool max=${settings.max}`,
+    `min=${settings.min}`,
+    `idleTimeoutMs=${settings.idleTimeoutMillis}`,
+    `connectTimeoutMs=${settings.connectionTimeoutMillis}`,
+    `maxLifetimeSec=${settings.maxLifetimeSeconds}`,
+    `queryTimeoutMs=${settings.queryTimeoutMs}`,
+    `statementTimeoutMs=${settings.statementTimeoutMs}`,
+    `idleInTxTimeoutMs=${settings.idleInTransactionSessionTimeoutMs}`,
+    `keepAlive=${settings.keepAlive}`,
+  ].join(' ');
+}
+
 class SqliteAppDatabase implements AppDatabase {
   dialect = 'sqlite' as const;
 
@@ -698,54 +1143,228 @@ class SqliteAppDatabase implements AppDatabase {
 
 class PostgresAppDatabase implements AppDatabase {
   dialect = 'postgres' as const;
-  private readonly transactionContext = new AsyncLocalStorage<PgQueryable>();
+  private readonly transactionContext = new AsyncLocalStorage<PostgresTransactionContext>();
+  private readonly runtime: PostgresRuntimeCounters = {
+    started: 0,
+    nestedStarted: 0,
+    committed: 0,
+    rolledBack: 0,
+    failures: 0,
+    savepoints: 0,
+    idleClientRecoverable: 0,
+    idleClientFatal: 0,
+  };
+  private savepointCounter = 0;
 
-  constructor(private readonly pool: pg.Pool) {}
+  constructor(private readonly pool: pg.Pool, private readonly settings: PostgresPoolSettings) {
+    this.pool.on('error', this.handlePoolError);
+  }
+
+  private readonly handlePoolError = (error: Error & { code?: string; errno?: string }) => {
+    this.runtime.lastIdleClientErrorCode = error.code || error.errno;
+    this.runtime.lastIdleClientErrorMessage = error.message;
+    this.runtime.lastIdleClientErrorAt = new Date().toISOString();
+
+    if (isRecoverablePostgresPoolError(error)) {
+      this.runtime.idleClientRecoverable += 1;
+      console.warn(`[db] Recoverable PostgreSQL pool idle-client error: ${error.code || error.errno || 'unknown'} ${error.message}`);
+      return;
+    }
+
+    this.runtime.idleClientFatal += 1;
+    console.error('[db] PostgreSQL pool emitted a non-recoverable idle-client error.', error);
+  };
+
+  private getTransactionContext() {
+    return this.transactionContext.getStore();
+  }
+
+  private currentQueryable() {
+    const context = this.getTransactionContext();
+    if (context?.health.poisonedBy) {
+      throw context.health.poisonedBy;
+    }
+    return context?.client || this.pool;
+  }
+
+  getDiagnostics() {
+    const context = this.getTransactionContext();
+    return {
+      dialect: 'postgres' as const,
+      pool: {
+        max: this.settings.max,
+        min: this.settings.min,
+        totalCount: this.pool.totalCount,
+        idleCount: this.pool.idleCount,
+        waitingCount: this.pool.waitingCount,
+        idleTimeoutMillis: this.settings.idleTimeoutMillis,
+        connectionTimeoutMillis: this.settings.connectionTimeoutMillis,
+        maxLifetimeSeconds: this.settings.maxLifetimeSeconds,
+        queryTimeoutMs: this.settings.queryTimeoutMs,
+        statementTimeoutMs: this.settings.statementTimeoutMs,
+        idleInTransactionSessionTimeoutMs: this.settings.idleInTransactionSessionTimeoutMs,
+        keepAlive: this.settings.keepAlive,
+        keepAliveInitialDelayMillis: this.settings.keepAliveInitialDelayMillis,
+        applicationName: this.settings.applicationName,
+      },
+      transactions: {
+        activeDepth: context?.depth || 0,
+        poisoned: Boolean(context?.health.poisonedBy),
+        started: this.runtime.started,
+        nestedStarted: this.runtime.nestedStarted,
+        committed: this.runtime.committed,
+        rolledBack: this.runtime.rolledBack,
+        failures: this.runtime.failures,
+        savepoints: this.runtime.savepoints,
+      },
+      errors: {
+        idleClientRecoverable: this.runtime.idleClientRecoverable,
+        idleClientFatal: this.runtime.idleClientFatal,
+        lastIdleClientErrorCode: this.runtime.lastIdleClientErrorCode,
+        lastIdleClientErrorMessage: this.runtime.lastIdleClientErrorMessage,
+        lastIdleClientErrorAt: this.runtime.lastIdleClientErrorAt,
+      },
+    } satisfies DatabaseDiagnostics;
+  }
+
+  private nextSavepointName() {
+    this.savepointCounter += 1;
+    this.runtime.savepoints += 1;
+    return `gscplus_sp_${this.savepointCounter}`;
+  }
 
   prepare(_sql: string) {
     throw new Error('This route still uses the legacy synchronous SQLite API and must be migrated before PostgreSQL mode can run it.');
   }
 
   async exec(sql: string) {
-    await (this.transactionContext.getStore() || this.pool).query(normalizeSqlForPostgres(sql));
+    await this.currentQueryable().query(normalizeSqlForPostgres(sql));
   }
 
   async get<T = unknown>(sql: string, params?: QueryParams) {
     const { sql: boundSql, values } = bindPostgresParams(sql, params);
-    const result = await (this.transactionContext.getStore() || this.pool).query(boundSql, values);
+    const result = await this.currentQueryable().query(boundSql, values);
     return normalizeRow(result.rows[0] as T | undefined);
   }
 
   async all<T = unknown>(sql: string, params?: QueryParams) {
     const { sql: boundSql, values } = bindPostgresParams(sql, params);
-    const result = await (this.transactionContext.getStore() || this.pool).query(boundSql, values);
+    const result = await this.currentQueryable().query(boundSql, values);
     return result.rows.map((row) => normalizeRow(row as T));
   }
 
   async run(sql: string, params?: QueryParams) {
     const { sql: boundSql, values } = bindPostgresParams(sql, params);
-    const result = await (this.transactionContext.getStore() || this.pool).query(boundSql, values);
+    const result = await this.currentQueryable().query(boundSql, values);
     return { changes: result.rowCount || 0 };
   }
 
   transaction<Args extends unknown[], T>(callback: (...args: Args) => T | Promise<T>) {
     return async (...args: Args) => {
-      const client = await this.pool.connect();
-      try {
-        await client.query('BEGIN');
-        const result = await this.transactionContext.run(client, () => callback(...args));
-        await client.query('COMMIT');
-        return result;
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
+      const context = this.getTransactionContext();
+      if (context) {
+        return this.runNestedTransaction(context, callback, args);
       }
+      return this.runTopLevelTransaction(callback, args);
     };
   }
 
+  private async runTopLevelTransaction<Args extends unknown[], T>(callback: (...args: Args) => T | Promise<T>, args: Args) {
+    this.runtime.started += 1;
+    const client = await this.pool.connect();
+    const health: PostgresTransactionHealth = {};
+    let releaseError: Error | undefined;
+
+    try {
+      await client.query('BEGIN');
+      const result = await this.transactionContext.run({ client, depth: 1, health }, () => callback(...args));
+      if (health.poisonedBy) {
+        throw health.poisonedBy;
+      }
+      await client.query('COMMIT');
+      this.runtime.committed += 1;
+      return result;
+    } catch (error) {
+      this.runtime.failures += 1;
+      const rollbackError = await this.rollbackTransaction(client, error);
+      if (rollbackError) {
+        releaseError = rollbackError;
+        throw rollbackError;
+      }
+      this.runtime.rolledBack += 1;
+      throw error;
+    } finally {
+      client.release(releaseError);
+    }
+  }
+
+  private async runNestedTransaction<Args extends unknown[], T>(
+    context: PostgresTransactionContext,
+    callback: (...args: Args) => T | Promise<T>,
+    args: Args,
+  ) {
+    this.runtime.started += 1;
+    this.runtime.nestedStarted += 1;
+    const savepointName = this.nextSavepointName();
+
+    await context.client.query(`SAVEPOINT ${savepointName}`);
+    try {
+      const result = await this.transactionContext.run(
+        { client: context.client, depth: context.depth + 1, health: context.health },
+        () => callback(...args),
+      );
+      if (context.health.poisonedBy) {
+        throw context.health.poisonedBy;
+      }
+      await context.client.query(`RELEASE SAVEPOINT ${savepointName}`);
+      this.runtime.committed += 1;
+      return result;
+    } catch (error) {
+      this.runtime.failures += 1;
+      const rollbackError = await this.rollbackSavepoint(context, savepointName, error);
+      if (rollbackError) {
+        context.health.poisonedBy = rollbackError;
+        throw rollbackError;
+      }
+      this.runtime.rolledBack += 1;
+      throw error;
+    }
+  }
+
+  private async rollbackTransaction(client: pg.PoolClient, cause: unknown) {
+    try {
+      await client.query('ROLLBACK');
+      return undefined;
+    } catch (rollbackError) {
+      return combineDatabaseErrors('[db] PostgreSQL transaction rollback failed.', [cause, rollbackError]);
+    }
+  }
+
+  private async rollbackSavepoint(context: PostgresTransactionContext, savepointName: string, cause: unknown) {
+    let rollbackError: unknown;
+    let releaseError: unknown;
+
+    try {
+      await context.client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+    } catch (error) {
+      rollbackError = error;
+    }
+
+    try {
+      await context.client.query(`RELEASE SAVEPOINT ${savepointName}`);
+    } catch (error) {
+      releaseError = error;
+    }
+
+    if (!rollbackError && !releaseError) {
+      return undefined;
+    }
+
+    return combineDatabaseErrors(`[db] PostgreSQL savepoint recovery failed for ${savepointName}.`, [cause, rollbackError, releaseError]);
+  }
+
   async close() {
+    this.pool.off('error', this.handlePoolError);
     await this.pool.end();
   }
 }
@@ -943,6 +1562,7 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE server_logs ADD COLUMN ownerId TEXT',
     'ALTER TABLE url_inspection_cache ADD COLUMN ownerId TEXT',
     'ALTER TABLE gsc_site_metrics ADD COLUMN ownerId TEXT',
+    'ALTER TABLE gsc_site_metrics ADD COLUMN queryCount INTEGER',
     'ALTER TABLE gsc_query_metrics ADD COLUMN ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN pageKey TEXT',
@@ -966,6 +1586,14 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE crawl_pages ADD COLUMN ownerId TEXT',
     'ALTER TABLE crawl_pages ADD COLUMN inboundLinkCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_links ADD COLUMN ownerId TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN anchorText TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN contextText TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN headingText TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN linkDensity REAL',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN boilerplateScore REAL',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN extractionVersion INTEGER',
+    'ALTER TABLE internal_link_analysis_jobs ADD COLUMN lockedAt TEXT',
+    'ALTER TABLE internal_link_opportunities ADD COLUMN scoreBreakdown TEXT',
   ]) {
     runOptionalSqliteAlter(db, statement);
   }
@@ -974,8 +1602,38 @@ function applySqliteMigrations(db: Database.Database) {
   db.exec(indexSql);
 }
 
+async function applyOptionalPostgresVectorMigrations(db: AppDatabase) {
+  try {
+    await db.exec('CREATE EXTENSION IF NOT EXISTS vector');
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS internal_link_embedding_vectors_1024 (
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        inputType TEXT NOT NULL,
+        textHash TEXT NOT NULL,
+        text TEXT,
+        embedding vector(1024) NOT NULL,
+        tokenCount INTEGER,
+        useCount INTEGER DEFAULT 0,
+        createdAt TEXT,
+        lastUsedAt TEXT,
+        PRIMARY KEY (provider, model, inputType, textHash)
+      );
+      CREATE INDEX IF NOT EXISTS idx_internal_link_embedding_vectors_1024_hnsw
+        ON internal_link_embedding_vectors_1024
+        USING hnsw (embedding vector_cosine_ops);
+      CREATE INDEX IF NOT EXISTS idx_internal_link_embedding_vectors_1024_model
+        ON internal_link_embedding_vectors_1024(provider, model, inputType, lastUsedAt);
+    `);
+  } catch (error: any) {
+    console.warn('[db] pgvector extension unavailable; using JSON embedding cache only.', error?.message || error);
+  }
+}
+const POSTGRES_SCHEMA_MIGRATION_LOCK_ID = 864203197;
+
 async function applyPostgresMigrations(db: AppDatabase) {
   await db.exec(postgresSchemaSql);
+  await applyOptionalPostgresVectorMigrations(db);
 
   for (const statement of [
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS passwordHash TEXT',
@@ -994,6 +1652,7 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE server_logs ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE url_inspection_cache ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_site_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE gsc_site_metrics ADD COLUMN IF NOT EXISTS queryCount INTEGER',
     'ALTER TABLE gsc_query_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_page_query_metrics ADD COLUMN IF NOT EXISTS pageKey TEXT',
@@ -1017,6 +1676,14 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS inboundLinkCount INTEGER DEFAULT 0',
     'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS anchorText TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS contextText TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS headingText TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS linkDensity REAL',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS boilerplateScore REAL',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS extractionVersion INTEGER',
+    'ALTER TABLE internal_link_analysis_jobs ADD COLUMN IF NOT EXISTS lockedAt TEXT',
+    'ALTER TABLE internal_link_opportunities ADD COLUMN IF NOT EXISTS scoreBreakdown TEXT',
   ]) {
     await db.exec(statement);
   }
@@ -1156,20 +1823,98 @@ async function backfillGscPageMetrics(db: AppDatabase) {
   console.log(`[db] Backfilled ${Number(updated?.count || 0)} legacy GSC page summary rows`);
 }
 
+async function backfillGscSiteQueryCounts(db: AppDatabase) {
+  const pending = await db.get<{ count: number }>(
+    'SELECT COUNT(*) AS count FROM gsc_site_metrics WHERE queryCount IS NULL',
+  );
+  if (Number(pending?.count || 0) === 0) return;
+
+  await db.run(`
+    UPDATE gsc_site_metrics
+    SET queryCount = (
+      SELECT COUNT(*)
+      FROM gsc_query_metrics
+      WHERE gsc_query_metrics.siteUrl = gsc_site_metrics.siteUrl
+        AND gsc_query_metrics.date = gsc_site_metrics.date
+        AND (
+          gsc_query_metrics.ownerId = gsc_site_metrics.ownerId
+          OR (gsc_query_metrics.ownerId IS NULL AND gsc_site_metrics.ownerId IS NULL)
+        )
+        AND gsc_query_metrics.query <> ''
+    )
+    WHERE queryCount IS NULL
+  `);
+
+  console.log(`[db] Backfilled query counts for ${Number(pending?.count || 0)} GSC daily summary rows`);
+}
+
+async function validatePostgresRuntime(db: AppDatabase) {
+  const row = await db.get<{
+    ready: number;
+    statementTimeout: string;
+    idleInTransactionSessionTimeout: string;
+  }>(
+    `SELECT
+      1 AS ready,
+      current_setting('statement_timeout') AS "statementTimeout",
+      current_setting('idle_in_transaction_session_timeout') AS "idleInTransactionSessionTimeout"`,
+  );
+
+  if (Number(row?.ready || 0) !== 1) {
+    throw new Error('[db] PostgreSQL validation query failed.');
+  }
+}
+
+function formatPostgresConnectionLog(db: AppDatabase) {
+  const diagnostics = db.getDiagnostics?.();
+  if (!diagnostics?.pool) {
+    return '[db] Connected to PostgreSQL';
+  }
+
+  return `[db] Connected to PostgreSQL (${formatPostgresPoolSettings(diagnostics.pool)}) total=${diagnostics.pool.totalCount} idle=${diagnostics.pool.idleCount} waiting=${diagnostics.pool.waitingCount}`;
+}
+
 export async function initializeDatabase(): Promise<AppDatabase> {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 
   if (databaseUrl) {
+    validatePostgresConnectionString(databaseUrl);
+    const poolSettings = getPostgresPoolSettingsFromEnv();
     const pool = new Pool({
       connectionString: databaseUrl,
       ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+      max: poolSettings.max,
+      min: poolSettings.min,
+      idleTimeoutMillis: poolSettings.idleTimeoutMillis,
+      connectionTimeoutMillis: poolSettings.connectionTimeoutMillis,
+      maxLifetimeSeconds: poolSettings.maxLifetimeSeconds,
+      query_timeout: poolSettings.queryTimeoutMs,
+      statement_timeout: poolSettings.statementTimeoutMs,
+      idle_in_transaction_session_timeout: poolSettings.idleInTransactionSessionTimeoutMs,
+      keepAlive: poolSettings.keepAlive,
+      keepAliveInitialDelayMillis: poolSettings.keepAliveInitialDelayMillis,
+      application_name: poolSettings.applicationName,
     });
-    const db = new PostgresAppDatabase(pool);
-    await applyPostgresMigrations(db);
-    await backfillGscPageKeys(db);
-    await backfillGscPageMetrics(db);
-    console.log('[db] Connected to PostgreSQL');
-    return db;
+    const db = new PostgresAppDatabase(pool, poolSettings);
+
+    try {
+      const runMigrations = db.transaction(async () => {
+        await db.exec(`SELECT pg_advisory_xact_lock(${POSTGRES_SCHEMA_MIGRATION_LOCK_ID})`);
+        await applyPostgresMigrations(db);
+      });
+      await runMigrations();
+      await validatePostgresRuntime(db);
+      if (process.env.RUN_DATABASE_BACKFILLS !== 'false') {
+        await backfillGscPageKeys(db);
+        await backfillGscPageMetrics(db);
+        await backfillGscSiteQueryCounts(db);
+      }
+      console.log(formatPostgresConnectionLog(db));
+      return db;
+    } catch (error) {
+      await db.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   const sqlite = createSqliteConnection();
@@ -1177,6 +1922,7 @@ export async function initializeDatabase(): Promise<AppDatabase> {
   const db = new SqliteAppDatabase(sqlite);
   await backfillGscPageKeys(db);
   await backfillGscPageMetrics(db);
+  await backfillGscSiteQueryCounts(db);
   console.log('[db] Connected to local SQLite');
   return db;
 }

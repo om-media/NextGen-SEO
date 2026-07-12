@@ -135,7 +135,7 @@ function exportCsv(rows: AuditRow[]) {
   window.URL.revokeObjectURL(url);
 }
 
-export function AIContentAuditorView({ dateRange, siteUrl, useLiveData }: AIContentAuditorViewProps) {
+export function AIContentAuditorView({ dateRange, siteUrl, useLiveData: _useLiveData }: AIContentAuditorViewProps) {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [brief, setBrief] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -177,7 +177,7 @@ export function AIContentAuditorView({ dateRange, siteUrl, useLiveData }: AICont
       const endDate = formatDate(dateRange.to || dateRange.from, 0);
       let gscRows: GscSearchAnalyticsRow[] = [];
       try {
-        gscRows = await new GscApiService(null).querySearchAnalytics(siteUrl, startDate, endDate, ["page"], undefined, useLiveData);
+        gscRows = await new GscApiService(null).querySearchAnalytics(siteUrl, startDate, endDate, ["page"]);
       } catch {
         gscRows = [];
       }
@@ -225,7 +225,7 @@ export function AIContentAuditorView({ dateRange, siteUrl, useLiveData }: AICont
   useEffect(() => {
     loadAudit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteUrl, dateRange.from, dateRange.to, useLiveData]);
+  }, [siteUrl, dateRange.from, dateRange.to]);
 
   return (
     <div className="space-y-5">
@@ -237,7 +237,7 @@ export function AIContentAuditorView({ dateRange, siteUrl, useLiveData }: AICont
               <CardTitle className="text-xl">AI content auditor</CardTitle>
             </div>
             <CardDescription className="max-w-3xl">
-              Prioritize pages using crawl quality, metadata, internal links, and page-level search demand from the selected date range.
+              Prioritize pages using crawl quality, metadata, internal links, and stored page-level search demand from the selected date range.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">

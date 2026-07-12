@@ -9,7 +9,7 @@ import { fetchWorkspaceSiteStatuses, type WorkspaceSiteStatus } from "@/src/serv
 
 type WorkspaceSitesViewProps = {
   onActivateSite: (siteUrl: string) => Promise<void>;
-  onOpenSite: (siteUrl: string, menu: "Dashboard" | "Crawl Inventory" | "Raw Data" | "Reconciliation") => void;
+  onOpenSite: (siteUrl: string, menu: "Dashboard" | "Crawl Inventory" | "Internal Links" | "Raw Data" | "Reconciliation") => void;
 };
 
 function formatNumber(value: number | null | undefined) {

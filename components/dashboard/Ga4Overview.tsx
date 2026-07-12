@@ -235,7 +235,15 @@ export function Ga4Overview({
       } catch (err: any) {
         if (!isCurrent || err?.name === "AbortError") return
         console.error("Error fetching GA4 stats:", err)
-        setError(err.message)
+        if (err.message === "UNAUTHORIZED") {
+          setError("Your session expired. Sign in again to load stored Analytics data.")
+        } else if (err.message === "Failed to fetch") {
+          setError("Network error: Unable to load the stored Analytics overview right now.")
+        } else if (/not warehoused|being prepared|not ready|history import|stored warehouse/i.test(err.message)) {
+          setError("Analytics data is still updating for this overview. Existing stored rows stay available while the background import catches up.")
+        } else {
+          setError(err.message)
+        }
       } finally {
         if (isCurrent) setLoading(false)
       }

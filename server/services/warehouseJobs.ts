@@ -216,7 +216,7 @@ async function fetchGscRows(db: AppDatabase, ownerId: string, siteUrl: string, d
 }
 
 async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: string, endDate: string) {
-  const insertSiteSql = 'INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?)';
+  const insertSiteSql = 'INSERT INTO gsc_site_metrics (ownerId, siteUrl, date, clicks, impressions, ctr, position, queryCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
   const insertQuerySql = 'INSERT INTO gsc_query_metrics (ownerId, siteUrl, date, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
   const insertPageQuerySql = 'INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, pageKey, query, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
   const insertPageSql = 'INSERT INTO gsc_page_metrics (ownerId, siteUrl, date, page, pageKey, clicks, impressions, ctr, position, queryCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
@@ -246,6 +246,7 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
     const dateQueryRows = queryRowsByDate.get(date) || [];
     const datePageQueryRows = pageQueryRowsByDate.get(date) || [];
     const dateCountryRows = countryRowsByDate.get(date) || [];
+    const dateQueryCount = dateQueryRows.filter((row) => Boolean(row.keys?.[1])).length;
 
     await db.transaction(async () => {
       await db.run('DELETE FROM gsc_site_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
@@ -255,10 +256,10 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
       await db.run('DELETE FROM gsc_country_metrics WHERE ownerId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.siteUrl, date]);
 
       for (const row of dateSiteRows) {
-        await runWarehouseStatement(db, insertSite, insertSiteSql, [job.ownerId, job.siteUrl, date, toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
+        await runWarehouseStatement(db, insertSite, insertSiteSql, [job.ownerId, job.siteUrl, date, toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position), dateQueryCount]);
       }
       if (dateSiteRows.length === 0) {
-        await runWarehouseStatement(db, insertSite, insertSiteSql, [job.ownerId, job.siteUrl, date, 0, 0, 0, 0]);
+        await runWarehouseStatement(db, insertSite, insertSiteSql, [job.ownerId, job.siteUrl, date, 0, 0, 0, 0, dateQueryCount]);
       }
       for (const row of dateQueryRows) {
         await runWarehouseStatement(db, insertQuery, insertQuerySql, [job.ownerId, job.siteUrl, date, row.keys?.[1] || '', toNumber(row.clicks), toNumber(row.impressions), toNumber(row.ctr), toNumber(row.position)]);
@@ -904,6 +905,76 @@ const normalizedJobPriority = (priority: number | undefined) => {
   return Math.max(0, Math.floor(Number(priority)));
 };
 
+const compatibleWarehouseJobTypes = (jobType: string) => (
+  jobType === 'daily-sync' || jobType === 'core-range-sync'
+    ? ['daily-sync', 'core-range-sync']
+    : [jobType]
+);
+
+const rangeForWarehouseJob = (job: { targetDate?: string | null; targetStartDate?: string | null }) => {
+  const endDate = isIsoDate(job.targetDate) ? job.targetDate : null;
+  if (!endDate) return null;
+  const startDate = isIsoDate(job.targetStartDate) ? job.targetStartDate : endDate;
+  return { endDate, startDate };
+};
+
+const requestedRangeCoveredByJob = (
+  job: { targetDate?: string | null; targetStartDate?: string | null },
+  requestedStartDate: string,
+  requestedEndDate: string,
+) => {
+  const range = rangeForWarehouseJob(job);
+  return Boolean(range && range.startDate <= requestedStartDate && range.endDate >= requestedEndDate);
+};
+
+const warehouseJobSupportsRequestedProperty = (jobType: string, requestedPropertyId: string | null, existingPropertyId: string | null) => {
+  if (jobType === 'daily-sync' || jobType === 'core-range-sync') {
+    return requestedPropertyId ? (existingPropertyId || '') === requestedPropertyId : true;
+  }
+  return (existingPropertyId || '') === (requestedPropertyId || '');
+};
+
+const warehouseJobStatusRank = (status: string) => {
+  switch (status) {
+    case 'running':
+      return 0;
+    case 'retrying':
+      return 1;
+    case 'queued':
+      return 2;
+    case 'completed':
+      return 3;
+    default:
+      return 4;
+  }
+};
+
+function pickCoveringWarehouseJob(
+  jobs: WarehouseJob[],
+  input: { jobType: string; propertyId: string | null; targetDate: string; targetStartDate: string },
+) {
+  return jobs
+    .filter((job) => compatibleWarehouseJobTypes(input.jobType).includes(job.jobType))
+    .filter((job) => requestedRangeCoveredByJob(job, input.targetStartDate, input.targetDate))
+    .filter((job) => warehouseJobSupportsRequestedProperty(input.jobType, input.propertyId, job.propertyId || null))
+    .sort((left, right) => {
+      const leftRange = rangeForWarehouseJob(left);
+      const rightRange = rangeForWarehouseJob(right);
+      const leftExact = leftRange?.startDate === input.targetStartDate && leftRange.endDate === input.targetDate ? 1 : 0;
+      const rightExact = rightRange?.startDate === input.targetStartDate && rightRange.endDate === input.targetDate ? 1 : 0;
+      if (leftExact !== rightExact) return rightExact - leftExact;
+      const statusRank = warehouseJobStatusRank(left.status) - warehouseJobStatusRank(right.status);
+      if (statusRank !== 0) return statusRank;
+      if ((leftRange?.startDate || '') !== (rightRange?.startDate || '')) {
+        return (leftRange?.startDate || '').localeCompare(rightRange?.startDate || '') * -1;
+      }
+      if ((leftRange?.endDate || '') !== (rightRange?.endDate || '')) {
+        return (leftRange?.endDate || '').localeCompare(rightRange?.endDate || '');
+      }
+      return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''));
+    })[0] || null;
+}
+
 export async function promoteWarehouseJobsForRange(db: AppDatabase, input: {
   endDate: string;
   jobTypes: string[];
@@ -953,10 +1024,25 @@ export async function queueWarehouseSyncJob(db: AppDatabase, input: { dedupeComp
   const dedupeStatuses = input.dedupeCompleted === false
     ? ['queued', 'retrying', 'running']
     : ['queued', 'retrying', 'running', 'completed'];
+  const compatibleJobTypes = compatibleWarehouseJobTypes(jobType);
+  const jobTypePlaceholders = compatibleJobTypes.map(() => '?').join(', ');
   const statusPlaceholders = dedupeStatuses.map(() => '?').join(', ');
-  const existing = propertyId
-    ? await db.get<WarehouseJob>(`SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND COALESCE(propertyId, '') = ? AND jobType = ? AND status IN (${statusPlaceholders}) LIMIT 1`, [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, propertyId, jobType, ...dedupeStatuses])
-    : await db.get<WarehouseJob>(`SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetDate = ? AND COALESCE(targetStartDate, targetDate) = ? AND jobType = ? AND status IN (${statusPlaceholders}) LIMIT 1`, [input.ownerId, input.siteUrl, input.targetDate, targetStartDate, jobType, ...dedupeStatuses]);
+  const candidates = await db.all<WarehouseJob>(
+    `SELECT *
+     FROM warehouse_jobs
+     WHERE ownerId = ? AND siteUrl = ?
+       AND jobType IN (${jobTypePlaceholders})
+       AND status IN (${statusPlaceholders})
+       AND targetDate >= ?
+       AND COALESCE(targetStartDate, targetDate) <= ?`,
+    [input.ownerId, input.siteUrl, ...compatibleJobTypes, ...dedupeStatuses, input.targetDate, targetStartDate],
+  );
+  const existing = pickCoveringWarehouseJob(candidates, {
+    jobType,
+    propertyId,
+    targetDate: input.targetDate,
+    targetStartDate,
+  });
   if (existing) {
     const existingPriority = Number(existing.priority || 0);
     if (priority > existingPriority && ['queued', 'retrying', 'running'].includes(existing.status)) {
@@ -1500,6 +1586,65 @@ function latestStableReportingDate() {
   return date.toISOString().slice(0, 10);
 }
 
+export async function runWarehouseDailySchedulerTick(db: AppDatabase) {
+  const targetDate = latestStableReportingDate();
+  const users = await db.all<any>(`
+    SELECT id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites
+    FROM users
+    WHERE gscRefreshToken IS NOT NULL AND gscRefreshToken != ''
+  `);
+
+  for (const user of users) {
+    const sites = new Set<string>();
+    const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
+    if (activeSiteUrl) {
+      sites.add(activeSiteUrl);
+    }
+    for (const site of parseStringArray(user.unlockedSites)) {
+      sites.add(site.trim());
+    }
+    for (const site of parseStringArray(user.knownSites)) {
+      sites.add(site.trim());
+    }
+
+    for (const siteUrl of sites) {
+      if (!(await canAccessSite(db, user.id, siteUrl))) {
+        continue;
+      }
+      const mappedPropertyId = await resolveWorkspaceGa4Property(db, user.id, siteUrl);
+      const activePropertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
+      const propertyId = mappedPropertyId || (siteUrl === activeSiteUrl && activePropertyId ? activePropertyId : null);
+      await queueWarehouseBootstrapJobs(db, {
+        ownerId: user.id,
+        propertyId,
+        siteUrl,
+      });
+      await queueWarehouseSyncJob(db, {
+        ownerId: user.id,
+        propertyId,
+        siteUrl,
+        targetDate,
+      });
+      if (propertyId) {
+        await queueWarehouseGa4DimensionRangeJob(db, {
+          endDate: targetDate,
+          ownerId: user.id,
+          propertyId,
+          siteUrl,
+          startDate: targetDate,
+        });
+        await queueWarehouseLlmRangeJob(db, {
+          endDate: targetDate,
+          ownerId: user.id,
+          propertyId,
+          siteUrl,
+          startDate: targetDate,
+        });
+      }
+    }
+  }
+}
+
 export function startWarehouseDailyScheduler(db: AppDatabase) {
   let stopped = false;
   let running = false;
@@ -1508,62 +1653,7 @@ export function startWarehouseDailyScheduler(db: AppDatabase) {
     if (stopped || running) return;
     running = true;
     try {
-      const targetDate = latestStableReportingDate();
-      const users = await db.all<any>(`
-        SELECT id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites
-        FROM users
-        WHERE gscRefreshToken IS NOT NULL AND gscRefreshToken != ''
-      `);
-
-      for (const user of users) {
-        const sites = new Set<string>();
-        const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
-        if (activeSiteUrl) {
-          sites.add(activeSiteUrl);
-        }
-        for (const site of parseStringArray(user.unlockedSites)) {
-          sites.add(site.trim());
-        }
-        for (const site of parseStringArray(user.knownSites)) {
-          sites.add(site.trim());
-        }
-
-        for (const siteUrl of sites) {
-          if (!(await canAccessSite(db, user.id, siteUrl))) {
-            continue;
-          }
-          const mappedPropertyId = await resolveWorkspaceGa4Property(db, user.id, siteUrl);
-          const activePropertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
-          const propertyId = mappedPropertyId || (siteUrl === activeSiteUrl && activePropertyId ? activePropertyId : null);
-          await queueWarehouseBootstrapJobs(db, {
-            ownerId: user.id,
-            propertyId,
-            siteUrl,
-          });
-          await queueWarehouseSyncJob(db, {
-            ownerId: user.id,
-            propertyId,
-            siteUrl,
-            targetDate,
-          });
-          if (propertyId) {
-            await queueWarehouseGa4DimensionRangeJob(db, {
-              endDate: targetDate,
-              ownerId: user.id,
-              propertyId,
-              siteUrl,
-              startDate: targetDate,
-            });
-            await queueWarehouseLlmRangeJob(db, {
-              endDate: targetDate,
-              ownerId: user.id,
-              propertyId,
-              siteUrl,
-              startDate: targetDate,
-            });
-          }
-        }
-      }
+      await runWarehouseDailySchedulerTick(db);
     } catch (error) {
       console.error('[warehouse] Daily scheduler failed:', error);
     } finally {

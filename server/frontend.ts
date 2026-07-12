@@ -5,13 +5,12 @@ import fs from 'fs';
 export async function attachFrontend(app: express.Express) {
   const distPath = path.join(process.cwd(), 'dist');
   const hasBuiltClient = fs.existsSync(path.join(distPath, 'index.html'));
-  const isNpmDevServer = process.env.npm_lifecycle_event === 'dev';
   const useViteMiddleware =
     process.env.USE_VITE_MIDDLEWARE === 'true' ||
     (
       process.env.NODE_ENV !== 'production' &&
       process.env.USE_VITE_MIDDLEWARE !== 'false' &&
-      (isNpmDevServer || !hasBuiltClient)
+      !hasBuiltClient
     );
 
   if (process.env.NODE_ENV === 'production' && !hasBuiltClient) {

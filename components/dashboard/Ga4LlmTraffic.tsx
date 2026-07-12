@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { authFetch } from "@/src/lib/authFetch"
 import { format, parseISO } from "date-fns"
 import { ArrowDownIcon, ArrowUpIcon, Database, Download, Loader2 } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
+import { Ga4ApiService, Ga4LlmWarehouseReportResponse, Ga4WarehouseCoverage } from "@/src/services/ga4Service"
 
 import { DateRange } from "react-day-picker"
 
@@ -56,13 +56,13 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
 
 export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSiteUrl, dateRange, isCompareMode, compareDateRange, refreshKey = 0 }: Ga4LlmTrafficProps) {
   const { userProfile } = useAuth()
-  const [data, setData] = useState<any>(null)
-  const [compareData, setCompareData] = useState<any>(null)
+  const [data, setData] = useState<Ga4LlmWarehouseReportResponse | null>(null)
+  const [compareData, setCompareData] = useState<Ga4LlmWarehouseReportResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pollKey, setPollKey] = useState(0)
-  const [coverage, setCoverage] = useState<any>(null)
+  const [coverage, setCoverage] = useState<Ga4WarehouseCoverage | null>(null)
 
   useEffect(() => {
     const propertyId = siteUrl?.startsWith("properties/") ? siteUrl : userProfile?.activatedGa4PropertyId
@@ -79,28 +79,6 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
     let isMounted = true
     let pollTimer: number | null = null
     const controller = new AbortController()
-
-    const fetchReport = async (startDate: string, endDate: string) => {
-      const response = await authFetch("/api/warehouse/ga4/llm/report", {
-        method: "POST",
-        signal: controller.signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          autoQueue: true,
-          endDate,
-          propertyId,
-          siteUrl: workspaceSiteUrl,
-          startDate,
-        }),
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok) {
-        const message = String(payload?.error || "Failed to load stored LLM referral report");
-        throw new Error(message.includes("warehouse") ? "Analytics data is still updating for this LLM referral report." : message)
-      }
-      return payload
-    }
-
     const fetchData = async () => {
       const hasExistingReport = Boolean(data)
       if (isMounted) {
@@ -109,15 +87,16 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
         setRefreshing(hasExistingReport)
       }
       try {
+        const ga4Service = new Ga4ApiService()
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
-        const reports = [fetchReport(startDate, endDate)]
+        const reports = [ga4Service.getLlmTrafficReport(propertyId, startDate, endDate, { signal: controller.signal, siteUrl: workspaceSiteUrl })]
         let compareReport = null
 
         if (isCompareMode && compareDateRange.from && compareDateRange.to) {
           const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
           const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
-          reports.push(fetchReport(compareStartDate, compareEndDate))
+          reports.push(ga4Service.getLlmTrafficReport(propertyId, compareStartDate, compareEndDate, { signal: controller.signal, siteUrl: workspaceSiteUrl }))
         }
 
         const [primaryReport, loadedCompareReport] = await Promise.all(reports)
@@ -143,7 +122,17 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
         }
       } catch (err: any) {
         if (!isMounted || err?.name === "AbortError") return
-        if (isMounted) setError(err.message)
+        if (isMounted) {
+          if (err.message === "UNAUTHORIZED") {
+            setError("Your session expired. Sign in again to load stored Analytics data.")
+          } else if (err.message === "Failed to fetch") {
+            setError("Network error: Unable to load the stored LLM traffic report right now.")
+          } else if (/warehouse/i.test(err.message)) {
+            setError("Analytics data is still updating for this LLM referral report.")
+          } else {
+            setError(err.message)
+          }
+        }
       } finally {
         if (isMounted) {
           setLoading(false)

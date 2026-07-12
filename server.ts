@@ -5,6 +5,7 @@ import { buildApp, type SyncJobState } from './server/app.js';
 import { validateRuntimeConfig } from './server/config.js';
 import { initializeDatabase } from './server/database.js';
 import { attachFrontend } from './server/frontend.js';
+import { configuredRuntimeRole } from './server/runtimeRoles.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -22,8 +23,12 @@ const getSyncJobKey = (ownerId: string, siteUrl: string) => `${ownerId}:${siteUr
 
 async function startServer() {
   const PORT = Number(process.env.PORT || 3000);
+  const role = configuredRuntimeRole();
+  if (role !== 'all' && role !== 'web') {
+    throw new Error('The HTTP entrypoint supports APP_PROCESS_ROLE=web or all. Use worker.ts for dedicated worker roles.');
+  }
   const db = await initializeDatabase();
-  const startWorkers = process.env.START_BACKGROUND_WORKERS !== 'false';
+  const startWorkers = role === 'all' && process.env.START_BACKGROUND_WORKERS !== 'false';
   const app = buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers });
   await attachFrontend(app);
 

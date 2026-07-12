@@ -1,4 +1,5 @@
 import { authFetch } from "@/src/lib/authFetch";
+import type { QueueMetadata } from "@/src/services/queueMetadata";
 
 export type CrawlJob = {
   attemptCount: number | null;
@@ -68,6 +69,8 @@ export type CrawlPageRow = {
 };
 
 export type CrawlLinkRow = {
+  anchorText: string | null;
+  contextText: string | null;
   depth: number;
   discoveredAt: string | null;
   fromPageKey: string;
@@ -78,6 +81,7 @@ export type CrawlLinkRow = {
 };
 
 export type CrawlPagesResponse = {
+  queue: QueueMetadata;
   job: CrawlJob | null;
   page: {
     limit: number;
@@ -89,6 +93,7 @@ export type CrawlPagesResponse = {
 };
 
 export type CrawlLinksResponse = {
+  queue: QueueMetadata;
   job: CrawlJob | null;
   page: {
     limit: number;
@@ -99,11 +104,13 @@ export type CrawlLinksResponse = {
 };
 
 export type CrawlStatusResponse = {
+  queue: QueueMetadata;
   job: CrawlJob | null;
   summary: CrawlSummary | null;
 };
 
 export type CrawlJobsResponse = {
+  queue: QueueMetadata;
   jobs: CrawlJob[];
 };
 
@@ -164,7 +171,7 @@ export async function startCrawl(params: StartCrawlParams) {
     throw new Error(data?.error || "Failed to start crawl");
   }
 
-  return data as { job: CrawlJob; startUrl: string; success: true };
+  return data as { alreadyRunning?: boolean; job: CrawlJob; queue: QueueMetadata; startUrl: string; success: true };
 }
 
 export async function fetchCrawlStatus(siteUrl: string, jobId?: string | null) {
@@ -179,6 +186,7 @@ export async function fetchCrawlStatus(siteUrl: string, jobId?: string | null) {
   }
   return {
     job: data?.job ?? null,
+    queue: data?.queue,
     summary: data?.summary ?? null,
   } satisfies CrawlStatusResponse;
 }
@@ -195,6 +203,7 @@ export async function fetchCrawlJobs(siteUrl: string, limit = 20) {
   }
   return {
     jobs: Array.isArray(data?.jobs) ? data.jobs : [],
+    queue: data?.queue,
   } satisfies CrawlJobsResponse;
 }
 
@@ -232,6 +241,7 @@ export async function fetchCrawlPages(params: {
   return {
     job: data?.job ?? null,
     page: data?.page ?? { limit: params.limit ?? 50, offset: params.offset ?? 0, total: 0 },
+    queue: data?.queue,
     rows: Array.isArray(data?.rows) ? data.rows : [],
     summary: data?.summary ?? null,
   } satisfies CrawlPagesResponse;
@@ -262,6 +272,7 @@ export async function fetchCrawlLinks(params: {
   return {
     job: data?.job ?? null,
     page: data?.page ?? { limit: params.limit ?? 100, offset: params.offset ?? 0, total: 0 },
+    queue: data?.queue,
     rows: Array.isArray(data?.rows) ? data.rows : [],
   } satisfies CrawlLinksResponse;
 }
@@ -296,5 +307,5 @@ export async function cancelCrawl(params: { jobId: string; siteUrl: string }) {
     throw new Error(data?.error || "Failed to cancel crawl");
   }
 
-  return data as { job: CrawlJob; success: true };
+  return data as { job: CrawlJob; queue: QueueMetadata; success: true };
 }
