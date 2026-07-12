@@ -1603,6 +1603,9 @@ function applySqliteMigrations(db: Database.Database) {
 }
 
 async function applyOptionalPostgresVectorMigrations(db: AppDatabase) {
+  const savepoint = 'optional_pgvector_migration';
+  await db.exec(`SAVEPOINT ${savepoint}`);
+
   try {
     await db.exec('CREATE EXTENSION IF NOT EXISTS vector');
     await db.exec(`
@@ -1625,7 +1628,10 @@ async function applyOptionalPostgresVectorMigrations(db: AppDatabase) {
       CREATE INDEX IF NOT EXISTS idx_internal_link_embedding_vectors_1024_model
         ON internal_link_embedding_vectors_1024(provider, model, inputType, lastUsedAt);
     `);
+    await db.exec(`RELEASE SAVEPOINT ${savepoint}`);
   } catch (error: any) {
+    await db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    await db.exec(`RELEASE SAVEPOINT ${savepoint}`);
     console.warn('[db] pgvector extension unavailable; using JSON embedding cache only.', error?.message || error);
   }
 }

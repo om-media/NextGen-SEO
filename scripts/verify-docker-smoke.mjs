@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 
 const composeFile = 'docker-compose.prod-smoke.yml';
-const composeUpArgs = ['compose', '-f', composeFile, 'up', '--build', '--wait', '--wait-timeout', '180'];
-const composeDownArgs = ['compose', '-f', composeFile, 'down', '-v'];
+const composeProjectArgs = ['compose', '--project-name', 'gscplus-prod-smoke', '-f', composeFile];
+const composeUpArgs = [...composeProjectArgs, 'up', '--build', '--wait', '--wait-timeout', '180'];
+const composeDownArgs = [...composeProjectArgs, 'down', '-v'];
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -47,6 +48,14 @@ async function cleanupCompose() {
   await run('docker', composeDownArgs);
 }
 
+async function printComposeLogs() {
+  try {
+    await run('docker', [...composeProjectArgs, 'logs', '--no-color', '--tail', '250']);
+  } catch (error) {
+    console.error(`Docker compose log collection failed: ${error.message}`);
+  }
+}
+
 async function runComposeUpWithRetry(maxAttempts = 3) {
   let lastError;
 
@@ -82,6 +91,7 @@ try {
   await run('node', ['scripts/verify-production-url.mjs', 'http://127.0.0.1:3010']);
 } catch (error) {
   failure = error;
+  await printComposeLogs();
 } finally {
   try {
     await cleanupCompose();
