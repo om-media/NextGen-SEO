@@ -280,6 +280,18 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           }
           if (!existing.page || existing.page === pageKey) existing.page = url || pageKey;
           rowsByKey.set(pageKey, existing);
+
+          const rawAnalyticsRow = rawPageKey !== pageKey ? rowsByKey.get(rawPageKey) : null;
+          if (rawAnalyticsRow && rawAnalyticsRow !== existing) {
+            rawAnalyticsRow.crawl = {
+              ...crawl,
+              canonicalizedVariantCount: 1,
+            };
+            if (!rawAnalyticsRow.page || rawAnalyticsRow.page === rawPageKey) {
+              rawAnalyticsRow.page = url || rawPageKey;
+            }
+            rowsByKey.set(rawPageKey, rawAnalyticsRow);
+          }
         }
       }
 

@@ -4,10 +4,41 @@ import path from 'path';
 
 import { initializeDatabase } from '../server/database.js';
 import { resolvedCanonicalPageKey } from '../server/reporting/url.js';
+import { registerBlendedRoutes } from '../server/routes/blended.js';
+import { registerReconciliationRoutes } from '../server/routes/reconciliation.js';
 import { __crawlQueueTestUtils, getCrawlPages } from '../server/services/crawl.js';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+type RouteHandler = (req: any, res: any) => Promise<unknown> | unknown;
+
+class FakeApp {
+  routes = new Map<string, RouteHandler[]>();
+
+  get(pathname: string, ...handlers: RouteHandler[]) {
+    this.routes.set(`GET:${pathname}`, handlers);
+  }
+
+  post(pathname: string, ...handlers: RouteHandler[]) {
+    this.routes.set(`POST:${pathname}`, handlers);
+  }
+}
+
+class FakeResponse {
+  body: any = null;
+  statusCode = 200;
+
+  status(code: number) {
+    this.statusCode = code;
+    return this;
+  }
+
+  json(body: any) {
+    this.body = body;
+    return this;
+  }
 }
 
 async function main() {
@@ -35,7 +66,20 @@ async function main() {
       await db.run('DELETE FROM crawl_links WHERE ownerId = ?', [ownerId]);
       await db.run('DELETE FROM crawl_pages WHERE ownerId = ?', [ownerId]);
       await db.run('DELETE FROM crawl_jobs WHERE ownerId = ?', [ownerId]);
+      await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ?', [ownerId]);
+      await db.run('DELETE FROM users WHERE id = ?', [ownerId]);
     }
+
+    await db.run(
+      `INSERT INTO users (id, email, tier, unlockedSites, knownSites, activatedSiteUrl, createdAt)
+       VALUES (?, ?, 'enterprise', ?, ?, ?, ?)`,
+      [ownerId, 'crawl-canonical@example.com', JSON.stringify([siteUrl]), JSON.stringify([siteUrl]), siteUrl, now],
+    );
+    await db.run(
+      `INSERT INTO gsc_page_query_metrics (ownerId, siteUrl, date, page, pageKey, query, clicks, impressions, ctr, position)
+       VALUES (?, ?, '2026-07-10', 'https://example.com/plans/', '/plans', 'plans', 1, 10, 0.1, 3)`,
+      [ownerId, siteUrl],
+    );
 
     await db.run(
       `INSERT INTO crawl_jobs (
@@ -99,12 +143,61 @@ async function main() {
       'External canonicals must not collapse into the workspace canonical cluster.',
     );
 
+    const app = new FakeApp();
+    registerReconciliationRoutes(app as any, db);
+    const reconciliationHandler = app.routes.get('GET:/api/reconciliation/pages')?.at(-1);
+    assert(reconciliationHandler, 'Expected the reconciliation route handler.');
+    const reconciliationResponse = new FakeResponse();
+    await reconciliationHandler(
+      {
+        authUser: { uid: ownerId },
+        query: {
+          endDate: '2026-07-10',
+          limit: '100',
+          offset: '0',
+          siteUrl,
+          startDate: '2026-07-10',
+          status: 'all',
+        },
+      },
+      reconciliationResponse,
+    );
+    assert(reconciliationResponse.statusCode === 200, 'Expected reconciliation request to succeed.');
+    const canonicalAliasRow = reconciliationResponse.body?.rows?.find((row: any) => row.pageKey === '/plans');
+    assert(canonicalAliasRow, 'Expected the canonical alias analytics row in reconciliation.');
+    assert(canonicalAliasRow.sources?.crawl === 'present', 'Crawled canonical aliases must remain present.');
+    assert(!canonicalAliasRow.flags?.includes('missing_in_crawl'), 'Canonical aliases must not be marked missing from crawl.');
+
+
+    registerBlendedRoutes(app as any, db);
+    const blendedHandler = app.routes.get('POST:/api/blended/page-performance')?.at(-1);
+    assert(blendedHandler, 'Expected the blended page-performance route handler.');
+    const blendedResponse = new FakeResponse();
+    await blendedHandler(
+      {
+        authUser: { uid: ownerId },
+        body: {
+          endDate: '2026-07-10',
+          limit: 100,
+          offset: 0,
+          siteUrl,
+          startDate: '2026-07-10',
+        },
+      },
+      blendedResponse,
+    );
+    assert(blendedResponse.statusCode === 200, 'Expected blended page-performance request to succeed.');
+    const blendedAliasRow = blendedResponse.body?.rows?.find((row: any) => row.pageKey === '/plans');
+    assert(blendedAliasRow?.crawl, 'Blended analytics rows must retain their matching canonical-alias crawl data.');
+    assert(blendedAliasRow.crawl.pageKey === '/plans', 'Blended canonical-alias crawl data must retain its raw page key.');
     console.log('Crawl canonical orphan checks passed.');
   } finally {
     if (usePostgres) {
       await db.run('DELETE FROM crawl_links WHERE ownerId = ?', [ownerId]);
       await db.run('DELETE FROM crawl_pages WHERE ownerId = ?', [ownerId]);
       await db.run('DELETE FROM crawl_jobs WHERE ownerId = ?', [ownerId]);
+      await db.run('DELETE FROM gsc_page_query_metrics WHERE ownerId = ?', [ownerId]);
+      await db.run('DELETE FROM users WHERE id = ?', [ownerId]);
     }
     await db.close();
     process.chdir(originalCwd);

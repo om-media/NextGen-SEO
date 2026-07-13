@@ -508,6 +508,16 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
           target.crawl.canonicalizedVariantCount = canonicalizedVariantCount;
         }
         if (!target.gsc && !target.ga4) target.representativeUrl = url || target.representativeUrl;
+
+        const rawAnalyticsRow = rawPageKey !== pageKey ? rowsByKey.get(rawPageKey) : null;
+        if (rawAnalyticsRow && rawAnalyticsRow !== target) {
+          rawAnalyticsRow.crawl = {
+            ...crawl,
+            canonicalizedVariantCount: 1,
+          };
+          rawAnalyticsRow.representativeUrl = url || rawAnalyticsRow.representativeUrl;
+          rowsByKey.set(rawPageKey, rawAnalyticsRow);
+        }
       }
 
       const reconciledRows = Array.from(rowsByKey.values())
