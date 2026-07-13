@@ -1461,11 +1461,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ORDER BY COALESCE(completedAt, updatedAt, startedAt) DESC
           LIMIT 1
         `, [ownerId, siteUrl]),
-        db.all<{ jobType: string; propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null; metricsJson: string | null }>(`
-          SELECT jobType, propertyId, status, targetStartDate, targetDate, metricsJson
+        db.all<{ jobType: string; lastError: string | null; metricsJson: string | null; propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null; updatedAt: string | null }>(`
+          SELECT jobType, lastError, metricsJson, propertyId, status, targetStartDate, targetDate, updatedAt
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
             AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
+          ORDER BY updatedAt DESC
         `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
         getBingCacheStatus(db, ownerId, siteUrl),
         db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [ownerId]),
@@ -1516,6 +1517,30 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         }
         return dates.some((date) => missingCoreDates.has(date));
       });
+      const coreActiveJobs = relevantActiveJobs.filter((job) => ['daily-sync', 'core-range-sync'].includes(job.jobType));
+      const sourceActiveSummary = (source: 'gsc' | 'ga4-pages') => coreActiveJobs.reduce((counts, job) => {
+        if (source === 'ga4-pages' && (!effectivePropertyId || (job.propertyId && job.propertyId !== effectivePropertyId))) return counts;
+        counts[job.status] = (counts[job.status] || 0) + 1;
+        return counts;
+      }, {} as Record<string, number>);
+      const failedSource = (job: typeof relevantErrorJobs[number]) => {
+        const metrics = parseWarehouseJobMetrics(job.metricsJson);
+        const source = typeof metrics?.failedSource === 'string' ? metrics.failedSource : '';
+        if (['gsc', 'ga4-pages', 'ga4-dimensions', 'ga4-llm'].includes(source)) return source;
+        return ['daily-sync', 'core-range-sync'].includes(job.jobType) ? 'core' : source;
+      };
+      const sourceErrorSummary = (source: 'gsc' | 'ga4-pages' | 'core') => {
+        const jobs = relevantErrorJobs.filter((job) => failedSource(job) === source);
+        return {
+          error: jobs.length,
+          lastError: jobs.find((job) => job.lastError)?.lastError || null,
+        };
+      };
+      const gscActiveSummary = sourceActiveSummary('gsc');
+      const ga4PageActiveSummary = sourceActiveSummary('ga4-pages');
+      const gscErrorSummary = sourceErrorSummary('gsc');
+      const ga4PageErrorSummary = sourceErrorSummary('ga4-pages');
+      const coreErrorSummary = sourceErrorSummary('core');
       const activeDates = new Set<string>();
       addJobDatesToSet(activeDates, relevantActiveJobs, effectiveStartDate, effectiveEndDate);
       for (const date of [...activeDates]) {
@@ -1729,6 +1754,23 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           isFresh: Boolean(bingStatus.isFresh),
           latestFetchedAt: bingStatus.latestFetchedAt,
           rowCount: toCoverageNumber(bingStatus.rowCount),
+        },
+        sourceJobs: {
+          core: coreErrorSummary,
+          ga4Pages: {
+            error: ga4PageErrorSummary.error,
+            lastError: ga4PageErrorSummary.lastError,
+            queued: ga4PageActiveSummary.queued || 0,
+            retrying: ga4PageActiveSummary.retrying || 0,
+            running: ga4PageActiveSummary.running || 0,
+          },
+          gsc: {
+            error: gscErrorSummary.error,
+            lastError: gscErrorSummary.lastError,
+            queued: gscActiveSummary.queued || 0,
+            retrying: gscActiveSummary.retrying || 0,
+            running: gscActiveSummary.running || 0,
+          },
         },
         warehouseJobs: {
           activeDateCount: activeDates.size,

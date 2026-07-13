@@ -15,6 +15,7 @@ import { fetchCrawlLinks, type CrawlLinkRow } from "@/src/services/crawlService"
 import {
   fetchDataCoverage,
   queueMissingCoverageSync,
+  retryFailedCoverageSync,
   type CoverageDataset,
   type DataCoverageResponse,
 } from "@/src/services/dataCoverageService";
@@ -428,12 +429,14 @@ function getCoverageClasses(percent: number, disabled = false) {
 function DatasetCoverageCard({
   dataset,
   disabledLabel,
+  errorMessage,
   icon,
   label,
   title,
 }: {
   dataset?: CoverageDataset | null;
   disabledLabel?: string;
+  errorMessage?: string | null;
   icon: ReactNode;
   label: string;
   title: string;
@@ -446,7 +449,7 @@ function DatasetCoverageCard({
   const missingCount = dataset?.missingDateCount ?? 0;
 
   return (
-    <div className="min-h-[188px] rounded-2xl border border-[#E6ECE8] bg-white p-4">
+    <div className={`min-h-[188px] rounded-2xl border bg-white p-4 ${errorMessage ? "border-red-200" : "border-[#E6ECE8]"}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#647067]">{label}</p>
@@ -474,6 +477,11 @@ function DatasetCoverageCard({
       <p className="mt-3 text-xs text-[#647067]">
         Latest {formatCoverageDate(dataset?.lastCoveredDate)}
       </p>
+      {errorMessage && (
+        <p className="mt-2 line-clamp-2 text-xs font-medium text-red-700" title={errorMessage}>
+          Import failed: {errorMessage}
+        </p>
+      )}
     </div>
   );
 }
@@ -853,10 +861,22 @@ export function BlendedPagesView({
   const sourceMissingDateCount = coverageDatasets.length > 0
     ? Math.max(...coverageDatasets.map((dataset) => dataset.missingDateCount))
     : 0;
-  const sourceActiveJobCount = Number(coverage?.warehouseJobs.queued || 0)
-    + Number(coverage?.warehouseJobs.retrying || 0)
-    + Number(coverage?.warehouseJobs.running || 0);
-  const sourceFailedJobCount = Number(coverage?.warehouseJobs.error || 0);
+  const gscJobState = coverage?.sourceJobs?.gsc;
+  const ga4PageJobState = coverage?.sourceJobs?.ga4Pages;
+  const coreJobState = coverage?.sourceJobs?.core;
+  const sourceJobsAvailable = Boolean(coverage?.sourceJobs);
+  const gscQueuedJobCount = Number(gscJobState?.queued || 0) + Number(gscJobState?.retrying || 0);
+  const ga4QueuedJobCount = Number(ga4PageJobState?.queued || 0) + Number(ga4PageJobState?.retrying || 0);
+  const sourceQueuedJobCount = sourceJobsAvailable
+    ? Math.max(gscQueuedJobCount, ga4QueuedJobCount)
+    : Number(coverage?.warehouseJobs.queued || 0) + Number(coverage?.warehouseJobs.retrying || 0);
+  const sourceRunningJobCount = sourceJobsAvailable
+    ? Math.max(Number(gscJobState?.running || 0), Number(ga4PageJobState?.running || 0))
+    : Number(coverage?.warehouseJobs.running || 0);
+  const sourceActiveJobCount = sourceQueuedJobCount + sourceRunningJobCount;
+  const sourceFailedJobCount = sourceJobsAvailable
+    ? Number(gscJobState?.error || 0) + Number(ga4PageJobState?.error || 0) + Number(coreJobState?.error || 0)
+    : Number(coverage?.warehouseJobs.error || 0);
   const sourceRangeReady = Boolean(coverage && sourceMissingDateCount === 0 && sourceFailedJobCount === 0);
 
   const totals = useMemo(() => {
@@ -1009,6 +1029,14 @@ export function BlendedPagesView({
     setCoverageSyncing(true);
     setCoverageError(null);
     try {
+      if (sourceFailedJobCount > 0) {
+        await retryFailedCoverageSync({
+          endDate: dateStrings.endDate,
+          maxJobs: 25,
+          siteUrl,
+          startDate: dateStrings.startDate,
+        });
+      }
       await queueMissingCoverageSync({
         endDate: dateStrings.endDate,
         maxDates: 720,
@@ -1121,7 +1149,9 @@ export function BlendedPagesView({
                 ? "Preparing"
                 : sourceRangeReady
                   ? "Range ready"
-                  : "Prepare now"}
+                  : sourceFailedJobCount > 0
+                    ? "Retry imports"
+                    : "Prepare now"}
           </Button>
         </div>
 
@@ -1131,9 +1161,16 @@ export function BlendedPagesView({
           </div>
         )}
 
+        {coreJobState?.lastError && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-sm text-amber-800">
+            Combined source import failed: {coreJobState.lastError}
+          </div>
+        )}
+
         <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
           <DatasetCoverageCard
             dataset={coverage?.gsc.site}
+            errorMessage={gscJobState?.lastError}
             disabledLabel={coverageLoading && !coverage ? "Loading" : undefined}
             icon={coverageLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
             label="GSC"
@@ -1141,6 +1178,7 @@ export function BlendedPagesView({
           />
           <DatasetCoverageCard
             dataset={coverage?.gsc.pageQuery}
+            errorMessage={gscJobState?.lastError}
             disabledLabel={coverageLoading && !coverage ? "Loading" : undefined}
             icon={<Search className="h-4 w-4" />}
             label="GSC"
@@ -1148,6 +1186,7 @@ export function BlendedPagesView({
           />
           <DatasetCoverageCard
             dataset={coverage?.ga4.pages}
+            errorMessage={ga4PageJobState?.lastError}
             disabledLabel={coverageLoading && !coverage ? "Loading" : !ga4PropertyId ? "Not configured" : undefined}
             icon={<BarChart3 className="h-4 w-4" />}
             label="GA4"
@@ -1163,13 +1202,13 @@ export function BlendedPagesView({
             Import jobs {formatNumber(coverage?.warehouseJobs.total ?? 0)}
           </span>
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            Queued {formatNumber((coverage?.warehouseJobs.queued ?? 0) + (coverage?.warehouseJobs.retrying ?? 0))}
+            Queued {formatNumber(sourceQueuedJobCount)}
           </span>
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            Running {formatNumber(coverage?.warehouseJobs.running ?? 0)}
+            Running {formatNumber(sourceRunningJobCount)}
           </span>
           <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">
-            Failed {formatNumber(coverage?.warehouseJobs.error ?? 0)}
+            Failed {formatNumber(sourceFailedJobCount)}
           </span>
           {sourceMeta && (
             <span className="rounded-full border border-[#E6ECE8] bg-white px-3 py-1.5">

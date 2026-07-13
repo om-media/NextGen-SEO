@@ -11,6 +11,14 @@ export type CoverageDataset = {
   totalRows: number;
 };
 
+export type WarehouseSourceJobState = {
+  error: number;
+  lastError: string | null;
+  queued?: number;
+  retrying?: number;
+  running?: number;
+};
+
 export type DataCoverageResponse = {
   bing: {
     enabled: boolean;
@@ -57,6 +65,11 @@ export type DataCoverageResponse = {
     site: CoverageDataset;
   };
   siteUrl: string;
+  sourceJobs?: {
+    core: WarehouseSourceJobState;
+    ga4Pages: WarehouseSourceJobState;
+    gsc: WarehouseSourceJobState;
+  };
   warehouseJobs: {
     activeDateCount: number;
     completed: number;

@@ -56,6 +56,32 @@ function combineSyncResults(results: WarehouseSyncResult[], metrics?: Record<str
   };
 }
 
+type WarehouseSyncSource = 'core' | 'gsc' | 'ga4-pages' | 'ga4-dimensions' | 'ga4-llm';
+
+class WarehouseSyncPhaseError extends Error {
+  readonly syncSource: WarehouseSyncSource;
+
+  constructor(syncSource: WarehouseSyncSource, cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Warehouse sync failed', { cause });
+    this.name = 'WarehouseSyncPhaseError';
+    this.syncSource = syncSource;
+  }
+}
+
+async function runWarehouseSyncPhase<T>(syncSource: WarehouseSyncSource, action: () => Promise<T>) {
+  try {
+    return await action();
+  } catch (error) {
+    throw new WarehouseSyncPhaseError(syncSource, error);
+  }
+}
+
+function failedSourceForJob(job: WarehouseJob, error: unknown): WarehouseSyncSource {
+  if (error instanceof WarehouseSyncPhaseError) return error.syncSource;
+  if (job.jobType === 'ga4-dimension-range-sync') return 'ga4-dimensions';
+  if (job.jobType === 'ga4-llm-range-sync' || job.jobType === 'ga4-llm-sync') return 'ga4-llm';
+  return 'core';
+}
 const prepareWarehouseStatement = (db: AppDatabase, sql: string) => (db.dialect === 'sqlite' ? db.prepare(sql) : null);
 
 async function runWarehouseStatement(db: AppDatabase, statement: any, sql: string, params: unknown[]) {
@@ -748,11 +774,11 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
   const propertyId = await resolveActiveGa4PropertyForSite(db, job);
   const scopedJob = propertyId === job.propertyId ? job : { ...job, propertyId };
   if (job.jobType === 'ga4-llm-range-sync') {
-    syncResult = propertyId ? await syncGa4LlmRange(db, scopedJob, jobStartDate, jobEndDate) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    syncResult = propertyId ? await runWarehouseSyncPhase('ga4-llm', () => syncGa4LlmRange(db, scopedJob, jobStartDate, jobEndDate)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
   } else if (job.jobType === 'ga4-dimension-range-sync') {
-    syncResult = propertyId ? await syncGa4DimensionRange(db, scopedJob, jobStartDate, jobEndDate) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    syncResult = propertyId ? await runWarehouseSyncPhase('ga4-dimensions', () => syncGa4DimensionRange(db, scopedJob, jobStartDate, jobEndDate)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
   } else if (job.jobType === 'ga4-llm-sync') {
-    syncResult = propertyId ? await syncGa4LlmDate(db, scopedJob) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    syncResult = propertyId ? await runWarehouseSyncPhase('ga4-llm', () => syncGa4LlmDate(db, scopedJob)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
   } else if (job.jobType === 'core-range-sync') {
     const importStartDate = maxIsoDate(jobStartDate, earliestSearchConsoleReportingDate());
     if (importStartDate > jobEndDate) {
@@ -795,8 +821,8 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
       });
       return;
     }
-    const gscResult = await syncGscRange(db, job, importStartDate, jobEndDate);
-    const ga4Result = propertyId ? await syncGa4PageRange(db, scopedJob, importStartDate, jobEndDate) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    const gscResult = await runWarehouseSyncPhase('gsc', () => syncGscRange(db, job, importStartDate, jobEndDate));
+    const ga4Result = propertyId ? await runWarehouseSyncPhase('ga4-pages', () => syncGa4PageRange(db, scopedJob, importStartDate, jobEndDate)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
     syncResult = combineSyncResults([gscResult, ga4Result], {
       phases: {
         ga4Pages: {
@@ -828,8 +854,8 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
     });
     return;
   } else {
-    const gscResult = await syncGscDate(db, job);
-    const ga4Result = propertyId ? await syncGa4Date(db, scopedJob) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    const gscResult = await runWarehouseSyncPhase('gsc', () => syncGscDate(db, job));
+    const ga4Result = propertyId ? await runWarehouseSyncPhase('ga4-pages', () => syncGa4Date(db, scopedJob)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
     syncResult = combineSyncResults([gscResult, ga4Result], {
       phases: {
         ga4Pages: {
@@ -891,15 +917,17 @@ async function failOrRetry(db: AppDatabase, job: WarehouseJob, error: unknown) {
   const maxAttempts = Number(job.maxAttempts || DEFAULT_MAX_ATTEMPTS);
   const shouldRetry = attemptCount < maxAttempts;
   const delayMs = Math.min(30 * 60 * 1000, 60 * 1000 * Math.max(1, attemptCount));
+  const failedAt = nowIso();
+  const failedSource = failedSourceForJob(job, error);
   await updateJob(db, job.id, {
-    completedAt: shouldRetry ? null : nowIso(),
+    completedAt: shouldRetry ? null : failedAt,
     lastError: error instanceof Error ? error.message : 'Warehouse sync failed',
     lockedAt: null,
+    metricsJson: JSON.stringify({ failedAt, failedSource, jobType: job.jobType }),
     nextRunAt: shouldRetry ? new Date(Date.now() + delayMs).toISOString() : null,
     status: shouldRetry ? 'retrying' : 'error',
   });
 }
-
 const normalizedJobPriority = (priority: number | undefined) => {
   if (!Number.isFinite(priority)) return 0;
   return Math.max(0, Math.floor(Number(priority)));
