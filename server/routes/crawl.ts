@@ -261,8 +261,28 @@ async function getCrawlQueueMetadata(
   });
 }
 
-function resolveStartUrl(siteUrl: string, startUrl: string | null | undefined, activatedSiteUrl: string | null | undefined) {
-  const candidates = [startUrl, siteUrl, activatedSiteUrl].filter((candidate): candidate is string => Boolean(candidate && candidate.trim()));
+function normalizeCrawlSiteHost(value: string | null | undefined) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+
+  try {
+    const candidate = isHttpUrl(trimmed)
+      ? trimmed
+      : 'https://' + trimmed.replace(/^sc-domain:/i, '').replace(/^https?:\/\//i, '');
+    return new URL(candidate).hostname.replace(/^www\./i, '').toLowerCase();
+  } catch {
+    return trimmed
+      .replace(/^sc-domain:/i, '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .replace(/\/.*$/, '')
+      .replace(/\/+$/, '')
+      .toLowerCase();
+  }
+}
+
+function resolveStartUrl(siteUrl: string, startUrl: string | null | undefined) {
+  const candidates = [startUrl, siteUrl].filter((candidate): candidate is string => Boolean(candidate && candidate.trim()));
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
     if (isHttpUrl(trimmed)) {
@@ -276,6 +296,12 @@ function resolveStartUrl(siteUrl: string, startUrl: string | null | undefined, a
   }
 
   return '';
+}
+
+function isStartUrlAllowedForSite(siteUrl: string, startUrl: string) {
+  const normalizedSiteHost = normalizeCrawlSiteHost(siteUrl);
+  const normalizedStartHost = normalizeCrawlSiteHost(startUrl);
+  return Boolean(normalizedSiteHost && normalizedStartHost && normalizedSiteHost === normalizedStartHost);
 }
 
 function parseCrawlIssueFilter(value: unknown): CrawlIssueFilter | null {
@@ -308,8 +334,8 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
       return res.status(400).json({ error: 'Invalid siteUrl' });
     }
 
-    const user = await db.get<{ activatedSiteUrl?: string | null; tier?: string | null }>('SELECT activatedSiteUrl, tier FROM users WHERE id = ?', [ownerId]);
-    const resolvedStartUrl = resolveStartUrl(siteUrl, isNonEmptyString(startUrl) ? startUrl : null, user?.activatedSiteUrl || null);
+    const user = await db.get<{ tier?: string | null }>('SELECT tier FROM users WHERE id = ?', [ownerId]);
+    const resolvedStartUrl = resolveStartUrl(siteUrl, isNonEmptyString(startUrl) ? startUrl : null);
     const crawlLimits = getPlanCrawlLimits(user?.tier as any);
 
     if (!isHttpUrl(resolvedStartUrl)) {
@@ -321,6 +347,10 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
+      }
+
+      if (!isStartUrlAllowedForSite(siteUrl, resolvedStartUrl)) {
+        return res.status(400).json({ error: 'The crawl start URL must stay on the selected workspace site host.' });
       }
 
       const current = await getCrawlStatus(db, ownerId, siteUrl);

@@ -124,6 +124,15 @@ function getVisibleAnnotations(annotations: Annotation[], showSystemAnnotations:
   );
 }
 
+function getCrawlDefaultStartUrl(selectedSite: string) {
+  const trimmed = selectedSite.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return /^(https?:\/\/|sc-domain:)/i.test(trimmed) ? trimmed : null;
+}
+
 export function AppContent({
   activeMenu,
   annotations,
@@ -365,7 +374,7 @@ export function AppContent({
         <div className="space-y-4">
           <CrawlInventoryView
             siteUrl={selectedSite}
-            defaultStartUrl={userProfile?.activatedSiteUrl || (selectedSite.startsWith("http") ? selectedSite : null)}
+            defaultStartUrl={getCrawlDefaultStartUrl(selectedSite)}
           />
         </div>
       )}

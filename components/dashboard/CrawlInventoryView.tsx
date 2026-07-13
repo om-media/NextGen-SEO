@@ -85,8 +85,8 @@ function formatRelativeTime(value: string | null) {
   }
 }
 
-function resolveStartUrl(value: string | null | undefined, siteUrl: string) {
-  const candidates = [value, siteUrl].filter((candidate): candidate is string => Boolean(candidate && candidate.trim()));
+function resolveStartUrl(siteUrl: string, value: string | null | undefined) {
+  const candidates = [siteUrl, value].filter((candidate): candidate is string => Boolean(candidate && candidate.trim()));
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
     if (/^https?:\/\//i.test(trimmed)) {
@@ -265,7 +265,7 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
   const [includeQueryStrings, setIncludeQueryStrings] = useState(false);
   const [userAgent, setUserAgent] = useState("NextGenSEO-Crawler/1.0");
 
-  const resolvedStartUrl = useMemo(() => resolveStartUrl(defaultStartUrl, siteUrl), [defaultStartUrl, siteUrl]);
+  const resolvedStartUrl = useMemo(() => resolveStartUrl(siteUrl, defaultStartUrl), [siteUrl, defaultStartUrl]);
   const activeJobId = selectedJobId || job?.id || null;
 
   const pageSize = 50;
