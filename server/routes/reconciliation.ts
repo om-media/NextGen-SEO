@@ -10,11 +10,14 @@ type SourceState = 'present' | 'missing';
 
 type ReconciliationRow = {
   crawl: null | {
+    canonicalizedVariantCount: number;
     canonicalUrl: string | null;
     crawledAt: string | null;
     depth: number;
     errorMessage: string | null;
     noindex: boolean;
+    pageKey: string;
+    resolvedCanonicalPageKey: string;
     statusCode: number | null;
     title: string | null;
     url: string;
@@ -198,7 +201,7 @@ function getFlags(row: ReconciliationBaseRow, hasGa4Property: boolean, ga4Covera
   if (hasGa4Property && ga4CoverageComplete && (row.gsc || row.crawl) && !row.ga4) flags.push('missing_in_ga4');
   if (row.crawl?.statusCode === null || (row.crawl?.statusCode || 0) >= 400) flags.push('crawl_error');
   if (row.crawl?.noindex) flags.push('noindex');
-  if (row.crawl?.canonicalUrl && canonicalPageKey(row.crawl.canonicalUrl) !== row.pageKey) flags.push('canonical_mismatch');
+  if ((row.crawl?.canonicalizedVariantCount || 0) > 0) flags.push('canonical_mismatch');
   if ((row.gsc?.impressions || 0) >= 100 && (row.gsc?.clicks || 0) === 0) flags.push('high_impressions_no_clicks');
 
   return flags;
@@ -210,7 +213,7 @@ function getReasons(
   rowsByKey: Map<string, ReconciliationBaseRow>,
 ) {
   const reasons: ReconciliationRow['reasons'] = [];
-  const canonicalKey = row.crawl?.canonicalUrl ? canonicalPageKey(row.crawl.canonicalUrl) : null;
+  const canonicalKey = row.crawl?.resolvedCanonicalPageKey || null;
 
   if (flags.includes('missing_in_crawl')) {
     reasons.push({
@@ -254,12 +257,10 @@ function getReasons(
     });
   }
   if (flags.includes('canonical_mismatch') && canonicalKey) {
-    const target = rowsByKey.get(canonicalKey);
+    const variantCount = row.crawl?.canonicalizedVariantCount || 0;
     reasons.push({
-      detail: target
-        ? `Crawler canonical points to ${canonicalKey}, which is also present in the joined dataset.`
-        : `Crawler canonical points to ${canonicalKey}, which did not match a GSC/GA4/crawl row in this result set.`,
-      label: 'Canonical target differs',
+      detail: `The latest crawl contains ${variantCount} URL variant${variantCount === 1 ? '' : 's'} consolidated under ${canonicalKey}.`,
+      label: 'Canonical variants found',
       tone: 'warning',
     });
   }
@@ -419,6 +420,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
             url,
             normalizedUrl,
             pageKey,
+            resolvedCanonicalPageKey,
             statusCode,
             title,
             canonicalUrl,
@@ -481,32 +483,43 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
 
       for (const row of crawlRows) {
         const url = String(row.url || row.normalizedUrl || row.pageKey || '');
-        const pageKey = canonicalPageKey(String(row.pageKey || row.normalizedUrl || url), siteUrl);
+        const rawPageKey = canonicalPageKey(String(row.pageKey || row.normalizedUrl || url), siteUrl);
+        const pageKey = canonicalPageKey(String(row.resolvedCanonicalPageKey || rawPageKey), siteUrl);
         const target = ensureRow(pageKey);
-        target.crawl = {
+        const canonicalizedVariantCount =
+          (target.crawl?.canonicalizedVariantCount || 0) + (rawPageKey !== pageKey ? 1 : 0);
+        const crawl = {
+          canonicalizedVariantCount,
           canonicalUrl: row.canonicalUrl || null,
           crawledAt: row.crawledAt || null,
           depth: toNumber(row.depth),
           errorMessage: row.errorMessage || null,
           noindex: Boolean(row.noindex),
+          pageKey: rawPageKey,
+          resolvedCanonicalPageKey: pageKey,
           statusCode: row.statusCode === null || row.statusCode === undefined ? null : toNumber(row.statusCode),
           title: row.title || null,
           url: row.finalUrl || url,
           wordCount: toNumber(row.wordCount),
         };
+        if (!target.crawl || rawPageKey === pageKey || target.crawl.pageKey !== pageKey) {
+          target.crawl = crawl;
+        } else {
+          target.crawl.canonicalizedVariantCount = canonicalizedVariantCount;
+        }
         if (!target.gsc && !target.ga4) target.representativeUrl = url || target.representativeUrl;
       }
 
       const reconciledRows = Array.from(rowsByKey.values())
         .map((row) => {
           const flags = getFlags(row, Boolean(propertyId), ga4CoverageComplete);
-          const canonicalPageKeyValue = row.crawl?.canonicalUrl ? canonicalPageKey(row.crawl.canonicalUrl) : null;
+          const canonicalPageKeyValue = row.crawl?.resolvedCanonicalPageKey || null;
           return {
             ...row,
             flags,
             match: {
               canonicalPageKey: canonicalPageKeyValue,
-              crawlPageKey: row.crawl ? row.pageKey : null,
+              crawlPageKey: row.crawl?.pageKey || null,
               ga4PageKey: row.ga4 ? row.pageKey : null,
               gscPageKey: row.gsc ? row.pageKey : null,
             },

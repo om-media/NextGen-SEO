@@ -23,6 +23,7 @@ export type BlendedPageIssueInsight = {
 };
 
 export type BlendedPageCrawlSummary = {
+  canonicalizedVariantCount: number;
   canonicalUrl: string | null;
   contentType: string | null;
   crawledAt: string | null;
@@ -40,6 +41,8 @@ export type BlendedPageCrawlSummary = {
   metaDescriptionLength: number;
   noindex: boolean;
   outgoingLinkCount: number;
+  pageKey: string;
+  resolvedCanonicalPageKey: string;
   responseTimeMs: number;
   statusCode: number | null;
   title: string | null;

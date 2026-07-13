@@ -3,6 +3,7 @@ import type { QueueMetadata } from "@/src/services/queueMetadata";
 
 export type CrawlJob = {
   attemptCount: number | null;
+  canonicalMetricsVersion: number | null;
   completedAt: string | null;
   crawledCount: number;
   discoveredCount: number;
@@ -60,6 +61,7 @@ export type CrawlPageRow = {
   normalizedUrl: string;
   outgoingLinkCount: number;
   pageKey: string;
+  resolvedCanonicalPageKey: string;
   responseTimeMs: number | null;
   siteUrl: string;
   statusCode: number | null;

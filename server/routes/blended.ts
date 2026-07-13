@@ -203,6 +203,7 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
           SELECT
             url,
             pageKey,
+            resolvedCanonicalPageKey,
             finalUrl,
             statusCode,
             contentType,
@@ -227,7 +228,8 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
 
         for (const row of crawlRows) {
           const url = String(readField(row, 'url') || '');
-          const pageKey = canonicalPageKey(readField(row, 'pageKey') || url, siteUrl);
+          const rawPageKey = canonicalPageKey(readField(row, 'pageKey') || url, siteUrl);
+          const pageKey = canonicalPageKey(readField(row, 'resolvedCanonicalPageKey') || rawPageKey, siteUrl);
           if (!pageKey) continue;
 
           const existing = rowsByKey.get(pageKey) || {
@@ -238,7 +240,10 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
             crawl: null,
           };
 
-          existing.crawl = {
+          const canonicalizedVariantCount =
+            toFiniteNumber(existing.crawl?.canonicalizedVariantCount) + (rawPageKey !== pageKey ? 1 : 0);
+          const crawl = {
+            canonicalizedVariantCount,
             canonicalUrl: readField(row, 'canonicalUrl') || null,
             contentType: readField(row, 'contentType') || null,
             crawledAt: readField(row, 'crawledAt') || null,
@@ -263,9 +268,16 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
             title: readField(row, 'title') || null,
             titleLength: String(readField(row, 'title') || '').length,
             url,
+            pageKey: rawPageKey,
+            resolvedCanonicalPageKey: pageKey,
             wordCount: toFiniteNumber(readField(row, 'wordCount')),
           };
 
+          if (!existing.crawl || rawPageKey === pageKey || existing.crawl.pageKey !== pageKey) {
+            existing.crawl = crawl;
+          } else {
+            existing.crawl.canonicalizedVariantCount = canonicalizedVariantCount;
+          }
           if (!existing.page || existing.page === pageKey) existing.page = url || pageKey;
           rowsByKey.set(pageKey, existing);
         }
@@ -283,10 +295,8 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         row.crawl &&
         (!row.crawl.hasTitle || !row.crawl.hasMetaDescription || toFiniteNumber(row.crawl.h1Count) !== 1),
       );
-      const hasCanonicalMismatch = (row: any) => Boolean(
-        row.crawl?.canonicalUrl &&
-        canonicalPageKey(row.crawl.canonicalUrl, siteUrl) !== row.pageKey,
-      );
+      const hasCanonicalMismatch = (row: any) =>
+        toFiniteNumber(row.crawl?.canonicalizedVariantCount) > 0;
       const hasNoindex = (row: any) => Boolean(row.crawl?.noindex);
       const hasIndexabilityIssue = (row: any) => Boolean(hasNoindex(row) || hasCanonicalMismatch(row));
       const hasCrawlIssue = (row: any) => {
@@ -307,8 +317,8 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         const bounceRate = toFiniteNumber(row.ga4?.bounceRate);
         const crawl = row.crawl;
         const hasDemand = impressions >= 100 || clicks > 0 || sessions >= 20;
-        const canonicalKey = crawl?.canonicalUrl ? canonicalPageKey(crawl.canonicalUrl, siteUrl) : null;
-        const canonicalMismatch = Boolean(canonicalKey && canonicalKey !== row.pageKey);
+        const canonicalKey = crawl?.resolvedCanonicalPageKey || null;
+        const canonicalMismatch = toFiniteNumber(crawl?.canonicalizedVariantCount) > 0;
 
         if (!crawl && (row.gsc || row.ga4)) {
           if (row.gsc) {
@@ -349,7 +359,8 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
         }
 
         if (canonicalMismatch) {
-          reasons.push(`Crawler canonical points to ${canonicalKey}, but this row is grouped as ${row.pageKey}.`);
+          const variantCount = toFiniteNumber(crawl?.canonicalizedVariantCount);
+          reasons.push(`The latest crawl contains ${variantCount} URL variant${variantCount === 1 ? '' : 's'} consolidated under ${canonicalKey || row.pageKey}.`);
           if (impressions > 0) reasons.push(`${Math.round(impressions).toLocaleString('en-US')} impressions may be split by the canonical target.`);
           return {
             label: 'Resolve canonical mismatch',

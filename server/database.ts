@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { canonicalPageKey } from './reporting/url.js';
+import { canonicalPageKey, resolvedCanonicalPageKey } from './reporting/url.js';
 
 const { Pool } = pg;
 type PgQueryable = pg.Pool | pg.PoolClient;
@@ -413,7 +413,8 @@ const commonSchemaSql = `
     renderMode TEXT DEFAULT 'html',
     respectRobots INTEGER DEFAULT 1,
     includeQueryStrings INTEGER DEFAULT 0,
-    userAgent TEXT
+    userAgent TEXT,
+    canonicalMetricsVersion INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS crawl_pages (
@@ -423,6 +424,7 @@ const commonSchemaSql = `
     url TEXT,
     normalizedUrl TEXT,
     pageKey TEXT,
+    resolvedCanonicalPageKey TEXT,
     finalUrl TEXT,
     statusCode INTEGER,
     contentType TEXT,
@@ -670,9 +672,11 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_job ON crawl_pages(ownerId, siteUrl, jobId);
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_job_crawled ON crawl_pages(ownerId, siteUrl, jobId, crawledAt, depth, url);
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_pagekey ON crawl_pages(ownerId, siteUrl, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_resolved_canonical ON crawl_pages(ownerId, siteUrl, jobId, resolvedCanonicalPageKey);
   CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job ON crawl_links(ownerId, siteUrl, jobId);
   CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_tourl ON crawl_links(ownerId, siteUrl, jobId, toUrl);
   CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_keys ON crawl_links(ownerId, siteUrl, jobId, fromPageKey, toPageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_to_pagekey ON crawl_links(ownerId, siteUrl, jobId, toPageKey);
   CREATE INDEX IF NOT EXISTS idx_crawl_text_blocks_owner_site_job_key ON crawl_page_text_blocks(ownerId, siteUrl, jobId, pageKey);
   CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_key ON crawl_page_sentences(ownerId, siteUrl, jobId, pageKey);
   CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_hash ON crawl_page_sentences(ownerId, siteUrl, jobId, textHash);
@@ -761,6 +765,8 @@ const camelCaseColumns: Record<string, string> = {
   contenttype: 'contentType',
   metadescription: 'metaDescription',
   canonicalurl: 'canonicalUrl',
+  canonicalmetricsversion: 'canonicalMetricsVersion',
+  resolvedcanonicalpagekey: 'resolvedCanonicalPageKey',
   h1text: 'h1Text',
   h1count: 'h1Count',
   h2count: 'h2Count',
@@ -1583,8 +1589,10 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE crawl_jobs ADD COLUMN respectRobots INTEGER DEFAULT 1',
     'ALTER TABLE crawl_jobs ADD COLUMN includeQueryStrings INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN userAgent TEXT',
+    'ALTER TABLE crawl_jobs ADD COLUMN canonicalMetricsVersion INTEGER DEFAULT 0',
     'ALTER TABLE crawl_pages ADD COLUMN ownerId TEXT',
     'ALTER TABLE crawl_pages ADD COLUMN inboundLinkCount INTEGER DEFAULT 0',
+    'ALTER TABLE crawl_pages ADD COLUMN resolvedCanonicalPageKey TEXT',
     'ALTER TABLE crawl_links ADD COLUMN ownerId TEXT',
     'ALTER TABLE crawl_links ADD COLUMN anchorText TEXT',
     'ALTER TABLE crawl_links ADD COLUMN contextText TEXT',
@@ -1679,8 +1687,10 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS respectRobots INTEGER DEFAULT 1',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS includeQueryStrings INTEGER DEFAULT 0',
     'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS userAgent TEXT',
+    'ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS canonicalMetricsVersion INTEGER DEFAULT 0',
     'ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS inboundLinkCount INTEGER DEFAULT 0',
+    'ALTER TABLE crawl_pages ADD COLUMN IF NOT EXISTS resolvedCanonicalPageKey TEXT',
     'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS anchorText TEXT',
     'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS contextText TEXT',
@@ -1737,6 +1747,149 @@ type LegacyGscPageKeyRow = {
   siteUrl: string;
   page: string;
 };
+
+type LegacyCrawlCanonicalKeyRow = {
+  canonicalUrl: string | null;
+  finalUrl: string | null;
+  jobId: string;
+  normalizedUrl: string;
+  ownerId: string;
+  pageKey: string;
+  siteUrl: string;
+  url: string;
+};
+
+async function backfillCrawlCanonicalPageKeys(db: AppDatabase) {
+  let totalUpdated = 0;
+  const affectedJobs = new Map<string, { jobId: string; ownerId: string; siteUrl: string }>();
+
+  for (let iteration = 0; iteration < 100; iteration += 1) {
+    const rows = await db.all<LegacyCrawlCanonicalKeyRow>(
+      `
+        SELECT ownerId, siteUrl, jobId, url, normalizedUrl, pageKey, finalUrl, canonicalUrl
+        FROM crawl_pages
+        WHERE resolvedCanonicalPageKey IS NULL OR resolvedCanonicalPageKey = ''
+        LIMIT 1000
+      `,
+    );
+    if (!rows.length) break;
+
+    const updateBatch = db.transaction(async () => {
+      let batchUpdated = 0;
+      for (const row of rows) {
+        const fallbackUrl = row.finalUrl || row.normalizedUrl || row.url;
+        const resolvedKey = resolvedCanonicalPageKey(row.canonicalUrl, fallbackUrl, row.siteUrl);
+        const result = await db.run(
+          `
+            UPDATE crawl_pages
+            SET resolvedCanonicalPageKey = ?
+            WHERE ownerId = ? AND siteUrl = ? AND jobId = ? AND normalizedUrl = ?
+              AND (resolvedCanonicalPageKey IS NULL OR resolvedCanonicalPageKey = '')
+          `,
+          [resolvedKey, row.ownerId, row.siteUrl, row.jobId, row.normalizedUrl],
+        );
+        batchUpdated += result.changes;
+        if (result.changes) {
+          affectedJobs.set(
+            [row.ownerId, row.siteUrl, row.jobId].join('\u0000'),
+            { jobId: row.jobId, ownerId: row.ownerId, siteUrl: row.siteUrl },
+          );
+        }
+      }
+      return batchUpdated;
+    });
+
+    const batchUpdated = await updateBatch();
+    totalUpdated += batchUpdated;
+    if (!batchUpdated) break;
+  }
+
+  const incompleteJobs = await db.all<{ jobId: string; ownerId: string; siteUrl: string }>(
+    `
+      SELECT id AS "jobId", ownerId, siteUrl
+      FROM crawl_jobs
+      WHERE status = 'completed' AND COALESCE(canonicalMetricsVersion, 0) < 1
+    `,
+  );
+  for (const job of incompleteJobs) {
+    affectedJobs.set([job.ownerId, job.siteUrl, job.jobId].join('\u0000'), job);
+  }
+
+  for (const job of affectedJobs.values()) {
+    await db.run(
+      `
+        WITH page_targets AS (
+          SELECT
+            pageKey,
+            MIN(COALESCE(NULLIF(resolvedCanonicalPageKey, ''), pageKey)) AS resolvedPageKey
+          FROM crawl_pages
+          WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
+          GROUP BY pageKey
+        ),
+        link_counts AS (
+          SELECT
+            COALESCE(page_targets.resolvedPageKey, crawl_links.toPageKey) AS resolvedPageKey,
+            COUNT(*) AS inboundCount
+          FROM crawl_links
+          LEFT JOIN page_targets ON page_targets.pageKey = crawl_links.toPageKey
+          WHERE crawl_links.ownerId = ? AND crawl_links.siteUrl = ? AND crawl_links.jobId = ?
+          GROUP BY COALESCE(page_targets.resolvedPageKey, crawl_links.toPageKey)
+        )
+        UPDATE crawl_pages
+        SET inboundLinkCount = COALESCE(
+          (
+            SELECT link_counts.inboundCount
+            FROM link_counts
+            WHERE link_counts.resolvedPageKey =
+              COALESCE(NULLIF(crawl_pages.resolvedCanonicalPageKey, ''), crawl_pages.pageKey)
+          ),
+          0
+        )
+        WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
+      `,
+      [
+        job.ownerId, job.siteUrl, job.jobId,
+        job.ownerId, job.siteUrl, job.jobId,
+        job.ownerId, job.siteUrl, job.jobId,
+      ],
+    );
+    await db.run(
+      'UPDATE crawl_jobs SET canonicalMetricsVersion = 1 WHERE id = ? AND ownerId = ? AND siteUrl = ?',
+      [job.jobId, job.ownerId, job.siteUrl],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  if (totalUpdated || affectedJobs.size) {
+    console.log(`[db] Prepared canonical crawl metrics for ${affectedJobs.size} jobs (${totalUpdated} page keys updated)`);
+  }
+}
+function scheduleCrawlCanonicalPageKeyBackfill(db: AppDatabase) {
+  const timer = setTimeout(() => {
+    void (async () => {
+      const lockId = 4_271_923_117;
+      let lockAcquired = db.dialect === 'sqlite';
+
+      try {
+        if (db.dialect === 'postgres') {
+          const row = await db.get<{ acquired: boolean }>(
+            'SELECT pg_try_advisory_lock(?) AS "acquired"',
+            [lockId],
+          );
+          lockAcquired = Boolean(row?.acquired);
+        }
+        if (lockAcquired) await backfillCrawlCanonicalPageKeys(db);
+      } catch (error) {
+        console.error('[db] Crawl canonical key backfill failed', error);
+      } finally {
+        if (lockAcquired && db.dialect === 'postgres') {
+          await db.run('SELECT pg_advisory_unlock(?)', [lockId]).catch(() => undefined);
+        }
+      }
+    })();
+  }, 10_000);
+  timer.unref();
+}
 
 async function backfillGscPageKeys(db: AppDatabase) {
   if (process.env.RUN_LEGACY_GSC_PAGEKEY_BACKFILL !== 'true') {
@@ -1911,6 +2064,7 @@ export async function initializeDatabase(): Promise<AppDatabase> {
       await runMigrations();
       await validatePostgresRuntime(db);
       if (process.env.RUN_DATABASE_BACKFILLS !== 'false') {
+        scheduleCrawlCanonicalPageKeyBackfill(db);
         await backfillGscPageKeys(db);
         await backfillGscPageMetrics(db);
         await backfillGscSiteQueryCounts(db);
@@ -1926,6 +2080,9 @@ export async function initializeDatabase(): Promise<AppDatabase> {
   const sqlite = createSqliteConnection();
   applySqliteMigrations(sqlite);
   const db = new SqliteAppDatabase(sqlite);
+  if (process.env.RUN_DATABASE_BACKFILLS !== 'false') {
+    scheduleCrawlCanonicalPageKeyBackfill(db);
+  }
   await backfillGscPageKeys(db);
   await backfillGscPageMetrics(db);
   await backfillGscSiteQueryCounts(db);

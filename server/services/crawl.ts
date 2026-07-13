@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 import crypto from 'crypto';
-import { canonicalPageKey } from '../reporting/url.js';
+import { canonicalPageKey, resolvedCanonicalPageKey } from '../reporting/url.js';
 import type { AppDatabase } from '../database.js';
 import type { Browser } from 'puppeteer';
 
@@ -42,6 +42,7 @@ type CrawlSentenceSnapshot = {
 
 export type CrawlJobRecord = {
   attemptCount: number | null;
+  canonicalMetricsVersion: number | null;
   completedAt: string | null;
   crawledCount: number;
   discoveredCount: number;
@@ -90,6 +91,7 @@ export type CrawlPageRecord = {
   normalizedUrl: string;
   outgoingLinkCount: number;
   pageKey: string;
+  resolvedCanonicalPageKey: string;
   responseTimeMs: number | null;
   ownerId: string;
   siteUrl: string;
@@ -717,15 +719,16 @@ async function upsertCrawlPage(db: AppDatabase, page: CrawlPageRecord) {
   await db.run(
     `
       INSERT INTO crawl_pages (
-        ownerId, siteUrl, jobId, url, normalizedUrl, pageKey, finalUrl, statusCode, contentType,
+        ownerId, siteUrl, jobId, url, normalizedUrl, pageKey, resolvedCanonicalPageKey, finalUrl, statusCode, contentType,
         title, metaDescription, canonicalUrl, h1Text, h1Count, h2Count, wordCount, depth,
         discoveredFrom, discoveredFromUrl, discoveredAt, crawledAt, responseTimeMs, noindex,
         inboundLinkCount, internalLinkCount, outgoingLinkCount, errorMessage
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(ownerId, siteUrl, jobId, normalizedUrl) DO UPDATE SET
         url=excluded.url,
         pageKey=excluded.pageKey,
+        resolvedCanonicalPageKey=excluded.resolvedCanonicalPageKey,
         finalUrl=excluded.finalUrl,
         statusCode=excluded.statusCode,
         contentType=excluded.contentType,
@@ -755,6 +758,7 @@ async function upsertCrawlPage(db: AppDatabase, page: CrawlPageRecord) {
       page.url,
       page.normalizedUrl,
       page.pageKey,
+      page.resolvedCanonicalPageKey,
       page.finalUrl,
       page.statusCode,
       page.contentType,
@@ -926,18 +930,36 @@ async function finalizeOwnedCrawlJob(db: AppDatabase, job: ClaimedCrawlJobRecord
 async function computeInboundCounts(db: AppDatabase, ownerId: string, siteUrl: string, jobId: string) {
   await db.run(
     `
-      UPDATE crawl_pages
-      SET inboundLinkCount = (
-        SELECT COUNT(*)
+      WITH page_targets AS (
+        SELECT
+          pageKey,
+          MIN(COALESCE(NULLIF(resolvedCanonicalPageKey, ''), pageKey)) AS resolvedPageKey
+        FROM crawl_pages
+        WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
+        GROUP BY pageKey
+      ),
+      link_counts AS (
+        SELECT
+          COALESCE(page_targets.resolvedPageKey, crawl_links.toPageKey) AS resolvedPageKey,
+          COUNT(*) AS inboundCount
         FROM crawl_links
-        WHERE crawl_links.ownerId = crawl_pages.ownerId
-          AND crawl_links.siteUrl = crawl_pages.siteUrl
-          AND crawl_links.toUrl = crawl_pages.normalizedUrl
-          AND crawl_links.jobId = crawl_pages.jobId
+        LEFT JOIN page_targets ON page_targets.pageKey = crawl_links.toPageKey
+        WHERE crawl_links.ownerId = ? AND crawl_links.siteUrl = ? AND crawl_links.jobId = ?
+        GROUP BY COALESCE(page_targets.resolvedPageKey, crawl_links.toPageKey)
+      )
+      UPDATE crawl_pages
+      SET inboundLinkCount = COALESCE(
+        (
+          SELECT link_counts.inboundCount
+          FROM link_counts
+          WHERE link_counts.resolvedPageKey =
+            COALESCE(NULLIF(crawl_pages.resolvedCanonicalPageKey, ''), crawl_pages.pageKey)
+        ),
+        0
       )
       WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
     `,
-    [ownerId, siteUrl, jobId],
+    [ownerId, siteUrl, jobId, ownerId, siteUrl, jobId, ownerId, siteUrl, jobId],
   );
 }
 
@@ -1045,6 +1067,7 @@ async function processCrawlPage(
         normalizedUrl,
         outgoingLinkCount,
         pageKey,
+        resolvedCanonicalPageKey: resolvedCanonicalPageKey(canonicalUrl, finalUrl, input.siteUrl),
         responseTimeMs,
         ownerId: input.ownerId,
         siteUrl: input.siteUrl,
@@ -1120,6 +1143,7 @@ async function processCrawlPage(
         normalizedUrl,
         outgoingLinkCount: 0,
         pageKey: buildPageKey(normalizedUrl, input.siteUrl),
+        resolvedCanonicalPageKey: buildPageKey(normalizedUrl, input.siteUrl),
         responseTimeMs: Date.now() - startedAt,
         ownerId: input.ownerId,
         siteUrl: input.siteUrl,
@@ -1219,17 +1243,11 @@ async function getSummaryForJob(db: AppDatabase, ownerId: string, siteUrl: strin
   const orphanCount = await db.get<any>(
     `
       SELECT COUNT(*) AS "orphanPages"
-      FROM crawl_pages p
-      LEFT JOIN (
-        SELECT toUrl, COUNT(*) AS inboundCount
-        FROM crawl_links
-        WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
-        GROUP BY toUrl
-      ) inbound ON inbound.toUrl = p.normalizedUrl
-      WHERE p.ownerId = ? AND p.siteUrl = ? AND p.jobId = ?
-        AND COALESCE(inbound.inboundCount, 0) = 0
+      FROM crawl_pages
+      WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
+        AND COALESCE(inboundLinkCount, 0) = 0
     `,
-    [ownerId, siteUrl, jobId, ownerId, siteUrl, jobId],
+    [ownerId, siteUrl, jobId],
   );
 
   return {
@@ -1481,6 +1499,7 @@ async function executeCrawlJob(db: AppDatabase, job: ClaimedCrawlJobRecord) {
     await runLeaseMutation(async () => {
       await ensureJobActive();
       await finalizeOwnedCrawlJob(db, job, {
+        canonicalMetricsVersion: 1,
         completedAt: nowIso(),
         crawledCount: counters.crawledCount,
         discoveredCount: seen.size,
@@ -1844,14 +1863,7 @@ async function listCrawlPages(
         OR p.metaDescription IS NULL
         OR TRIM(p.metaDescription) = ''
         OR (p.canonicalUrl IS NOT NULL AND p.canonicalUrl <> '' AND p.canonicalUrl <> p.normalizedUrl)
-        OR NOT EXISTS (
-          SELECT 1
-          FROM crawl_links issue_links
-          WHERE issue_links.ownerId = p.ownerId
-            AND issue_links.siteUrl = p.siteUrl
-            AND issue_links.jobId = p.jobId
-            AND issue_links.toUrl = p.normalizedUrl
-        )
+        OR COALESCE(p.inboundLinkCount, 0) = 0
       )`);
       break;
     case 'success':
@@ -1870,16 +1882,7 @@ async function listCrawlPages(
       where.push('p.noindex = 1');
       break;
     case 'orphan':
-      where.push(`
-        NOT EXISTS (
-          SELECT 1
-          FROM crawl_links orphan_links
-          WHERE orphan_links.ownerId = p.ownerId
-            AND orphan_links.siteUrl = p.siteUrl
-            AND orphan_links.jobId = p.jobId
-            AND orphan_links.toUrl = p.normalizedUrl
-        )
-      `);
+      where.push('COALESCE(p.inboundLinkCount, 0) = 0');
       break;
     case 'missing_title':
       where.push("(p.title IS NULL OR TRIM(p.title) = '')");
@@ -1904,6 +1907,7 @@ async function listCrawlPages(
         p.url,
         p.normalizedUrl,
         p.pageKey,
+        p.resolvedCanonicalPageKey,
         p.finalUrl,
         p.statusCode,
         p.contentType,
@@ -1924,19 +1928,13 @@ async function listCrawlPages(
         p.internalLinkCount,
         p.outgoingLinkCount,
         p.errorMessage,
-        COALESCE(inbound.inboundCount, 0) AS "inboundLinkCount"
+        COALESCE(p.inboundLinkCount, 0) AS "inboundLinkCount"
       FROM crawl_pages p
-      LEFT JOIN (
-        SELECT toUrl, COUNT(*) AS inboundCount
-        FROM crawl_links
-        WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
-        GROUP BY toUrl
-      ) inbound ON inbound.toUrl = p.normalizedUrl
       WHERE ${where.join(' AND ')}
       ORDER BY p.crawledAt DESC, p.depth ASC, p.url ASC
       LIMIT ? OFFSET ?
     `,
-    [ownerId, siteUrl, activeJob.id, ...params, limit, offset],
+    [...params, limit, offset],
   );
 
   const summary = await getSummaryForJob(db, ownerId, siteUrl, activeJob.id);
@@ -2010,6 +2008,7 @@ async function listCrawlLinks(
 
 export const __crawlQueueTestUtils = {
   claimNextQueuedCrawlJob,
+  computeInboundCounts,
   recoverInterruptedCrawlJobs,
 };
 
