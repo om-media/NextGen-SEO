@@ -56,6 +56,7 @@ export function runSiteSelectionTests() {
 
   const storage = new MemoryStorage({
     [selectedSiteCacheKey("user-1", "gsc")]: alpha,
+    [selectedSiteCacheKey("user-1", "bing")]: beta,
     [selectedSiteCacheKey("user-1", "ga4")]: beta,
     [selectedGa4PropertyCacheKey("user-1", beta)]: "properties/222",
   });
@@ -95,6 +96,22 @@ export function runSiteSelectionTests() {
   });
 
   assert.equal(gscSelection.selectedSite, alpha);
+
+  const bingSelection = resolveSourceSwitchSelection({
+    activatedGa4PropertyId: null,
+    activatedSiteUrl: alpha,
+    availableGa4Sites: ga4Sites,
+    availableWorkspaceSites: workspaceSites,
+    currentSelectedGa4Property: gscSelection.selectedGa4Property,
+    currentSelectedGa4PropertySite: gscSelection.selectedGa4PropertySite,
+    currentSelectedSite: gscSelection.selectedSite,
+    knownWorkspaceSites,
+    nextSource: "bing",
+    storage,
+    userId: "user-1",
+  });
+
+  assert.equal(bingSelection.selectedSite, beta);
 
   const ga4SelectionAgain = resolveSourceSwitchSelection({
     activatedGa4PropertyId: null,

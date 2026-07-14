@@ -1,14 +1,17 @@
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ChevronLeft, ChevronRight, MousePointerClick, Eye, Percent, ArrowUpRight, Download, RefreshCw } from "lucide-react"
 import { BingApiService, BingQueryStat, type BingQueryStatsMeta } from "@/src/services/bingService"
 import { useAuth } from "@/src/contexts/AuthContext"
+import { format } from "date-fns"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import type { DateRange } from "react-day-picker"
 
 interface BingDataGridProps {
+  dateRange: DateRange;
   siteUrl: string;
 }
 
@@ -33,66 +36,91 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   window.URL.revokeObjectURL(url)
 }
 
-export function BingDataGrid({ siteUrl }: BingDataGridProps) {
+export function BingDataGrid({ dateRange, siteUrl }: BingDataGridProps) {
   const { user, userProfile } = useAuth()
   const [data, setData] = useState<BingQueryStat[]>([])
   const [cacheMeta, setCacheMeta] = useState<BingQueryStatsMeta | null>(null)
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const requestSequence = useRef(0)
+  const startDate = dateRange.from ? format(dateRange.from, "yyyy-MM-dd") : ""
+  const endDate = dateRange.to ? format(dateRange.to, "yyyy-MM-dd") : ""
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 25
 
   useEffect(() => {
-    if (!user || !siteUrl || !userProfile?.bingConnected) return;
+    const requestId = ++requestSequence.current
+    setData([])
+    setCacheMeta(null)
+    setCurrentPage(1)
+    setError(null)
+    setSyncing(false)
+
+    if (!user || !siteUrl || !userProfile?.bingConnected || !startDate || !endDate) {
+      setLoading(false)
+      return
+    }
 
     const fetchData = async () => {
       setLoading(true)
       setError(null)
       try {
         const bingService = new BingApiService()
-        const result = await bingService.getQueryStats(siteUrl)
+        const result = await bingService.getQueryStats(siteUrl, startDate, endDate)
+        if (requestSequence.current !== requestId) return
         setData(result.rows)
         setCacheMeta(result.meta)
         setCurrentPage(1)
       } catch (err: any) {
+        if (requestSequence.current !== requestId) return
         console.error("Error fetching Bing stats:", err)
         setError(err.message)
       } finally {
-        setLoading(false)
+        if (requestSequence.current === requestId) setLoading(false)
       }
     }
 
-    fetchData()
-  }, [user, siteUrl, userProfile?.bingConnected])
+    void fetchData()
+  }, [endDate, siteUrl, startDate, user, userProfile?.bingConnected])
 
   const handleRefreshBing = async () => {
-    if (!siteUrl) return
+    if (!siteUrl || !startDate || !endDate) return
 
+    const requestId = ++requestSequence.current
     setSyncing(true)
     setError(null)
     try {
       const bingService = new BingApiService()
-      const result = await bingService.syncQueryStats(siteUrl)
+      const result = await bingService.syncQueryStats(siteUrl, startDate, endDate)
+      if (requestSequence.current !== requestId) return
       setData(result.rows)
       setCacheMeta(result.meta)
       setCurrentPage(1)
     } catch (err: any) {
+      if (requestSequence.current !== requestId) return
       console.error("Error refreshing Bing stats:", err)
       setError(err.message)
     } finally {
-      setSyncing(false)
+      if (requestSequence.current === requestId) setSyncing(false)
     }
   }
 
   const cacheLabel = useMemo(() => {
-    const fetchedAt = cacheMeta?.cache?.latestFetchedAt
-    if (!fetchedAt) return "Bing cache has not been refreshed yet"
+    const availableStartDate = cacheMeta?.range?.availableStartDate
+    const availableEndDate = cacheMeta?.range?.availableEndDate
+    if (availableStartDate && availableEndDate) {
+      if (availableStartDate === availableEndDate) return `Stored Bing data for ${availableStartDate}`
+      return `Stored Bing data from ${availableStartDate} through ${availableEndDate}`
+    }
+
+    const fetchedAt = cacheMeta?.cache?.latestFetchedAt || cacheMeta?.range?.latestFetchedAt
+    if (!fetchedAt) return "No stored Bing data for this range"
     const date = new Date(fetchedAt)
-    if (Number.isNaN(date.getTime())) return `Cached ${fetchedAt}`
-    return `Cached ${date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`
+    if (Number.isNaN(date.getTime())) return `Stored ${fetchedAt}`
+    return `Stored ${date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`
   }, [cacheMeta])
 
   const totals = useMemo(() => {
@@ -125,7 +153,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
 
   const exportRows = () => {
     exportCsv(
-      `bing-queries-${new Date().toISOString().slice(0, 10)}.csv`,
+      `bing-queries-${siteUrl.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}-${startDate}-${endDate}.csv`,
       data.map((row) => ({
         query: row.Query,
         clicks: row.Clicks,
@@ -162,7 +190,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
       <Card className="rounded-2xl border border-[#E9F0EB] bg-white shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
         <CardContent className="flex h-64 flex-col items-center justify-center gap-4 text-center text-muted-foreground">
           <div>
-            <div className="font-medium text-foreground">No cached Bing data for this property.</div>
+            <div className="font-medium text-foreground">No Bing query data for this date range.</div>
             <div className="mt-1 text-sm">{cacheLabel}</div>
           </div>
           <Button className="rounded-xl" onClick={handleRefreshBing} disabled={syncing}>
@@ -201,7 +229,7 @@ export function BingDataGrid({ siteUrl }: BingDataGridProps) {
             <div>
               <CardTitle>Top Queries</CardTitle>
               <CardDescription>
-                Cached Bing query performance. {cacheLabel}.
+                Bing query performance from the app warehouse. {cacheLabel}.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">

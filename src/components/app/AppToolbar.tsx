@@ -167,12 +167,14 @@ export function AppToolbar({
             </>
           )}
           <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:w-auto sm:grid-cols-[auto_auto_auto_auto] sm:items-center">
-            <div className="col-span-2 flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-[0_8px_20px_rgba(15,61,46,0.06)] sm:col-span-1">
-              <Switch id="compare-mode" checked={isCompareMode} onCheckedChange={setIsCompareMode} />
-              <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">
-                Compare
-              </Label>
-            </div>
+            {dataSource !== "bing" && (
+              <div className="col-span-2 flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-[0_8px_20px_rgba(15,61,46,0.06)] sm:col-span-1">
+                <Switch id="compare-mode" checked={isCompareMode} onCheckedChange={setIsCompareMode} />
+                <Label htmlFor="compare-mode" className="text-sm font-medium cursor-pointer">
+                  Compare
+                </Label>
+              </div>
+            )}
             <div className="min-w-0 [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 [&>button]:overflow-hidden [&>button]:rounded-xl [&>button]:border-border [&>button]:bg-card [&>button]:shadow-[0_8px_20px_rgba(15,61,46,0.06)] sm:[&>button]:w-auto sm:[&>button]:min-w-[160px]">
               <DatePicker date={dateRange.from} setDate={onFromDateChange} label="From" />
             </div>
@@ -182,7 +184,7 @@ export function AppToolbar({
             </div>
           </div>
         </div>
-        {isCompareMode && (
+        {dataSource !== "bing" && isCompareMode && (
           <div className="grid w-full grid-cols-2 gap-2 self-start rounded-xl border border-dashed border-border bg-card/70 p-1 shadow-[0_8px_20px_rgba(15,61,46,0.04)] xl:self-end sm:w-auto sm:grid-cols-[auto_auto_auto_auto] sm:items-center">
             <span className="col-span-2 text-sm font-medium px-2 text-muted-foreground sm:col-span-1">vs</span>
             <div className="min-w-0 [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 sm:[&>button]:w-auto sm:[&>button]:min-w-[160px]">

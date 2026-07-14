@@ -812,6 +812,14 @@ function MainApp() {
     }
 
     if (dataSource === 'bing') {
+      if (currentSites.length > 0 && !currentSites.some((site) => site.siteUrl === selectedSite) && !fetchingSites) {
+        const preferred = getPreferredSiteUrl(
+          selectedSite,
+          currentSites,
+          currentSites.map((site) => site.siteUrl),
+        );
+        setSelectedSite((current) => preferred || current);
+      }
       return;
     }
 

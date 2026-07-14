@@ -335,6 +335,21 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, siteUrl, query)
   );
 
+  CREATE TABLE IF NOT EXISTS bing_query_metrics (
+    ownerId TEXT,
+    siteUrl TEXT,
+    date TEXT,
+    query TEXT,
+    impressions INTEGER,
+    clicks INTEGER,
+    ctr REAL,
+    avgClickPosition REAL,
+    avgImpressionPosition REAL,
+    fetchedAt TEXT,
+    dateSource TEXT DEFAULT 'reported',
+    PRIMARY KEY (ownerId, siteUrl, date, query)
+  );
+
   CREATE TABLE IF NOT EXISTS tracked_keywords (
     id TEXT PRIMARY KEY,
     siteUrl TEXT,
@@ -662,6 +677,8 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_source_date ON ga4_llm_referral_metrics(ownerId, propertyId, sourceClass, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_page_date ON ga4_llm_referral_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_bing_query_stats_owner_site_fetched ON bing_query_stats(ownerId, siteUrl, fetchedAt);
+  CREATE INDEX IF NOT EXISTS idx_bing_query_metrics_owner_site_date ON bing_query_metrics(ownerId, siteUrl, date);
+  CREATE INDEX IF NOT EXISTS idx_bing_query_metrics_owner_site_query_date ON bing_query_metrics(ownerId, siteUrl, query, date);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_queue ON warehouse_jobs(status, nextRunAt, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_queue_priority ON warehouse_jobs(status, priority, nextRunAt, targetDate);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site ON warehouse_jobs(ownerId, siteUrl, updatedAt);
@@ -736,6 +753,10 @@ const camelCaseColumns: Record<string, string> = {
   minmonth: 'minMonth',
   maxmonth: 'maxMonth',
   rowcount: 'rowCount',
+  fetchedat: 'fetchedAt',
+  datesource: 'dateSource',
+  avgclickposition: 'avgClickPosition',
+  avgimpressionposition: 'avgImpressionPosition',
   totalrowcount: 'totalRowCount',
   querycount: 'queryCount',
   propertyid: 'propertyId',
@@ -1675,6 +1696,7 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE gsc_country_monthly_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE gsc_page_query_monthly_metrics ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE warehouse_sync_status ADD COLUMN IF NOT EXISTS ownerId TEXT',
+    "ALTER TABLE bing_query_metrics ADD COLUMN IF NOT EXISTS dateSource TEXT DEFAULT 'reported'",
     'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS targetStartDate TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS metricsJson TEXT',
     'ALTER TABLE warehouse_jobs ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 0',
@@ -2007,6 +2029,93 @@ async function backfillGscSiteQueryCounts(db: AppDatabase) {
   console.log(`[db] Backfilled query counts for ${Number(pending?.count || 0)} GSC daily summary rows`);
 }
 
+type LegacyBingQueryStatRow = {
+  ownerId: string | null;
+  siteUrl: string | null;
+  query: string | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  avgClickPosition: number | null;
+  avgImpressionPosition: number | null;
+  fetchedAt: string | null;
+};
+
+function extractIsoDatePrefix(value: string | null | undefined) {
+  if (typeof value !== 'string') return null;
+  const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+export async function backfillLegacyBingQueryMetrics(db: AppDatabase) {
+  const legacyRows = await db.all<LegacyBingQueryStatRow>(`
+    SELECT ownerId, siteUrl, query, impressions, clicks, ctr, avgClickPosition, avgImpressionPosition, fetchedAt
+    FROM bing_query_stats
+    WHERE fetchedAt IS NOT NULL AND fetchedAt != ''
+  `);
+
+  if (!legacyRows.length) {
+    return;
+  }
+
+  let insertedOrUpdated = 0;
+  const applyBackfill = db.transaction(async () => {
+    for (const row of legacyRows) {
+      const ownerId = typeof row.ownerId === 'string' ? row.ownerId : '';
+      const siteUrl = typeof row.siteUrl === 'string' ? row.siteUrl : '';
+      const query = typeof row.query === 'string' ? row.query.trim() : '';
+      const fetchedAt = typeof row.fetchedAt === 'string' ? row.fetchedAt : '';
+      const date = extractIsoDatePrefix(fetchedAt);
+      if (!ownerId || !siteUrl || !query || !date) continue;
+
+      const existing = await db.get<{ dateSource?: string | null }>(
+        `SELECT dateSource
+         FROM bing_query_metrics
+         WHERE ownerId = ? AND siteUrl = ? AND date = ? AND query = ?`,
+        [ownerId, siteUrl, date, query],
+      );
+
+      if (existing) {
+        continue;
+      }
+
+      const result = await db.run(
+        `INSERT INTO bing_query_metrics
+          (ownerId, siteUrl, date, query, impressions, clicks, ctr, avgClickPosition, avgImpressionPosition, fetchedAt, dateSource)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ownerId, siteUrl, date, query) DO UPDATE SET
+           impressions = excluded.impressions,
+           clicks = excluded.clicks,
+           ctr = excluded.ctr,
+           avgClickPosition = excluded.avgClickPosition,
+           avgImpressionPosition = excluded.avgImpressionPosition,
+           fetchedAt = excluded.fetchedAt,
+           dateSource = excluded.dateSource`,
+        [
+          ownerId,
+          siteUrl,
+          date,
+          query,
+          Number(row.impressions || 0),
+          Number(row.clicks || 0),
+          Number(row.ctr || 0),
+          Number(row.avgClickPosition || 0),
+          Number(row.avgImpressionPosition || 0),
+          fetchedAt,
+          'compatibility-fetchedAt',
+        ],
+      );
+      insertedOrUpdated += result.changes;
+    }
+  });
+
+  await applyBackfill();
+
+  if (insertedOrUpdated > 0) {
+    console.log(`[db] Backfilled ${insertedOrUpdated} Bing fact rows from legacy mirror using fetchedAt calendar dates`);
+  }
+}
+
 async function validatePostgresRuntime(db: AppDatabase) {
   const row = await db.get<{
     ready: number;
@@ -2062,6 +2171,7 @@ export async function initializeDatabase(): Promise<AppDatabase> {
         await applyPostgresMigrations(db);
       });
       await runMigrations();
+      await backfillLegacyBingQueryMetrics(db);
       await validatePostgresRuntime(db);
       if (process.env.RUN_DATABASE_BACKFILLS !== 'false') {
         scheduleCrawlCanonicalPageKeyBackfill(db);
@@ -2080,6 +2190,7 @@ export async function initializeDatabase(): Promise<AppDatabase> {
   const sqlite = createSqliteConnection();
   applySqliteMigrations(sqlite);
   const db = new SqliteAppDatabase(sqlite);
+  await backfillLegacyBingQueryMetrics(db);
   if (process.env.RUN_DATABASE_BACKFILLS !== 'false') {
     scheduleCrawlCanonicalPageKeyBackfill(db);
   }

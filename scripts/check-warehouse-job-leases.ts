@@ -1,0 +1,134 @@
+import assert from 'node:assert/strict';
+import Database from 'better-sqlite3';
+import type { AppDatabase, QueryParams, RunResult } from '../server/database.js';
+import {
+  createWarehouseJobLease,
+  finalizeOwnedWarehouseJob,
+  recoverStaleWarehouseJobs,
+  WarehouseJobLeaseLostError,
+} from '../server/services/warehouseJobs.js';
+
+class MemoryDatabase implements AppDatabase {
+  dialect = 'sqlite' as const;
+
+  constructor(private readonly db: Database.Database) {}
+
+  prepare(sql: string) {
+    return this.db.prepare(sql);
+  }
+
+  async exec(sql: string) {
+    this.db.exec(sql);
+  }
+
+  async get<T = unknown>(sql: string, params?: QueryParams) {
+    const statement = this.db.prepare(sql);
+    return (params === undefined ? statement.get() : statement.get(params as any)) as T | undefined;
+  }
+
+  async all<T = unknown>(sql: string, params?: QueryParams) {
+    const statement = this.db.prepare(sql);
+    return (params === undefined ? statement.all() : statement.all(params as any)) as T[];
+  }
+
+  async run(sql: string, params?: QueryParams): Promise<RunResult> {
+    const statement = this.db.prepare(sql);
+    const result = params === undefined ? statement.run() : statement.run(params as any);
+    return { changes: result.changes, lastInsertRowid: result.lastInsertRowid };
+  }
+
+  transaction<Args extends unknown[], T>(callback: (...args: Args) => T | Promise<T>) {
+    return async (...args: Args) => {
+      this.db.exec('BEGIN');
+      try {
+        const result = await callback(...args);
+        this.db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    };
+  }
+
+  async close() {
+    this.db.close();
+  }
+}
+
+const raw = new Database(':memory:');
+const db = new MemoryDatabase(raw);
+
+try {
+  await db.exec(`
+    CREATE TABLE warehouse_jobs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      lockedAt TEXT,
+      updatedAt TEXT,
+      completedAt TEXT,
+      lastError TEXT,
+      nextRunAt TEXT,
+      metricsJson TEXT,
+      rowsSynced INTEGER
+    );
+  `);
+
+  const initialLease = '2026-07-14T08:00:00.000Z';
+  await db.run(
+    "INSERT INTO warehouse_jobs (id, status, lockedAt, updatedAt) VALUES (?, 'running', ?, ?)",
+    ['owned-job', initialLease, initialLease],
+  );
+  const ownedJob = await db.get<any>('SELECT * FROM warehouse_jobs WHERE id = ?', ['owned-job']);
+  assert.ok(ownedJob);
+  const staleWorker = { ...ownedJob };
+
+  const lease = createWarehouseJobLease(db, ownedJob, 5);
+  await lease.refresh();
+  const firstRefresh = ownedJob.lockedAt;
+  assert.notEqual(firstRefresh, initialLease, 'An owned job heartbeat should rotate its lease value');
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const heartbeatRow = await db.get<any>('SELECT * FROM warehouse_jobs WHERE id = ?', ['owned-job']);
+  assert.notEqual(heartbeatRow?.lockedAt, firstRefresh, 'The heartbeat timer should keep renewing a running job lease');
+
+  await assert.rejects(
+    () => finalizeOwnedWarehouseJob(db, staleWorker, { completedAt: '2026-07-14T08:01:00.000Z', status: 'completed' }),
+    WarehouseJobLeaseLostError,
+    'A worker holding an old lease must not finalize the job',
+  );
+  const afterStaleFinalize = await db.get<any>('SELECT * FROM warehouse_jobs WHERE id = ?', ['owned-job']);
+  assert.equal(afterStaleFinalize?.status, 'running', 'A stale finalizer must leave the current worker state unchanged');
+
+  await lease.finalize({ completedAt: '2026-07-14T08:02:00.000Z', status: 'completed' });
+  await lease.stop();
+  const completed = await db.get<any>('SELECT * FROM warehouse_jobs WHERE id = ?', ['owned-job']);
+  assert.equal(completed?.status, 'completed');
+  assert.equal(completed?.lockedAt, null, 'Finalization should release the owned lease');
+
+  await db.run(
+    "INSERT INTO warehouse_jobs (id, status, lockedAt, updatedAt) VALUES (?, 'running', ?, ?)",
+    ['stale-job', '2026-07-13T23:00:00.000Z', '2026-07-13T23:00:00.000Z'],
+  );
+  await db.run(
+    "INSERT INTO warehouse_jobs (id, status, lockedAt, updatedAt) VALUES (?, 'running', ?, ?)",
+    ['fresh-job', '2026-07-14T08:05:00.000Z', '2026-07-14T08:05:00.000Z'],
+  );
+
+  await recoverStaleWarehouseJobs(
+    db,
+    '2026-07-14T08:00:00.000Z',
+    '2026-07-14T08:10:00.000Z',
+  );
+
+  const stale = await db.get<any>('SELECT * FROM warehouse_jobs WHERE id = ?', ['stale-job']);
+  const fresh = await db.get<any>('SELECT * FROM warehouse_jobs WHERE id = ?', ['fresh-job']);
+  assert.equal(stale?.status, 'queued', 'Recovery should requeue an expired running lease');
+  assert.equal(stale?.lockedAt, null);
+  assert.equal(fresh?.status, 'running', 'Recovery must not reclaim a recently renewed lease');
+  assert.equal(fresh?.lockedAt, '2026-07-14T08:05:00.000Z');
+
+  console.log('Warehouse job lease heartbeat, fencing, and recovery checks passed.');
+} finally {
+  await db.close();
+}

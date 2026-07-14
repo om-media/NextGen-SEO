@@ -396,6 +396,83 @@ async function run() {
       }
     });
 
+    await runScenario(report, 'bing-dashboard-range', async (scenario) => {
+      const context = await createAuthedContext(browser, baseUrl, token);
+      context.setDefaultNavigationTimeout(30000);
+      const page = await context.newPage();
+      const monitor = installPageMonitor(page);
+      let requestedRange = null;
+
+      await page.route('**/api/auth/session', async (route) => {
+        const response = await route.fetch();
+        const payload = await response.json();
+        payload.profile = { ...payload.profile, bingConnected: true };
+        await fulfillRoute(route, {
+          contentType: 'application/json',
+          body: JSON.stringify(payload),
+        });
+      });
+
+      await page.route('**/api/bing/sites', async (route) => {
+        await fulfillRoute(route, {
+          contentType: 'application/json',
+          body: JSON.stringify({ d: [{ Url: user.activatedSiteUrl }] }),
+        });
+      });
+
+      await page.route('**/api/bing/stats?*', async (route) => {
+        const url = new URL(route.request().url());
+        requestedRange = {
+          endDate: url.searchParams.get('endDate'),
+          siteUrl: url.searchParams.get('siteUrl'),
+          startDate: url.searchParams.get('startDate'),
+        };
+        await fulfillRoute(route, {
+          contentType: 'application/json',
+          body: JSON.stringify({
+            d: [{ AvgClickPosition: 2.4, AvgImpressionPosition: 4.2, Clicks: 12, Ctr: 0.12, Impressions: 100, Query: 'acceptance bing query' }],
+            meta: {
+              cache: null,
+              fromCache: true,
+              range: {
+                availableEndDate: requestedRange.endDate,
+                availableStartDate: requestedRange.startDate,
+                compatibilityBackfill: { dateCount: 0, rowCount: 0, semantics: null },
+                factRowCount: 1,
+                latestFetchedAt: new Date().toISOString(),
+                matchedDateCount: 1,
+                mode: 'date-range-aggregate',
+                queryCount: 1,
+                requestedEndDate: requestedRange.endDate,
+                requestedStartDate: requestedRange.startDate,
+                semantics: null,
+              },
+              source: 'dated-facts',
+            },
+          }),
+        });
+      });
+
+      try {
+        await waitForAppShell(page);
+        await waitForMainToSettle(page);
+        await clickDashboardSource(page, 'Bing Webmaster');
+        await waitForCondition(async () => /acceptance bing query/i.test(await getMainText(page)), { description: 'dated Bing warehouse rows' });
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'bing-dashboard-range'));
+
+        assert(requestedRange?.siteUrl === user.activatedSiteUrl, 'Bing dashboard did not request the active workspace site.');
+        assert(/^\d{4}-\d{2}-\d{2}$/.test(requestedRange?.startDate || ''), 'Bing dashboard did not send a valid startDate.');
+        assert(/^\d{4}-\d{2}-\d{2}$/.test(requestedRange?.endDate || ''), 'Bing dashboard did not send a valid endDate.');
+        assert(!/Compare/i.test(await getHeaderText(page)), 'Bing dashboard exposed an unsupported comparison control.');
+
+        if (monitor.hasUnexpectedFailures()) {
+          scenario.failures.push(...summarizeFailures(monitor.events));
+        }
+      } finally {
+        await context.close();
+      }
+    });
+
     await runScenario(report, 'source-site-property-switching', async (scenario) => {
       const context = await createAuthedContext(browser, baseUrl, token);
       context.setDefaultNavigationTimeout(30000);

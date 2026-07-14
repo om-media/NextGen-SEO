@@ -4,7 +4,7 @@ import { requireAuth, requireMatchingParam } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isAllowedAnnotationType, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
 import { getPlanCrawlLimits } from '../../shared/plans.js';
-import { getBingCacheStatus, listCachedBingQueryStats, syncBingQueryStats, syncBingSites } from '../services/bingWarehouse.js';
+import { buildLegacyBingRangeMeta, getBingCacheStatus, listBingQueryStatsForRange, listCachedBingQueryStats, syncBingQueryStats, syncBingSites } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
@@ -504,7 +504,21 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
 
   app.get('/api/bing/stats', authRequired, async (req: AuthedRequest, res) => {
     const siteUrl = asTrimmedString(req.query.siteUrl);
+    const startDate = asTrimmedString(req.query.startDate);
+    const endDate = asTrimmedString(req.query.endDate);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    if ((startDate && !endDate) || (!startDate && endDate)) {
+      return res.status(400).json({ error: 'Provide both startDate and endDate for Bing date-range reads' });
+    }
+    if (startDate && !isIsoDateString(startDate)) {
+      return res.status(400).json({ error: 'Invalid startDate' });
+    }
+    if (endDate && !isIsoDateString(endDate)) {
+      return res.status(400).json({ error: 'Invalid endDate' });
+    }
+    if (startDate && endDate && startDate > endDate) {
+      return res.status(400).json({ error: 'startDate must be on or before endDate' });
+    }
 
     try {
       if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
@@ -516,6 +530,19 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         return res.status(400).json({ error: 'Bing API key not configured' });
       }
 
+      if (startDate && endDate) {
+        const result = await listBingQueryStatsForRange(db, req.authUser!.uid, siteUrl, startDate, endDate);
+        return res.json({
+          d: result.rows,
+          meta: {
+            cache: null,
+            fromCache: true,
+            range: result.meta,
+            source: 'dated-facts',
+          },
+        });
+      }
+
       const [rows, status] = await Promise.all([
         listCachedBingQueryStats(db, req.authUser!.uid, siteUrl),
         getBingCacheStatus(db, req.authUser!.uid, siteUrl),
@@ -525,6 +552,8 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         meta: {
           cache: status,
           fromCache: true,
+          range: buildLegacyBingRangeMeta(status),
+          source: 'legacy-mirror',
         },
       });
     } catch (err: any) {
@@ -534,7 +563,17 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
 
   app.post('/api/bing/stats/sync', authRequired, async (req: AuthedRequest, res) => {
     const siteUrl = asTrimmedString(req.body?.siteUrl);
+    const startDate = asTrimmedString(req.body?.startDate);
+    const endDate = asTrimmedString(req.body?.endDate);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    if ((startDate && !endDate) || (!startDate && endDate)) {
+      return res.status(400).json({ error: 'Provide both startDate and endDate for Bing date-range reads' });
+    }
+    if (startDate && !isIsoDateString(startDate)) return res.status(400).json({ error: 'Invalid startDate' });
+    if (endDate && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
+    if (startDate && endDate && startDate > endDate) {
+      return res.status(400).json({ error: 'startDate must be on or before endDate' });
+    }
 
     try {
       if (!(await canAccessSite(db, req.authUser!.uid, siteUrl))) {
@@ -552,16 +591,23 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         siteUrl,
       });
 
+      const cache = {
+        isFresh: true,
+        latestFetchedAt: result.fetchedAt,
+        rowCount: result.legacyRows.length,
+      };
+
+      if (startDate && endDate) {
+        const rangeResult = await listBingQueryStatsForRange(db, req.authUser!.uid, siteUrl, startDate, endDate);
+        return res.json({
+          d: rangeResult.rows,
+          meta: { cache, fromCache: false, range: rangeResult.meta, source: 'dated-facts' },
+        });
+      }
+
       res.json({
-        d: result.rows,
-        meta: {
-          cache: {
-            isFresh: true,
-            latestFetchedAt: result.fetchedAt,
-            rowCount: result.rows.length,
-          },
-          fromCache: false,
-        },
+        d: result.legacyRows,
+        meta: { cache, fromCache: false, range: result.rangeMeta, source: 'legacy-mirror' },
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

@@ -100,6 +100,7 @@ const positiveIntegerEnv = (value: string | undefined, fallback: number, min: nu
 const POLL_MS = positiveIntegerEnv(process.env.WAREHOUSE_WORKER_POLL_MS, 5_000, 1_000, 60_000);
 const DAILY_SCHEDULER_MS = 60 * 60 * 1000;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+const WAREHOUSE_HEARTBEAT_MS = positiveIntegerEnv(process.env.WAREHOUSE_HEARTBEAT_MS, 30_000, 1_000, LOCK_TIMEOUT_MS / 2);
 const DEFAULT_MAX_ATTEMPTS = 3;
 const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 8, 1, 24);
 const POSTGRES_JOB_CONCURRENCY = positiveIntegerEnv(process.env.WAREHOUSE_JOB_CONCURRENCY, 3, 1, 8);
@@ -702,10 +703,128 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
   };
 }
 
-async function updateJob(db: AppDatabase, id: string, fields: Partial<WarehouseJob>) {
-  const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
-  if (entries.length === 0) return;
-  await db.run(`UPDATE warehouse_jobs SET ${entries.map(([key]) => `${key} = ?`).join(', ')}, updatedAt = ? WHERE id = ?`, [...entries.map(([, value]) => value), nowIso(), id]);
+export class WarehouseJobLeaseLostError extends Error {
+  constructor() {
+    super('Warehouse job lease was lost to another worker.');
+    this.name = 'WarehouseJobLeaseLostError';
+  }
+}
+
+function nextWarehouseLeaseValue(currentLease: string) {
+  const currentMillis = Date.parse(currentLease);
+  const nextMillis = Number.isFinite(currentMillis)
+    ? Math.max(Date.now(), currentMillis + 1)
+    : Date.now();
+  return new Date(nextMillis).toISOString();
+}
+
+export async function refreshOwnedWarehouseJobLease(
+  db: AppDatabase,
+  job: WarehouseJob,
+  fields: Partial<WarehouseJob> = {},
+) {
+  const currentLease = job.lockedAt;
+  if (!currentLease) throw new WarehouseJobLeaseLostError();
+
+  const entries = Object.entries(fields)
+    .filter(([key, value]) => value !== undefined && key !== 'lockedAt' && key !== 'updatedAt');
+  const nextLease = nextWarehouseLeaseValue(currentLease);
+  const sets = entries.map(([key]) => key + ' = ?').concat('lockedAt = ?', 'updatedAt = ?').join(', ');
+  const values = entries.map(([, value]) => value);
+  values.push(nextLease, nextLease, job.id, currentLease);
+
+  const result = await db.run(
+    "UPDATE warehouse_jobs SET " + sets + " WHERE id = ? AND status = 'running' AND lockedAt = ?",
+    values,
+  );
+  if (result.changes === 0) throw new WarehouseJobLeaseLostError();
+
+  Object.assign(job, fields, { lockedAt: nextLease, updatedAt: nextLease });
+}
+
+export async function finalizeOwnedWarehouseJob(
+  db: AppDatabase,
+  job: WarehouseJob,
+  fields: Partial<WarehouseJob>,
+) {
+  const currentLease = job.lockedAt;
+  if (!currentLease) throw new WarehouseJobLeaseLostError();
+
+  const entries = Object.entries(fields)
+    .filter(([key, value]) => value !== undefined && key !== 'lockedAt' && key !== 'updatedAt');
+  const updatedAt = nowIso();
+  const sets = entries.map(([key]) => key + ' = ?').concat('lockedAt = NULL', 'updatedAt = ?').join(', ');
+  const values = entries.map(([, value]) => value);
+  values.push(updatedAt, job.id, currentLease);
+
+  const result = await db.run(
+    "UPDATE warehouse_jobs SET " + sets + " WHERE id = ? AND status = 'running' AND lockedAt = ?",
+    values,
+  );
+  if (result.changes === 0) throw new WarehouseJobLeaseLostError();
+
+  Object.assign(job, fields, { lockedAt: null, updatedAt });
+}
+
+export function createWarehouseJobLease(
+  db: AppDatabase,
+  job: WarehouseJob,
+  heartbeatMs = WAREHOUSE_HEARTBEAT_MS,
+) {
+  let stopped = false;
+  let heartbeatPending = false;
+  let leaseError: Error | null = null;
+  let mutationTail: Promise<void> = Promise.resolve();
+
+  const runMutation = async (action: () => Promise<void>) => {
+    const next = mutationTail.then(action, action);
+    mutationTail = next.catch(() => undefined);
+    await next;
+  };
+
+  const refresh = async () => {
+    if (stopped) return;
+    await runMutation(async () => {
+      if (stopped) return;
+      if (leaseError) throw leaseError;
+      try {
+        await refreshOwnedWarehouseJobLease(db, job);
+      } catch (error) {
+        leaseError = error instanceof Error ? error : new WarehouseJobLeaseLostError();
+        throw leaseError;
+      }
+    });
+  };
+
+  const timer = setInterval(() => {
+    if (stopped || heartbeatPending || leaseError) return;
+    heartbeatPending = true;
+    void refresh().catch(() => undefined).finally(() => {
+      heartbeatPending = false;
+    });
+  }, Math.max(1, heartbeatMs));
+
+  const finalize = async (fields: Partial<WarehouseJob>) => {
+    stopped = true;
+    clearInterval(timer);
+    await runMutation(async () => {
+      if (leaseError) throw leaseError;
+      try {
+        await finalizeOwnedWarehouseJob(db, job, fields);
+      } catch (error) {
+        leaseError = error instanceof Error ? error : new WarehouseJobLeaseLostError();
+        throw leaseError;
+      }
+    });
+  };
+
+  const stop = async () => {
+    stopped = true;
+    clearInterval(timer);
+    await mutationTail;
+  };
+
+  return { finalize, refresh, stop };
 }
 
 async function resolveActiveGa4PropertyForSite(db: AppDatabase, job: WarehouseJob) {
@@ -765,7 +884,7 @@ async function hasRequiredCoreWarehouseRows(
     && Number(ga4Rows?.count || 0) >= expectedDays;
 }
 
-async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
+async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: ReturnType<typeof createWarehouseJobLease>) {
   const totalStartedAt = Date.now();
   let syncResult = emptySyncResult();
   const jobStartDate = job.targetStartDate || job.targetDate;
@@ -782,10 +901,9 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
   } else if (job.jobType === 'core-range-sync') {
     const importStartDate = maxIsoDate(jobStartDate, earliestSearchConsoleReportingDate());
     if (importStartDate > jobEndDate) {
-      await updateJob(db, job.id, {
+      await lease.finalize({
         completedAt: nowIso(),
         lastError: null,
-        lockedAt: null,
         metricsJson: JSON.stringify({
           days: 0,
           skippedReason: 'outside-search-console-history-window',
@@ -806,10 +924,9 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
         siteUrl: job.siteUrl,
         startDate: importStartDate,
       });
-      await updateJob(db, job.id, {
+      await lease.finalize({
         completedAt: nowIso(),
         lastError: null,
-        lockedAt: null,
         metricsJson: JSON.stringify({
           days: eachIsoDate(importStartDate, jobEndDate).length,
           skippedReason: 'already-warehoused',
@@ -839,11 +956,10 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
       source: 'core',
     });
   } else if (job.jobType === 'daily-sync' && jobEndDate < earliestSearchConsoleReportingDate()) {
-    await updateJob(db, job.id, {
+    await lease.finalize({
       completedAt: nowIso(),
       lastError: null,
-      lockedAt: null,
-      metricsJson: JSON.stringify({
+        metricsJson: JSON.stringify({
         days: 0,
         skippedReason: 'outside-search-console-history-window',
         source: 'daily',
@@ -885,6 +1001,7 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
     totalMs: elapsedMs(totalStartedAt),
     writeMs: syncResult.writeMs,
   });
+  await lease.refresh();
   await db.run(
     `INSERT INTO warehouse_sync_status (ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, lastUpdated)
      VALUES (?, ?, ?, ?, ?, ?)
@@ -895,7 +1012,7 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob) {
        lastUpdated=excluded.lastUpdated`,
     [job.ownerId, job.siteUrl, jobEndDate, syncedStartDate, 'synced', nowIso()],
   );
-  await updateJob(db, job.id, { completedAt, lastError: null, lockedAt: null, metricsJson, rowsSynced: syncResult.rowsSynced, status: 'completed' });
+  await lease.finalize({ completedAt, lastError: null, metricsJson, rowsSynced: syncResult.rowsSynced, status: 'completed' });
 }
 
 async function claimJob(db: AppDatabase) {
@@ -907,27 +1024,30 @@ async function claimJob(db: AppDatabase) {
   return db.get<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE id = ?', [job.id]);
 }
 
-async function recoverJobs(db: AppDatabase) {
-  const cutoff = new Date(Date.now() - LOCK_TIMEOUT_MS).toISOString();
-  await db.run("UPDATE warehouse_jobs SET status = 'queued', lockedAt = NULL, nextRunAt = ?, updatedAt = ?, lastError = COALESCE(lastError, 'Recovered after interrupted warehouse worker.') WHERE status = 'running' AND (lockedAt IS NULL OR lockedAt < ?)", [nowIso(), nowIso(), cutoff]);
+export async function recoverStaleWarehouseJobs(
+  db: AppDatabase,
+  cutoff = new Date(Date.now() - LOCK_TIMEOUT_MS).toISOString(),
+  now = nowIso(),
+) {
+  await db.run("UPDATE warehouse_jobs SET status = 'queued', lockedAt = NULL, nextRunAt = ?, updatedAt = ?, lastError = COALESCE(lastError, 'Recovered after interrupted warehouse worker.') WHERE status = 'running' AND (lockedAt IS NULL OR lockedAt < ?)", [now, now, cutoff]);
 }
 
-async function failOrRetry(db: AppDatabase, job: WarehouseJob, error: unknown) {
+async function failOrRetry(db: AppDatabase, job: WarehouseJob, lease: ReturnType<typeof createWarehouseJobLease>, error: unknown) {
   const attemptCount = Number(job.attemptCount || 0);
   const maxAttempts = Number(job.maxAttempts || DEFAULT_MAX_ATTEMPTS);
   const shouldRetry = attemptCount < maxAttempts;
   const delayMs = Math.min(30 * 60 * 1000, 60 * 1000 * Math.max(1, attemptCount));
   const failedAt = nowIso();
   const failedSource = failedSourceForJob(job, error);
-  await updateJob(db, job.id, {
+  await lease.finalize({
     completedAt: shouldRetry ? null : failedAt,
     lastError: error instanceof Error ? error.message : 'Warehouse sync failed',
-    lockedAt: null,
-    metricsJson: JSON.stringify({ failedAt, failedSource, jobType: job.jobType }),
+        metricsJson: JSON.stringify({ failedAt, failedSource, jobType: job.jobType }),
     nextRunAt: shouldRetry ? new Date(Date.now() + delayMs).toISOString() : null,
     status: shouldRetry ? 'retrying' : 'error',
   });
 }
+
 const normalizedJobPriority = (priority: number | undefined) => {
   if (!Number.isFinite(priority)) return 0;
   return Math.max(0, Math.floor(Number(priority)));
@@ -1562,7 +1682,7 @@ export function startWarehouseJobWorker(db: AppDatabase) {
     if (stopped || running) return;
     running = true;
     try {
-      await recoverJobs(db);
+      await recoverStaleWarehouseJobs(db);
       await supersedeLegacyCoreDailyJobs(db);
       await supersedeLegacyLlmDailyJobs(db);
       await supersedeObsoleteCoreRangeJobs(db);
@@ -1576,10 +1696,20 @@ export function startWarehouseJobWorker(db: AppDatabase) {
         }
         if (batch.length === 0) break;
         await Promise.all(batch.map(async (job) => {
+          const lease = createWarehouseJobLease(db, job);
           try {
-            await executeWarehouseJob(db, job);
+            await lease.refresh();
+            await executeWarehouseJob(db, job, lease);
           } catch (error) {
-            await failOrRetry(db, job, error);
+            if (!(error instanceof WarehouseJobLeaseLostError)) {
+              try {
+                await failOrRetry(db, job, lease, error);
+              } catch (finalizeError) {
+                if (!(finalizeError instanceof WarehouseJobLeaseLostError)) throw finalizeError;
+              }
+            }
+          } finally {
+            await lease.stop();
           }
         }));
         processedThisTick += batch.length;

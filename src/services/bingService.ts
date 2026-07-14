@@ -18,8 +18,26 @@ export interface BingQueryStatsMeta {
     isFresh: boolean;
     latestFetchedAt: string | null;
     rowCount: number;
-  };
+  } | null;
   fromCache: boolean;
+  range?: {
+    availableEndDate: string | null;
+    availableStartDate: string | null;
+    compatibilityBackfill: {
+      dateCount: number;
+      rowCount: number;
+      semantics: string | null;
+    };
+    factRowCount: number;
+    latestFetchedAt: string | null;
+    matchedDateCount: number;
+    mode: "date-range-aggregate" | "legacy-mirror";
+    queryCount: number;
+    requestedEndDate: string | null;
+    requestedStartDate: string | null;
+    semantics: string | null;
+  };
+  source?: "dated-facts" | "legacy-mirror";
 }
 
 export interface BingQueryStatsResult {
@@ -42,8 +60,9 @@ export class BingApiService {
     }));
   }
 
-  async getQueryStats(siteUrl: string): Promise<BingQueryStatsResult> {
-    const response = await authFetch(`/api/bing/stats?siteUrl=${encodeURIComponent(siteUrl)}`);
+  async getQueryStats(siteUrl: string, startDate: string, endDate: string): Promise<BingQueryStatsResult> {
+    const params = new URLSearchParams({ endDate, siteUrl, startDate });
+    const response = await authFetch(`/api/bing/stats?${params.toString()}`);
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.error || 'Failed to fetch Bing query stats');
@@ -55,11 +74,11 @@ export class BingApiService {
     };
   }
 
-  async syncQueryStats(siteUrl: string): Promise<BingQueryStatsResult> {
+  async syncQueryStats(siteUrl: string, startDate: string, endDate: string): Promise<BingQueryStatsResult> {
     const response = await authFetch('/api/bing/stats/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ siteUrl }),
+      body: JSON.stringify({ endDate, siteUrl, startDate }),
     });
     if (!response.ok) {
       const error = await response.json();

@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const source = fs.readFileSync('src/App.tsx', 'utf8');
 const appContentSource = fs.readFileSync('src/components/app/AppContent.tsx', 'utf8');
+const bingGridSource = fs.readFileSync('components/dashboard/BingDataGrid.tsx', 'utf8');
 
 assert(
   source.includes('useSelectorRequestGate<"gsc" | "bing" | "ga4" | "onboarding-ga4">()'),
@@ -26,6 +27,18 @@ assert(
 assert(
   appContentSource.includes('defaultStartUrl={getCrawlDefaultStartUrl(selectedSite)}'),
   'Crawl Inventory must default its start URL from the selected workspace site',
+);
+assert(
+  appContentSource.includes('<BingDataGrid dateRange={dateRange} siteUrl={selectedSite} />'),
+  'Bing reports must receive the selected dashboard date range',
+);
+assert(
+  bingGridSource.includes('requestSequence.current !== requestId'),
+  'Bing report requests must ignore stale site or date-range responses',
+);
+assert(
+  source.includes("if (dataSource === 'bing')") && source.includes('currentSites.some((site) => site.siteUrl === selectedSite)'),
+  'Bing must repair a cached site selection that is absent from the verified Bing site list',
 );
 
 const tempRoot = path.resolve('.tmp', 'selector-stability-check');

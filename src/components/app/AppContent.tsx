@@ -278,7 +278,7 @@ export function AppContent({
             <h3 className="mb-1 text-lg font-semibold tracking-[-0.01em] text-foreground">Bing Webmaster Tools data</h3>
             <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Review Bing query visibility for the active workspace site and export the loaded query rows when you need parity with Bing Webmaster Tools.</p>
           </div>
-          <BingDataGrid siteUrl={selectedSite} />
+          <BingDataGrid dateRange={dateRange} siteUrl={selectedSite} />
         </div>
       )}
 

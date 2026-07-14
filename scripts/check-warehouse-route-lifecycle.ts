@@ -109,6 +109,8 @@ const assert = (condition: unknown, message: string) => {
 };
 
 const fetchLog: string[] = [];
+const bingFactDate = '2026-07-01';
+const bingFactTimestamp = Date.UTC(2026, 6, 1);
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request) => {
   const url = String(input);
@@ -121,8 +123,8 @@ globalThis.fetch = (async (input: string | URL | Request) => {
       async json() {
         return {
           d: [
-            { Query: `${siteUrl}:brand`, Impressions: 10, Clicks: 2, AvgClickPosition: 3, AvgImpressionPosition: 5 },
-            { Query: `${siteUrl}:brand`, Impressions: 15, Clicks: 3, AvgClickPosition: 5, AvgImpressionPosition: 7 },
+            { Date: `/Date(${bingFactTimestamp}+0000)/`, Query: `${siteUrl}:brand`, Impressions: 10, Clicks: 2, AvgClickPosition: 3, AvgImpressionPosition: 5 },
+            { Date: `/Date(${bingFactTimestamp}+0000)/`, Query: `${siteUrl}:brand`, Impressions: 15, Clicks: 3, AvgClickPosition: 5, AvgImpressionPosition: 7 },
           ],
         };
       },
@@ -314,6 +316,38 @@ try {
   assert(activeSiteJobsAfterOnboarding.some((job) => job.jobType === 'ga4-llm-range-sync'), 'Onboarding should queue GA4 LLM backfill for the mapped property');
   assert(activeSiteJobsAfterOnboarding.every((job) => job.jobType !== 'daily-sync'), 'Onboarding should not rely on one-day daily jobs');
   assert(Number(activeBingRowsAfterOnboarding?.count || 0) > 0, 'Onboarding should sync Bing data when a Bing key is already configured');
+
+  const bingStatsHandler = app.routes.get('GET:/api/bing/stats')?.at(-1);
+  assert(bingStatsHandler, 'Missing Bing query stats handler');
+  const bingStatsRes = new FakeResponse();
+  await bingStatsHandler!(
+    {
+      authUser: { uid: ownerId },
+      query: { endDate: bingFactDate, siteUrl: activeSiteUrl, startDate: bingFactDate },
+    },
+    bingStatsRes,
+  );
+  const bingStatsBody = bingStatsRes.body as any;
+  assert(bingStatsRes.statusCode === 200, `Bing range route returned ${bingStatsRes.statusCode}`);
+  assert(bingStatsBody?.meta?.source === 'dated-facts', 'Bing range route should read dated warehouse facts');
+  assert(bingStatsBody?.meta?.range?.matchedDateCount === 1, 'Bing range route should report its stored date coverage');
+  assert(bingStatsBody?.d?.length === 1, 'Bing range route should aggregate duplicate query rows');
+  assert(bingStatsBody?.d?.[0]?.Clicks === 5, 'Bing range route should sum query clicks across duplicate API rows');
+
+  const bingSyncHandler = app.routes.get('POST:/api/bing/stats/sync')?.at(-1);
+  assert(bingSyncHandler, 'Missing Bing query sync handler');
+  const bingSyncRes = new FakeResponse();
+  await bingSyncHandler!(
+    {
+      authUser: { uid: ownerId },
+      body: { endDate: bingFactDate, siteUrl: activeSiteUrl, startDate: bingFactDate },
+    },
+    bingSyncRes,
+  );
+  const bingSyncBody = bingSyncRes.body as any;
+  assert(bingSyncRes.statusCode === 200, `Bing range sync route returned ${bingSyncRes.statusCode}`);
+  assert(bingSyncBody?.meta?.source === 'dated-facts', 'Bing range sync should return the selected dated facts');
+  assert(bingSyncBody?.d?.length === 1, 'Bing range sync should not return the all-time compatibility mirror');
 
   const googleSitesHandler = app.routes.get('GET:/api/google/gsc/sites')?.at(-1);
   assert(googleSitesHandler, 'Missing Google GSC sites handler');

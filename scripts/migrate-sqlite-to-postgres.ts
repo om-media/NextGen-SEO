@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import pg from 'pg';
-import { initializeDatabase } from '../server/database.js';
+import { backfillLegacyBingQueryMetrics, initializeDatabase } from '../server/database.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -33,6 +33,8 @@ const migrations: TableMigration[] = [
   { table: 'gsc_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
   { table: 'gsc_page_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'page', 'query'] },
   { table: 'gsc_page_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'pageKey'] },
+  { table: 'bing_query_stats', conflictColumns: ['ownerId', 'siteUrl', 'query'] },
+  { table: 'bing_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
   { table: 'warehouse_sync_status', conflictColumns: ['ownerId', 'siteUrl'] },
   { table: 'tracked_keywords', conflictColumns: ['id'] },
   { table: 'keyword_rankings', conflictColumns: ['keywordId', 'date'] },
@@ -162,6 +164,13 @@ async function main() {
   } finally {
     sqlite.close();
     await pool.end();
+  }
+
+  const migratedDb = await initializeDatabase();
+  try {
+    await backfillLegacyBingQueryMetrics(migratedDb);
+  } finally {
+    await migratedDb.close?.();
   }
 }
 
