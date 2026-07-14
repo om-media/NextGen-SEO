@@ -11,6 +11,8 @@ process.env.APP_BASE_URL = 'http://localhost:3000';
 
 const { registerAccountDataRoutes } = await import('../server/routes/accountData.js');
 const { registerGoogleRoutes } = await import('../server/routes/google.js');
+const { runBingDailySchedulerTick } = await import('../server/services/bingWarehouse.js');
+const { runWarehouseDailySchedulerTick } = await import('../server/services/warehouseJobs.js');
 
 class MemoryDatabase implements AppDatabase {
   dialect = 'sqlite' as const;
@@ -366,22 +368,41 @@ try {
     'SELECT jobType, siteUrl, targetStartDate, targetDate FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? ORDER BY jobType, targetStartDate, targetDate',
     [ownerId, activeSiteUrl],
   );
+  const passiveKnownSiteJobs = await db.all<{ jobType: string; siteUrl: string; targetStartDate: string | null; targetDate: string }>(
+    'SELECT jobType, siteUrl, targetStartDate, targetDate FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? ORDER BY jobType, targetStartDate, targetDate',
+    [ownerId, knownSiteUrl],
+  );
+  const passiveKnownSiteBingRows = await db.get<{ count: number }>('SELECT COUNT(*) AS count FROM bing_query_stats WHERE ownerId = ? AND siteUrl = ?', [ownerId, knownSiteUrl]);
+  const userRow = await db.get<{ knownSites?: string | null }>('SELECT knownSites FROM users WHERE id = ?', [ownerId]);
+
+  assert(JSON.stringify(activeSiteJobsAfterGoogle) === JSON.stringify(activeSiteJobsAfterOnboarding), 'Passive Google site discovery should not duplicate active-site warehouse jobs');
+  assert(passiveKnownSiteJobs.length === 0, 'Passive Google site discovery should not queue warehouse imports');
+  assert(Number(passiveKnownSiteBingRows?.count || 0) === 0, 'Passive Google site discovery should not sync Bing data');
+  assert(String(userRow?.knownSites || '').includes(knownSiteUrl), 'Passive Google site discovery should persist the discovered known site');
+
+  const countBingFetches = (siteUrl: string) => fetchLog.filter((url) => {
+    if (!url.startsWith('https://ssl.bing.com/webmaster/api.svc/json/GetQueryStats')) return false;
+    return new URL(url).searchParams.get('siteUrl') === siteUrl;
+  }).length;
+  const activeBingFetchesBeforeScheduler = countBingFetches(activeSiteUrl);
+
+  await runWarehouseDailySchedulerTick(db);
+  await runBingDailySchedulerTick(db);
+
   const knownSiteJobs = await db.all<{ jobType: string; siteUrl: string; targetStartDate: string | null; targetDate: string }>(
     'SELECT jobType, siteUrl, targetStartDate, targetDate FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? ORDER BY jobType, targetStartDate, targetDate',
     [ownerId, knownSiteUrl],
   );
   const knownSiteBingRows = await db.get<{ count: number }>('SELECT COUNT(*) AS count FROM bing_query_stats WHERE ownerId = ? AND siteUrl = ?', [ownerId, knownSiteUrl]);
-  const userRow = await db.get<{ knownSites?: string | null }>('SELECT knownSites FROM users WHERE id = ?', [ownerId]);
 
-  assert(JSON.stringify(activeSiteJobsAfterGoogle) === JSON.stringify(activeSiteJobsAfterOnboarding), 'Refreshing Google sites should not duplicate already-queued active-site warehouse jobs');
-  assert(knownSiteJobs.some((job) => job.jobType === 'core-range-sync'), 'Refreshing Google sites should queue warehouse backfill for newly known sites');
-  assert(knownSiteJobs.every((job) => job.jobType !== 'daily-sync'), 'Newly known sites should be backfilled via range jobs, not date-picked daily jobs');
-  assert(Number(knownSiteBingRows?.count || 0) > 0, 'Refreshing Google sites should sync Bing data for newly known sites when Bing is configured');
-  assert(String(userRow?.knownSites || '').includes(knownSiteUrl), 'Refreshing Google sites should persist the discovered known site');
+  assert(knownSiteJobs.some((job) => job.jobType === 'core-range-sync'), 'The warehouse scheduler should queue backfill for newly discovered sites');
+  assert(Number(knownSiteBingRows?.count || 0) > 0, 'The Bing scheduler should sync newly discovered sites');
+  assert(countBingFetches(activeSiteUrl) === activeBingFetchesBeforeScheduler, 'The Bing scheduler should skip fresh active-site data');
 
   console.log(JSON.stringify({
     ok: true,
     activeSiteJobsAfterOnboarding,
+    passiveKnownSiteJobs,
     knownSiteJobs,
     fetchLog,
   }, null, 2));

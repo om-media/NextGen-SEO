@@ -110,10 +110,11 @@ for (const inputPath of compileTargets) {
 }
 
 const appContentHelperPath = transpileToTemp(
-  'tmp/app-content-crawl-start.ts',
+  'tmp/app-content-helpers.ts',
   [
     extractFunctionSource('src/components/app/AppContent.tsx', 'getCrawlDefaultStartUrl'),
-    'export { getCrawlDefaultStartUrl };',
+    extractFunctionSource('src/components/app/AppContent.tsx', 'getRawWorkspaceSite'),
+    'export { getCrawlDefaultStartUrl, getRawWorkspaceSite };',
   ].join('\n\n'),
 );
 
@@ -138,7 +139,7 @@ const crawlRouteHelperPath = transpileToTemp(
 
 const siteSelectionTests = await import(pathToFileURL(path.resolve(tempRoot, 'src/lib/siteSelection.test.mjs')).href);
 const requestGateTests = await import(pathToFileURL(path.resolve(tempRoot, 'src/lib/useSelectorRequestGate.test.mjs')).href);
-const { getCrawlDefaultStartUrl } = await import(pathToFileURL(appContentHelperPath).href);
+const { getCrawlDefaultStartUrl, getRawWorkspaceSite } = await import(pathToFileURL(appContentHelperPath).href);
 const { resolveStartUrl: resolveViewStartUrl } = await import(pathToFileURL(crawlInventoryHelperPath).href);
 const {
   isStartUrlAllowedForSite,
@@ -152,6 +153,10 @@ siteSelectionTests.runSiteSelectionTests();
 assert.equal(getCrawlDefaultStartUrl('https://beta.example/'), 'https://beta.example/');
 assert.equal(getCrawlDefaultStartUrl('sc-domain:beta.example'), 'sc-domain:beta.example');
 assert.equal(getCrawlDefaultStartUrl('properties/123'), null);
+
+assert.equal(getRawWorkspaceSite('https://beta.example/', 'https://gamma.example/', 'https://alpha.example/'), 'https://beta.example/');
+assert.equal(getRawWorkspaceSite('properties/123', 'https://gamma.example/', 'https://alpha.example/'), 'https://gamma.example/');
+assert.equal(getRawWorkspaceSite('properties/123', undefined, 'https://alpha.example/'), 'https://alpha.example/');
 
 assert.equal(resolveViewStartUrl('https://beta.example/', 'https://alpha.example/'), 'https://beta.example/');
 assert.equal(resolveViewStartUrl('sc-domain:beta.example', 'https://alpha.example/deep/page'), 'https://beta.example/');

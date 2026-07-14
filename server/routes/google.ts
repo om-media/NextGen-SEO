@@ -170,9 +170,10 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       );
       const bingApiKey = isNonEmptyString(user?.bingApiKey) ? user.bingApiKey.trim() : '';
       if (bingApiKey) {
-        await syncBingSites(db, {
+        void syncBingSites(db, {
           apiKey: bingApiKey,
           ownerId,
+          refreshMode: 'if-stale',
           siteUrls: uniqueSites([
             ...(isNonEmptyString(user?.activatedSiteUrl) ? [user!.activatedSiteUrl.trim()] : []),
             ...parseStringArray(user?.unlockedSites),
@@ -300,7 +301,6 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
       if (knownSites.length > 0) {
         await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(knownSites), req.authUser!.uid]);
       }
-      await queueGoogleWorkspaceSiteImports(req.authUser!.uid);
       res.json(siteEntries);
     } catch (err: any) {
       res.status(err.status || 500).json(err.payload || { error: err.message });

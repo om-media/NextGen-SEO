@@ -458,18 +458,26 @@ export async function syncBingQueryStats(db: AppDatabase, input: { apiKey: strin
   };
 }
 
-export async function syncBingSites(db: AppDatabase, input: { apiKey: string; ownerId: string; siteUrls: string[] }) {
+export async function syncBingSites(db: AppDatabase, input: { apiKey: string; ownerId: string; refreshMode?: 'force' | 'if-stale'; siteUrls: string[] }) {
   const apiKey = String(input.apiKey || '').trim();
   if (!apiKey) {
-    return { attemptedSites: [], syncedSites: [] as string[] };
+    return { attemptedSites: [], skippedFreshSites: [] as string[], syncedSites: [] as string[] };
   }
 
   const attemptedSites = Array.from(new Set(input.siteUrls.map((siteUrl) => siteUrl.trim()).filter(Boolean)));
+  const skippedFreshSites: string[] = [];
   const syncedSites: string[] = [];
 
   for (const siteUrl of attemptedSites) {
     try {
       if (!(await canAccessSite(db, input.ownerId, siteUrl))) continue;
+      if (input.refreshMode === 'if-stale') {
+        const status = await getBingCacheStatus(db, input.ownerId, siteUrl);
+        if (status.isFresh) {
+          skippedFreshSites.push(siteUrl);
+          continue;
+        }
+      }
       await syncBingQueryStats(db, { apiKey, ownerId: input.ownerId, siteUrl });
       syncedSites.push(siteUrl);
     } catch (error: any) {
@@ -480,7 +488,7 @@ export async function syncBingSites(db: AppDatabase, input: { apiKey: string; ow
     }
   }
 
-  return { attemptedSites, syncedSites };
+  return { attemptedSites, skippedFreshSites, syncedSites };
 }
 
 export async function getFreshBingQueryStats(db: AppDatabase, input: { apiKey: string; ownerId: string; siteUrl: string }) {
@@ -527,6 +535,7 @@ export async function runBingDailySchedulerTick(db: AppDatabase) {
     await syncBingSites(db, {
       apiKey: user.bingApiKey,
       ownerId: user.id,
+      refreshMode: 'if-stale',
       siteUrls: collectWorkspaceSiteUrls(user),
     });
   }

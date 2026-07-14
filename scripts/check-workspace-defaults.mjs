@@ -55,14 +55,13 @@ assert(
 
 const accountRoutes = read('server/routes/accountData.ts');
 assert(
-  accountRoutes.includes('void queueKnownSiteDataIfPossible(user.id, uniqueSites(['),
-  'Connected profile loads must prime full-history imports for saved workspace sites',
+  !accountRoutes.includes('queueKnownSiteDataIfPossible'),
+  'Profile and known-site persistence routes must not start import lifecycle work',
 );
+const googleRoutes = read('server/routes/google.ts');
 assert(
-  accountRoutes.includes('user.activatedSiteUrl ||')
-    && accountRoutes.includes('...user.unlockedSites')
-    && accountRoutes.includes('...user.knownSites'),
-  'Profile priming must include the active, unlocked, and known workspace sites',
+  (googleRoutes.match(/queueGoogleWorkspaceSiteImports/g) || []).length === 3,
+  'Workspace imports should only start from explicit Google connection callbacks',
 );
 
 const database = read('server/database.ts');

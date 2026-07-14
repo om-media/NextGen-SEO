@@ -102,53 +102,13 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       await syncBingSites(db, {
         apiKey: normalizedApiKey,
         ownerId,
+        refreshMode: 'if-stale',
         siteUrls: candidateSites,
       });
     } catch (err) {
       console.warn('Failed to start initial Bing data sync', { ownerId, err });
     }
   };
-  const queueKnownSiteDataIfPossible = async (ownerId: string, knownSites: string[]) => {
-    try {
-      const user = await db.get<{
-        activatedGa4PropertyId?: string | null;
-        activatedSiteUrl?: string | null;
-        gscRefreshToken?: string | null;
-        tier?: string | null;
-        unlockedSites?: string | null;
-        bingApiKey?: string | null;
-      }>(
-        'SELECT activatedGa4PropertyId, activatedSiteUrl, gscRefreshToken, tier, unlockedSites, bingApiKey FROM users WHERE id = ?',
-        [ownerId],
-      );
-      if (!user) return;
-
-      const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
-      const accessibleSites: string[] = [];
-
-      for (const siteUrl of uniqueSites(knownSites)) {
-        if (await canAccessSite(db, ownerId, siteUrl)) {
-          accessibleSites.push(siteUrl);
-        }
-      }
-
-      for (const siteUrl of accessibleSites) {
-        await queueInitialCrawlIfNeeded(ownerId, siteUrl, user.tier);
-        if (!user.gscRefreshToken) continue;
-        const mappedPropertyId = await resolveWorkspaceGa4Property(db, ownerId, siteUrl);
-        await queueWarehouseBootstrapJobs(db, {
-          ownerId,
-          propertyId: mappedPropertyId || (siteUrl === activeSiteUrl ? user.activatedGa4PropertyId || null : null),
-          siteUrl,
-        });
-      }
-
-      await queueInitialBingSyncIfPossible(ownerId, user.bingApiKey, accessibleSites);
-    } catch (err) {
-      console.warn('Failed to queue known site data priming', { ownerId, err });
-    }
-  };
-
   app.get('/api/users/:id', authRequired, requireMatchingParam('id'), async (req, res) => {
     try {
       const user = await db.get<any>(`
@@ -171,13 +131,6 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         delete user.bingApiKey;
 
         res.json(user);
-        if (user.googleConnected) {
-          void queueKnownSiteDataIfPossible(user.id, uniqueSites([
-            user.activatedSiteUrl || '',
-            ...user.unlockedSites,
-            ...user.knownSites,
-          ]));
-        }
       } else {
         res.status(404).json({ error: 'User not found' });
       }
@@ -420,7 +373,6 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       ]));
       const normalizedKnownSites = uniqueSites(knownSites).filter((siteUrl) => existingAllowedSites.has(siteUrl));
       await db.run('UPDATE users SET knownSites = ? WHERE id = ?', [JSON.stringify(normalizedKnownSites), req.params.id]);
-      void queueKnownSiteDataIfPossible(req.params.id, normalizedKnownSites);
       res.json({ success: true, knownSites: normalizedKnownSites });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
