@@ -319,6 +319,21 @@ assert.equal(llmReport.coverage.skippedUnavailableDates, 2, 'GA4 LLM coverage sh
 assert.deepEqual((await readJobs(db, ownerId, siteUrl)).map((job) => job.jobType), ['ga4-llm-range-sync'], 'Only GA4 LLM jobs should be queued for the LLM coverage request');
 await clearJobs(db, ownerId, siteUrl);
 
+await db.run(
+  `INSERT INTO ga4_llm_referral_metrics
+     (ownerId, propertyId, siteUrl, date, source, sourceClass, pageKey, pagePath, sessions, engagedSessions, keyEvents, averageSessionDuration)
+   VALUES (?, ?, ?, ?, 'chatgpt.com', 'ChatGPT', '/', '/', 3, 2, 1, 42)`,
+  [ownerId, propertyId, siteUrl, propertyStartDate],
+);
+const rawLlmReport = await invoke(ga4LlmReportHandler, {
+  authUser: { uid: ownerId },
+  body: { autoQueue: false, endDate: propertyStartDate, propertyId, siteUrl, startDate: propertyStartDate },
+  method: 'POST:/api/warehouse/ga4/llm/report',
+});
+assert.deepEqual(rawLlmReport.source.rows[0].dimensionValues.map((value: any) => value.value), ['chatgpt.com', 'ChatGPT'], 'LLM source rows must expose raw source and provider class');
+assert.deepEqual(rawLlmReport.landingPage.rows[0].dimensionValues.map((value: any) => value.value), ['/', 'chatgpt.com', 'ChatGPT'], 'LLM landing rows must expose page, raw source, and provider class');
+await db.run('DELETE FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ?', [ownerId, propertyId, siteUrl]);
+
 const sourceCoverage = await invoke(coverageHandler, {
   authUser: { uid: ownerId },
   query: {

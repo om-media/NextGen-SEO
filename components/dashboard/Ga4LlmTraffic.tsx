@@ -348,13 +348,15 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
   // Source Table Data
   const sourceTableMap = new Map()
   data.source?.rows?.forEach((r: any) => {
-    const rawSource = getGa4DimensionValue(r)
-    if (!rawSource) return
-    const sourceClass = classifyLlmSource(rawSource)
-    
-    if (!sourceTableMap.has(sourceClass)) {
-      sourceTableMap.set(sourceClass, {
-        referrer: sourceClass,
+    const source = getGa4DimensionValue(r, 0)
+    if (!source) return
+    const provider = getGa4DimensionValue(r, 1) || classifyLlmSource(source)
+    const key = `${provider}::${source}`
+
+    if (!sourceTableMap.has(key)) {
+      sourceTableMap.set(key, {
+        provider,
+        source,
         sessions: 0,
         engagedSessions: 0,
         keyEvents: 0,
@@ -365,10 +367,10 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
         prevAvgDurationTotal: 0
       })
     }
-    
-    const entry = sourceTableMap.get(sourceClass)
+
+    const entry = sourceTableMap.get(key)
     const sessions = Number(r.metricValues?.[0]?.value || 0)
-    
+
     entry.sessions += sessions
     entry.engagedSessions += Number(r.metricValues?.[1]?.value || 0)
     entry.keyEvents += Number(r.metricValues?.[2]?.value || 0)
@@ -377,19 +379,19 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
 
   // Compare Source Table Data
   compareData?.source?.rows?.forEach((r: any) => {
-    const rawSource = getGa4DimensionValue(r)
-    if (!rawSource) return
-    const sourceClass = classifyLlmSource(rawSource)
-    if (!sourceTableMap.has(sourceClass)) return; // Only show changes for sources active in current period or we could add them. It's usually better to just show current period items.
-    
-    const entry = sourceTableMap.get(sourceClass)
+    const source = getGa4DimensionValue(r, 0)
+    if (!source) return
+    const provider = getGa4DimensionValue(r, 1) || classifyLlmSource(source)
+    const key = `${provider}::${source}`
+    if (!sourceTableMap.has(key)) return
+
+    const entry = sourceTableMap.get(key)
     const sessions = Number(r.metricValues?.[0]?.value || 0)
     entry.prevSessions += sessions
     entry.prevEngagedSessions += Number(r.metricValues?.[1]?.value || 0)
     entry.prevKeyEvents += Number(r.metricValues?.[2]?.value || 0)
     entry.prevAvgDurationTotal += Number(r.metricValues?.[3]?.value || 0) * sessions
   })
-
   // Calculate final aggregated rates for Source table
   const sourceTableData = Array.from(sourceTableMap.values()).map(r => {
     r.sessionKeyEventRate = r.sessions > 0 ? (r.keyEvents / r.sessions) * 100 : 0
@@ -403,16 +405,17 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
   // Landing Page Table Data
   const lpTableMap = new Map()
   data.landingPage?.rows?.forEach((r: any) => {
-    const lp = getGa4DimensionValue(r, 0)
-    const rawSource = getGa4DimensionValue(r, 1)
-    if (!lp || !rawSource) return
-    const sourceClass = classifyLlmSource(rawSource)
-    const key = `${lp}-${sourceClass}`
+    const landingPage = getGa4DimensionValue(r, 0)
+    const source = getGa4DimensionValue(r, 1)
+    if (!landingPage || !source) return
+    const provider = getGa4DimensionValue(r, 2) || classifyLlmSource(source)
+    const key = `${landingPage}::${provider}::${source}`
 
     if (!lpTableMap.has(key)) {
       lpTableMap.set(key, {
-        landingPage: lp,
-        referrer: sourceClass,
+        landingPage,
+        provider,
+        source,
         sessions: 0,
         engagedSessions: 0,
         keyEvents: 0,
@@ -431,12 +434,12 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
   })
 
   compareData?.landingPage?.rows?.forEach((r: any) => {
-    const lp = getGa4DimensionValue(r, 0)
-    const rawSource = getGa4DimensionValue(r, 1)
-    if (!lp || !rawSource) return
-    const sourceClass = classifyLlmSource(rawSource)
-    const key = `${lp}-${sourceClass}`
-    
+    const landingPage = getGa4DimensionValue(r, 0)
+    const source = getGa4DimensionValue(r, 1)
+    if (!landingPage || !source) return
+    const provider = getGa4DimensionValue(r, 2) || classifyLlmSource(source)
+    const key = `${landingPage}::${provider}::${source}`
+
     if (lpTableMap.has(key)) {
       const entry = lpTableMap.get(key)
       entry.prevSessions = Number(r.metricValues?.[0]?.value || 0)
@@ -445,14 +448,14 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
       entry.prevAverageSessionDuration = Number(r.metricValues?.[3]?.value || 0)
     }
   })
-
   const lpTableData = Array.from(lpTableMap.values()).sort((a: any, b: any) => b.sessions - a.sessions).slice(0, 50) || []
 
   const startDate = format(dateRange.from, "yyyy-MM-dd")
   const endDate = format(dateRange.to, "yyyy-MM-dd")
   const exportSourceRows = () => {
     exportCsv(`ga4-llm-referrers-${startDate}-${endDate}.csv`, sourceTableData.map((row: any) => ({
-      referrer: row.referrer,
+      provider: row.provider,
+      source: row.source,
       sessions: row.sessions,
       engagedSessions: row.engagedSessions,
       keyEvents: row.keyEvents,
@@ -469,7 +472,8 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
   const exportLandingPageRows = () => {
     exportCsv(`ga4-llm-landing-pages-${startDate}-${endDate}.csv`, lpTableData.map((row: any) => ({
       landingPage: row.landingPage,
-      referrer: row.referrer,
+      provider: row.provider,
+      source: row.source,
       sessions: row.sessions,
       engagedSessions: row.engagedSessions,
       keyEvents: row.keyEvents,
@@ -526,8 +530,8 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
         <Card className="col-span-1 min-w-0 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
           <CardHeader className="flex flex-col gap-3 border-b border-border bg-card sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <CardTitle>Traffic metrics by LLM referrer</CardTitle>
-              <CardDescription>Displays traffic metrics by LLM referrer.</CardDescription>
+              <CardTitle>Traffic by LLM referral source</CardTitle>
+              <CardDescription>Exact referrers grouped by provider.</CardDescription>
             </div>
             <Button variant="outline" size="sm" className="rounded-xl bg-background" onClick={exportSourceRows} disabled={sourceTableData.length === 0}>
               <Download className="mr-2 h-4 w-4" />
@@ -539,7 +543,8 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>LLM Referrer</TableHead>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>Referral source</TableHead>
                     <TableHead className="text-right">Sessions</TableHead>
                     <TableHead className="text-right">Engaged</TableHead>
                     <TableHead className="text-right">Key events</TableHead>
@@ -550,7 +555,8 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
                 <TableBody>
                   {sourceTableData.map((row, i) => (
                     <TableRow key={i}>
-                      <TableCell className="font-medium">{row.referrer}</TableCell>
+                      <TableCell className="font-medium">{row.provider}</TableCell>
+                      <TableCell className="font-mono text-xs">{row.source}</TableCell>
                       <TableCell className="text-right whitespace-nowrap">
                         <div className="flex items-center justify-end">
                           {formatValue('sessions', row.sessions.toString())}
@@ -618,7 +624,7 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
         <CardHeader className="flex flex-col gap-3 border-b border-border bg-card sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle>Landing pages by LLM referrer</CardTitle>
-            <CardDescription>Displays landing page performance by LLM referrer.</CardDescription>
+            <CardDescription>Stored landing-page performance by exact LLM referrer.</CardDescription>
           </div>
           <Button variant="outline" size="sm" className="rounded-xl bg-background" onClick={exportLandingPageRows} disabled={lpTableData.length === 0}>
             <Download className="mr-2 h-4 w-4" />
@@ -631,7 +637,8 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
               <TableHeader>
                 <TableRow>
                   <TableHead>Landing page</TableHead>
-                  <TableHead>LLM Referrer</TableHead>
+                  <TableHead>Provider</TableHead>
+                  <TableHead>Referral source</TableHead>
                   <TableHead className="text-right">Sessions</TableHead>
                   <TableHead className="text-right">Engaged sessions</TableHead>
                   <TableHead className="text-right">Key events</TableHead>
@@ -642,7 +649,8 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
                 {lpTableData.map((row: any, i: number) => (
                   <TableRow key={i}>
                     <TableCell className="max-w-[300px] truncate" title={row.landingPage}>{row.landingPage}</TableCell>
-                    <TableCell className="font-medium">{row.referrer}</TableCell>
+                    <TableCell className="font-medium">{row.provider}</TableCell>
+                    <TableCell className="font-mono text-xs">{row.source}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">
                       <div className="flex items-center justify-end">
                         {formatValue('sessions', row.sessions.toString())}

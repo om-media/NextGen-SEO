@@ -605,6 +605,44 @@ async function run() {
       }
     });
 
+    await runScenario(report, 'llm-traffic-raw-source', async (scenario) => {
+      const context = await createAuthedContext(browser, baseUrl, token);
+      context.setDefaultNavigationTimeout(30000);
+      const page = await context.newPage();
+      const monitor = installPageMonitor(page);
+
+      await page.route('**/api/warehouse/ga4/llm/report', async (route) => {
+        await route.fulfill({
+          contentType: 'application/json',
+          status: 200,
+          body: JSON.stringify({
+            coverage: { activeJobCount: 0, coveredDateCount: 1, expectedDateCount: 1, missingDateCount: 0 },
+            daily: { rows: [{ dimensionValues: [{ value: '20260712' }], metricValues: [{ value: '3' }] }] },
+            landingPage: { rows: [{ dimensionValues: [{ value: '/' }, { value: 'chatgpt.com' }, { value: 'ChatGPT' }], metricValues: [{ value: '3' }, { value: '2' }, { value: '1' }, { value: '42' }] }] },
+            metadata: { source: 'warehouse' },
+            source: { rows: [{ dimensionValues: [{ value: 'chatgpt.com' }, { value: 'ChatGPT' }], metricValues: [{ value: '3' }, { value: '2' }, { value: '1' }, { value: '42' }] }] },
+            totals: { rows: [{ metricValues: [{ value: '3' }, { value: '2' }, { value: '1' }, { value: '42' }] }] },
+          }),
+        });
+      });
+
+      try {
+        await waitForAppShell(page);
+        await clickSidebarItem(page, 'LLM Traffic');
+        await waitForCondition(async () => /Traffic by LLM referral source/i.test(await getMainText(page)), { description: 'LLM traffic source table' });
+        const mainText = await getMainText(page);
+        assert(/Provider/i.test(mainText), 'LLM traffic table did not render the provider column.');
+        assert(/Referral source/i.test(mainText), 'LLM traffic table did not render the raw source column.');
+        assert(/ChatGPT/i.test(mainText) && /chatgpt\.com/i.test(mainText), 'LLM traffic table did not preserve provider and exact source values.');
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'llm-traffic-raw-source'));
+
+        if (monitor.hasUnexpectedFailures()) {
+          scenario.failures.push(...summarizeFailures(monitor.events));
+        }
+      } finally {
+        await context.close();
+      }
+    });
     await runScenario(report, 'crawl-inventory-live', async (scenario) => {
       const context = await createAuthedContext(browser, baseUrl, token);
       context.setDefaultNavigationTimeout(30000);

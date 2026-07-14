@@ -30,6 +30,8 @@ assert(llmTraffic.includes('propertyId: string;'), 'LLM traffic view must requir
 assert(!llmTraffic.includes('userProfile?.activatedGa4PropertyId'), 'LLM traffic view must not fall back to the profile GA4 property');
 assert(!llmTraffic.includes('userProfile?.activatedSiteUrl'), 'LLM traffic view must not fall back to the profile workspace site');
 assert(llmTraffic.includes('Stored LLM traffic requires both a GA4 property and workspace site.'), 'LLM traffic view must fail closed when scope is missing');
+assert(llmTraffic.includes('Referral source'), 'LLM traffic tables must show the exact referral source');
+assert(llmTraffic.includes('source: row.source'), 'LLM traffic exports must include the exact referral source');
 
 for (const sourcePath of [
   'components/dashboard/Ga4DataGrid.tsx',
@@ -68,6 +70,7 @@ assert(
 
 assert(warehouseRoute.includes('ga4CoverageFromLedger'), 'GA4 coverage must read explicit dataset completion states');
 assert(warehouseRoute.includes('FROM warehouse_dataset_coverage'), 'GA4 coverage must query the dataset completeness ledger');
+assert(warehouseRoute.includes('GROUP BY source, sourceClass'), 'LLM source reporting must preserve raw source and provider class');
 
 const database = read('server/database.ts');
 assert(database.includes('CREATE TABLE IF NOT EXISTS warehouse_dataset_coverage'), 'Database schema must include the GA4 dataset completeness ledger');

@@ -1049,6 +1049,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         `, [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
         db.all<any>(`
           SELECT
+            source,
             sourceClass,
             SUM(sessions) AS sessions,
             SUM(engagedSessions) AS engagedSessions,
@@ -1056,13 +1057,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             CASE WHEN SUM(sessions) > 0 THEN SUM(averageSessionDuration * sessions)*1.0/SUM(sessions) ELSE 0 END AS averageSessionDuration
           FROM ga4_llm_referral_metrics
           WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND source <> ''
-          GROUP BY sourceClass
+          GROUP BY source, sourceClass
           ORDER BY sessions DESC
         `, [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
         db.all<any>(`
           SELECT
             MIN(pagePath) AS pagePath,
             pageKey,
+            source,
             sourceClass,
             SUM(sessions) AS sessions,
             SUM(engagedSessions) AS engagedSessions,
@@ -1070,7 +1072,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             CASE WHEN SUM(sessions) > 0 THEN SUM(averageSessionDuration * sessions)*1.0/SUM(sessions) ELSE 0 END AS averageSessionDuration
           FROM ga4_llm_referral_metrics
           WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND source <> '' AND pageKey <> ''
-          GROUP BY pageKey, sourceClass
+          GROUP BY pageKey, source, sourceClass
           ORDER BY sessions DESC
           LIMIT 500
         `, [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
@@ -1158,6 +1160,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           rows: landingPageRows.map((row) => ({
             dimensionValues: [
               { value: String(readField(row, 'pagePath') || '') },
+              { value: String(readField(row, 'source') || '') },
               { value: String(readField(row, 'sourceClass') || '') },
             ],
             metricValues: metricValues(row),
@@ -1166,7 +1169,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         metadata: { source: 'warehouse' },
         source: {
           rows: sourceRows.map((row) => ({
-            dimensionValues: [{ value: String(readField(row, 'sourceClass') || '') }],
+            dimensionValues: [
+              { value: String(readField(row, 'source') || '') },
+              { value: String(readField(row, 'sourceClass') || '') },
+            ],
             metricValues: metricValues(row),
           })),
         },
