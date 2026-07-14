@@ -2,7 +2,11 @@ import crypto from 'crypto';
 import type { AppDatabase } from '../database.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { canonicalPageKey } from '../reporting/url.js';
-import { resolveWorkspaceGa4Property } from './ga4Mappings.js';
+import {
+  ensureWorkspaceGa4PropertyMetadata,
+  resolveWorkspaceGa4Property,
+  resolveWorkspaceGa4PropertyStartDate,
+} from './ga4Mappings.js';
 import { refreshGscMonthlySummariesForRange } from './gscMonthlySummaries.js';
 import { googleApiFetchJson } from './googleAuth.js';
 
@@ -78,6 +82,7 @@ async function runWarehouseSyncPhase<T>(syncSource: WarehouseSyncSource, action:
 
 function failedSourceForJob(job: WarehouseJob, error: unknown): WarehouseSyncSource {
   if (error instanceof WarehouseSyncPhaseError) return error.syncSource;
+  if (job.jobType === 'ga4-page-range-sync') return 'ga4-pages';
   if (job.jobType === 'ga4-dimension-range-sync') return 'ga4-dimensions';
   if (job.jobType === 'ga4-llm-range-sync' || job.jobType === 'ga4-llm-sync') return 'ga4-llm';
   return 'core';
@@ -182,6 +187,14 @@ export function recentStableWarehouseDates(days = INITIAL_BACKFILL_DAYS) {
     dates.push(toIsoDate(addDays(end, -offset)));
   }
   return dates;
+}
+
+function stableWarehouseDates(input: { days?: number; startDate?: string | null }) {
+  const latestStableDate = toIsoDate(addDays(new Date(), -2));
+  if (isIsoDate(input.startDate) && input.startDate <= latestStableDate) {
+    return eachIsoDate(input.startDate, latestStableDate).reverse();
+  }
+  return recentStableWarehouseDates(input.days);
 }
 
 function normalizeGa4Date(value: unknown) {
@@ -890,9 +903,15 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: Re
   const jobStartDate = job.targetStartDate || job.targetDate;
   const jobEndDate = job.targetDate;
   let syncedStartDate = jobStartDate;
+  let shouldUpdateWarehouseSyncStatus = true;
   const propertyId = await resolveActiveGa4PropertyForSite(db, job);
   const scopedJob = propertyId === job.propertyId ? job : { ...job, propertyId };
-  if (job.jobType === 'ga4-llm-range-sync') {
+  if (job.jobType === 'ga4-page-range-sync') {
+    shouldUpdateWarehouseSyncStatus = false;
+    syncResult = propertyId
+      ? await runWarehouseSyncPhase('ga4-pages', () => syncGa4PageRange(db, scopedJob, jobStartDate, jobEndDate))
+      : emptySyncResult({ skippedReason: 'missing-ga4-property', source: 'ga4-pages' });
+  } else if (job.jobType === 'ga4-llm-range-sync') {
     syncResult = propertyId ? await runWarehouseSyncPhase('ga4-llm', () => syncGa4LlmRange(db, scopedJob, jobStartDate, jobEndDate)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
   } else if (job.jobType === 'ga4-dimension-range-sync') {
     syncResult = propertyId ? await runWarehouseSyncPhase('ga4-dimensions', () => syncGa4DimensionRange(db, scopedJob, jobStartDate, jobEndDate)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
@@ -1002,16 +1021,18 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: Re
     writeMs: syncResult.writeMs,
   });
   await lease.refresh();
-  await db.run(
-    `INSERT INTO warehouse_sync_status (ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, lastUpdated)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(ownerId, siteUrl) DO UPDATE SET
-       lastSyncDate=CASE WHEN warehouse_sync_status.lastSyncDate IS NULL OR excluded.lastSyncDate > warehouse_sync_status.lastSyncDate THEN excluded.lastSyncDate ELSE warehouse_sync_status.lastSyncDate END,
-       earliestSyncDate=CASE WHEN warehouse_sync_status.earliestSyncDate IS NULL OR excluded.earliestSyncDate < warehouse_sync_status.earliestSyncDate THEN excluded.earliestSyncDate ELSE warehouse_sync_status.earliestSyncDate END,
-       status=excluded.status,
-       lastUpdated=excluded.lastUpdated`,
-    [job.ownerId, job.siteUrl, jobEndDate, syncedStartDate, 'synced', nowIso()],
-  );
+  if (shouldUpdateWarehouseSyncStatus) {
+    await db.run(
+      `INSERT INTO warehouse_sync_status (ownerId, siteUrl, lastSyncDate, earliestSyncDate, status, lastUpdated)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(ownerId, siteUrl) DO UPDATE SET
+         lastSyncDate=CASE WHEN warehouse_sync_status.lastSyncDate IS NULL OR excluded.lastSyncDate > warehouse_sync_status.lastSyncDate THEN excluded.lastSyncDate ELSE warehouse_sync_status.lastSyncDate END,
+         earliestSyncDate=CASE WHEN warehouse_sync_status.earliestSyncDate IS NULL OR excluded.earliestSyncDate < warehouse_sync_status.earliestSyncDate THEN excluded.earliestSyncDate ELSE warehouse_sync_status.earliestSyncDate END,
+         status=excluded.status,
+         lastUpdated=excluded.lastUpdated`,
+      [job.ownerId, job.siteUrl, jobEndDate, syncedStartDate, 'synced', nowIso()],
+    );
+  }
   await lease.finalize({ completedAt, lastError: null, metricsJson, rowsSynced: syncResult.rowsSynced, status: 'completed' });
 }
 
@@ -1056,7 +1077,9 @@ const normalizedJobPriority = (priority: number | undefined) => {
 const compatibleWarehouseJobTypes = (jobType: string) => (
   jobType === 'daily-sync' || jobType === 'core-range-sync'
     ? ['daily-sync', 'core-range-sync']
-    : [jobType]
+    : jobType === 'ga4-page-range-sync'
+      ? ['ga4-page-range-sync', 'daily-sync', 'core-range-sync']
+      : [jobType]
 );
 
 const rangeForWarehouseJob = (job: { targetDate?: string | null; targetStartDate?: string | null }) => {
@@ -1480,8 +1503,48 @@ async function supersedeObsoleteCoreRangeJobs(db: AppDatabase) {
   }
 }
 
-async function missingGa4DimensionWarehouseDates(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
-  const dates = recentStableWarehouseDates(input.days);
+type Ga4BackfillInput = {
+  days?: number;
+  ownerId: string;
+  propertyId: string;
+  siteUrl: string;
+  startDate?: string | null;
+};
+
+async function missingGa4PageWarehouseDates(db: AppDatabase, input: Ga4BackfillInput) {
+  const dates = stableWarehouseDates(input);
+  const sortedDates = [...dates].sort();
+  const startDate = sortedDates[0];
+  const endDate = sortedDates[sortedDates.length - 1];
+  if (!startDate || !endDate) return [];
+
+  const [pageRows, jobRows] = await Promise.all([
+    db.all<{ date: string }>(`
+      SELECT date
+      FROM ga4_page_metrics
+      WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+      GROUP BY date
+    `, [input.ownerId, input.propertyId, input.siteUrl, startDate, endDate]),
+    db.all<{ targetDate: string; targetStartDate: string | null }>(`
+      SELECT targetStartDate, targetDate
+      FROM warehouse_jobs
+      WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ?
+        AND jobType IN ('ga4-page-range-sync', 'daily-sync', 'core-range-sync')
+        AND status IN ('queued', 'retrying', 'running')
+        AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
+    `, [input.ownerId, input.siteUrl, input.propertyId, startDate, endDate]),
+  ]);
+
+  const storedDates = new Set(pageRows.map((row) => row.date));
+  const activeJobDates = new Set<string>();
+  for (const row of jobRows) {
+    for (const date of jobDatesWithin(row, startDate, endDate)) activeJobDates.add(date);
+  }
+  return dates.filter((date) => !storedDates.has(date) && !activeJobDates.has(date));
+}
+
+async function missingGa4DimensionWarehouseDates(db: AppDatabase, input: Ga4BackfillInput) {
+  const dates = stableWarehouseDates(input);
   const sortedDates = [...dates].sort();
   const startDate = sortedDates[0];
   const endDate = sortedDates[sortedDates.length - 1];
@@ -1516,8 +1579,8 @@ async function missingGa4DimensionWarehouseDates(db: AppDatabase, input: { days?
   return dates.filter((date) => (dimensionCountsByDate.get(date) || 0) < requiredDimensionCount && !activeJobDates.has(date));
 }
 
-async function missingGa4LlmWarehouseDates(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
-  const dates = recentStableWarehouseDates(input.days);
+async function missingGa4LlmWarehouseDates(db: AppDatabase, input: Ga4BackfillInput) {
+  const dates = stableWarehouseDates(input);
   const sortedDates = [...dates].sort();
   const startDate = sortedDates[0];
   const endDate = sortedDates[sortedDates.length - 1];
@@ -1569,7 +1632,24 @@ export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?
   return jobs;
 }
 
-export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
+export async function queueWarehouseGa4PageBackfillJobs(db: AppDatabase, input: Ga4BackfillInput) {
+  const jobs = [];
+  const missingDates = await missingGa4PageWarehouseDates(db, input);
+  for (const chunk of chunkDescendingDates(missingDates, CORE_RANGE_JOB_DAYS)) {
+    const job = await queueWarehouseGa4PageRangeJob(db, {
+      endDate: chunk.endDate,
+      ownerId: input.ownerId,
+      priority: BOOTSTRAP_DETAIL_JOB_PRIORITY,
+      propertyId: input.propertyId,
+      siteUrl: input.siteUrl,
+      startDate: chunk.startDate,
+    });
+    jobs.push(job);
+  }
+  return jobs;
+}
+
+export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: Ga4BackfillInput) {
   const jobs = [];
   const missingDates = await missingGa4LlmWarehouseDates(db, input);
   for (const chunk of chunkDescendingDates(missingDates, LLM_RANGE_JOB_DAYS)) {
@@ -1587,7 +1667,7 @@ export async function queueWarehouseLlmBackfillJobs(db: AppDatabase, input: { da
   return jobs;
 }
 
-export async function queueWarehouseGa4DimensionBackfillJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId: string; siteUrl: string }) {
+export async function queueWarehouseGa4DimensionBackfillJobs(db: AppDatabase, input: Ga4BackfillInput) {
   const jobs = [];
   const missingDates = await missingGa4DimensionWarehouseDates(db, input);
   for (const chunk of chunkDescendingDates(missingDates, GA4_DIMENSION_RANGE_JOB_DAYS)) {
@@ -1606,31 +1686,51 @@ export async function queueWarehouseGa4DimensionBackfillJobs(db: AppDatabase, in
 
 export async function queueWarehouseBootstrapJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId?: string | null; siteUrl: string }) {
   const core = await queueWarehouseBackfillJobs(db, input);
-  const ga4Dimensions = input.propertyId
-    ? await queueWarehouseGa4DimensionBackfillJobs(db, {
+  let ga4StartDate: string | null = null;
+  if (input.propertyId) {
+    try {
+      await ensureWorkspaceGa4PropertyMetadata(db, {
+        ownerId: input.ownerId,
+        propertyId: input.propertyId,
+        siteUrl: input.siteUrl,
+      });
+      ga4StartDate = await resolveWorkspaceGa4PropertyStartDate(
+        db,
+        input.ownerId,
+        input.siteUrl,
+        input.propertyId,
+      );
+    } catch (error) {
+      console.warn('[warehouse] Unable to resolve GA4 property history start; using the configured bootstrap range.', {
+        error,
+        ownerId: input.ownerId,
+        propertyId: input.propertyId,
+        siteUrl: input.siteUrl,
+      });
+    }
+  }
+
+  const ga4Input: Ga4BackfillInput | null = input.propertyId
+    ? {
       days: input.days,
       ownerId: input.ownerId,
       propertyId: input.propertyId,
       siteUrl: input.siteUrl,
-    })
-    : [];
-  const llm = input.propertyId
-    ? await queueWarehouseLlmBackfillJobs(db, {
-      days: input.days,
-      ownerId: input.ownerId,
-      propertyId: input.propertyId,
-      siteUrl: input.siteUrl,
-    })
-    : [];
+      startDate: ga4StartDate,
+    }
+    : null;
+  const ga4Pages = ga4Input ? await queueWarehouseGa4PageBackfillJobs(db, ga4Input) : [];
+  const ga4Dimensions = ga4Input ? await queueWarehouseGa4DimensionBackfillJobs(db, ga4Input) : [];
+  const llm = ga4Input ? await queueWarehouseLlmBackfillJobs(db, ga4Input) : [];
 
   return {
     core,
     ga4Dimensions,
+    ga4Pages,
     llm,
-    totalQueued: core.length + ga4Dimensions.length + llm.length,
+    totalQueued: core.length + ga4Pages.length + ga4Dimensions.length + llm.length,
   };
 }
-
 export async function queueWarehouseLlmRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; priority?: number; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
   return queueWarehouseSyncJob(db, {
     dedupeCompleted: input.dedupeCompleted,
@@ -1648,6 +1748,19 @@ export async function queueWarehouseCoreRangeJob(db: AppDatabase, input: { dedup
   return queueWarehouseSyncJob(db, {
     dedupeCompleted: input.dedupeCompleted,
     jobType: 'core-range-sync',
+    ownerId: input.ownerId,
+    priority: input.priority,
+    propertyId: input.propertyId,
+    siteUrl: input.siteUrl,
+    targetDate: input.endDate,
+    targetStartDate: input.startDate,
+  });
+}
+
+export async function queueWarehouseGa4PageRangeJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; priority?: number; propertyId: string; siteUrl: string; startDate: string; endDate: string }) {
+  return queueWarehouseSyncJob(db, {
+    dedupeCompleted: input.dedupeCompleted,
+    jobType: 'ga4-page-range-sync',
     ownerId: input.ownerId,
     priority: input.priority,
     propertyId: input.propertyId,

@@ -78,6 +78,7 @@ await db.exec(`
     siteUrl TEXT NOT NULL,
     propertyId TEXT NOT NULL,
     displayName TEXT,
+    propertyCreatedAt TEXT,
     updatedAt TEXT,
     PRIMARY KEY (ownerId, siteUrl)
   );
@@ -123,6 +124,10 @@ await db.run(
 const stableDates = recentStableWarehouseDates(14);
 assert(stableDates.length === 14, 'Expected 14 stable dates');
 const targetDate = stableDates[0];
+await db.run(
+  'INSERT INTO workspace_ga4_mappings (ownerId, siteUrl, propertyId, displayName, propertyCreatedAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)',
+  [ownerId, siteUrl, propertyId, 'Scheduler property', `${stableDates.at(-1)}T00:00:00.000Z`, new Date().toISOString()],
+);
 
 await runWarehouseDailySchedulerTick(db);
 const firstPassJobs = await db.all<{ jobType: string; propertyId: string | null; siteUrl: string; status: string; targetStartDate: string | null; targetDate: string }>(

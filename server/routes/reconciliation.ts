@@ -389,7 +389,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
             SELECT jobType, metricsJson, propertyId, status, targetStartDate, targetDate
             FROM warehouse_jobs
             WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
-              AND jobType IN ('daily-sync', 'core-range-sync')
+              AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync')
           `, [ownerId, siteUrl, startDate, effectiveEndDate]),
         ]);
         const completedDates = new Set<string>();
@@ -397,7 +397,7 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
         const completedJobs = ga4JobRows.filter((row) => (
           row.status === 'completed'
           && row.propertyId === propertyId
-          && completedJobIncludedProperty(row, propertyId)
+          && (row.jobType === 'ga4-page-range-sync' || completedJobIncludedProperty(row, propertyId))
         ));
         const activeJobs = ga4JobRows.filter((row) => (
           ['queued', 'retrying', 'running'].includes(row.status)

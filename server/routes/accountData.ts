@@ -8,7 +8,7 @@ import { buildLegacyBingRangeMeta, getBingCacheStatus, listBingQueryStatsForRang
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
-import { resolveWorkspaceGa4Property, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
+import { ensureWorkspaceGa4PropertyMetadata, resolveWorkspaceGa4Property, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
 import { getInitialRegistrationTier } from '../services/registrationTier.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
@@ -69,6 +69,9 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       const activeSiteUrl = typeof user.activatedSiteUrl === 'string' ? user.activatedSiteUrl.trim() : '';
       if (propertyId) {
         await upsertWorkspaceGa4Mapping(db, { ownerId, propertyId, siteUrl });
+        await ensureWorkspaceGa4PropertyMetadata(db, { ownerId, propertyId, siteUrl }).catch((err) => {
+          console.warn('Failed to load GA4 property metadata', { ownerId, propertyId, siteUrl, err });
+        });
       }
       const mappedPropertyId = await resolveWorkspaceGa4Property(db, ownerId, siteUrl);
       const activePropertyId = siteUrl === activeSiteUrl ? propertyId || mappedPropertyId || user.activatedGa4PropertyId || null : mappedPropertyId;

@@ -129,6 +129,7 @@ const commonSchemaSql = `
     siteUrl TEXT NOT NULL,
     propertyId TEXT NOT NULL,
     displayName TEXT,
+    propertyCreatedAt TEXT,
     updatedAt TEXT,
     PRIMARY KEY (ownerId, siteUrl)
   );
@@ -1584,6 +1585,7 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE users ADD COLUMN activatedSiteUrl TEXT',
     'ALTER TABLE users ADD COLUMN activatedGa4PropertyId TEXT',
     'ALTER TABLE users ADD COLUMN activatedGa4DisplayName TEXT',
+    'ALTER TABLE workspace_ga4_mappings ADD COLUMN propertyCreatedAt TEXT',
     'ALTER TABLE tracked_keywords ADD COLUMN targetDomain TEXT',
     'ALTER TABLE tracked_keywords ADD COLUMN ownerId TEXT',
     'ALTER TABLE server_logs ADD COLUMN ownerId TEXT',
@@ -1682,6 +1684,7 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS activatedSiteUrl TEXT',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS activatedGa4PropertyId TEXT',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS activatedGa4DisplayName TEXT',
+    'ALTER TABLE workspace_ga4_mappings ADD COLUMN IF NOT EXISTS propertyCreatedAt TEXT',
     'ALTER TABLE tracked_keywords ADD COLUMN IF NOT EXISTS targetDomain TEXT',
     'ALTER TABLE tracked_keywords ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE server_logs ADD COLUMN IF NOT EXISTS ownerId TEXT',

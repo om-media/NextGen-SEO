@@ -11,6 +11,8 @@ process.env.APP_BASE_URL = 'http://localhost:3000';
 
 const { registerAccountDataRoutes } = await import('../server/routes/accountData.js');
 const { registerGoogleRoutes } = await import('../server/routes/google.js');
+const { registerWarehouseRoutes } = await import('../server/routes/warehouse.js');
+const { registerWorkspaceCrudRoutes } = await import('../server/routes/workspaceCrud.js');
 const { runBingDailySchedulerTick } = await import('../server/services/bingWarehouse.js');
 const { runWarehouseDailySchedulerTick } = await import('../server/services/warehouseJobs.js');
 
@@ -110,6 +112,19 @@ const assert = (condition: unknown, message: string) => {
   if (!condition) throw new Error(message);
 };
 
+const addIsoDays = (isoDate: string, days: number) => {
+  const value = new Date(`${isoDate}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+};
+
+const latestStableReportingDate = () => {
+  const value = new Date();
+  value.setUTCHours(0, 0, 0, 0);
+  value.setUTCDate(value.getUTCDate() - 2);
+  return value.toISOString().slice(0, 10);
+};
+
 const fetchLog: string[] = [];
 const bingFactDate = '2026-07-01';
 const bingFactTimestamp = Date.UTC(2026, 6, 1);
@@ -155,6 +170,15 @@ globalThis.fetch = (async (input: string | URL | Request) => {
       },
     } as Response;
   }
+  if (url === 'https://analyticsadmin.googleapis.com/v1beta/properties/123') {
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { createTime: '2024-01-15T00:00:00Z', displayName: 'Primary GA4' };
+      },
+    } as Response;
+  }
   throw new Error(`Unexpected fetch: ${url}`);
 }) as typeof fetch;
 
@@ -187,7 +211,17 @@ try {
       siteUrl TEXT NOT NULL,
       propertyId TEXT NOT NULL,
       displayName TEXT,
+      propertyCreatedAt TEXT,
       updatedAt TEXT,
+      PRIMARY KEY (ownerId, siteUrl)
+    );
+    CREATE TABLE warehouse_sync_status (
+      ownerId TEXT NOT NULL,
+      siteUrl TEXT NOT NULL,
+      lastSyncDate TEXT,
+      earliestSyncDate TEXT,
+      status TEXT,
+      lastUpdated TEXT,
       PRIMARY KEY (ownerId, siteUrl)
     );
     CREATE TABLE warehouse_jobs (
@@ -238,6 +272,13 @@ try {
       includeQueryStrings INTEGER,
       userAgent TEXT
     );
+    CREATE TABLE crawl_pages (
+      ownerId TEXT,
+      siteUrl TEXT,
+      jobId TEXT,
+      statusCode INTEGER,
+      noindex INTEGER
+    );
     CREATE TABLE gsc_site_metrics (ownerId TEXT, siteUrl TEXT, date TEXT, clicks INTEGER, impressions INTEGER, ctr REAL, position REAL);
     CREATE TABLE gsc_query_metrics (ownerId TEXT, siteUrl TEXT, date TEXT, query TEXT, clicks INTEGER, impressions INTEGER, ctr REAL, position REAL);
     CREATE TABLE gsc_page_query_metrics (ownerId TEXT, siteUrl TEXT, date TEXT, page TEXT, pageKey TEXT, query TEXT, clicks INTEGER, impressions INTEGER, ctr REAL, position REAL);
@@ -287,6 +328,8 @@ try {
   const app = new FakeApp();
   registerAccountDataRoutes(app as any, db);
   registerGoogleRoutes(app as any, db);
+  registerWarehouseRoutes(app as any, db);
+  registerWorkspaceCrudRoutes(app as any, db);
 
   const onboardingHandler = app.routes.get('PUT:/api/users/:id/onboarding')?.at(-1);
   assert(onboardingHandler, 'Missing onboarding handler');
@@ -380,6 +423,45 @@ try {
   assert(Number(passiveKnownSiteBingRows?.count || 0) === 0, 'Passive Google site discovery should not sync Bing data');
   assert(String(userRow?.knownSites || '').includes(knownSiteUrl), 'Passive Google site discovery should persist the discovered known site');
 
+  await db.run('DELETE FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ?', [ownerId, activeSiteUrl]);
+
+  const oldGa4EndDate = addIsoDays(latestStableReportingDate(), -520);
+  const oldGa4StartDate = addIsoDays(oldGa4EndDate, -6);
+  const missingJobsHandler = app.routes.get('POST:/api/warehouse/jobs/missing')?.at(-1);
+  assert(missingJobsHandler, 'Missing warehouse missing-days handler');
+  const missingJobsRes = new FakeResponse();
+  await missingJobsHandler!(
+    {
+      authUser: { uid: ownerId },
+      body: { endDate: oldGa4EndDate, maxDates: 3, propertyId, siteUrl: activeSiteUrl, startDate: oldGa4StartDate },
+    },
+    missingJobsRes,
+  );
+  const missingJobsBody = missingJobsRes.body as any;
+  assert(missingJobsRes.statusCode === 200, `Missing-days route returned ${missingJobsRes.statusCode}`);
+  assert(missingJobsBody?.queuedGa4PageDates === 7, 'GA4 page queueing should cover the full requested range instead of inheriting the GSC queue limit');
+  assert((missingJobsBody?.jobs || []).some((job: any) => job.jobType === 'ga4-page-range-sync'), 'Old GA4 page gaps should queue dedicated GA4 page-range jobs');
+  assert(!(missingJobsBody?.jobs || []).some((job: any) => job.jobType === 'core-range-sync'), 'Old GA4 page gaps must not queue GSC core jobs outside GSC history');
+  const oldGa4QueuedJobs = await db.all<{ jobType: string }>(
+    'SELECT jobType FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND targetStartDate = ? AND targetDate = ?',
+    [ownerId, activeSiteUrl, oldGa4StartDate, oldGa4EndDate],
+  );
+  assert(oldGa4QueuedJobs.some((job) => job.jobType === 'ga4-page-range-sync'), 'Old GA4 page gaps should persist GA4 page-range jobs');
+  assert(oldGa4QueuedJobs.every((job) => job.jobType !== 'core-range-sync'), 'Old GA4 page gaps must not persist GSC core jobs');
+
+  const workspaceStatusHandler = app.routes.get('GET:/api/workspace/sites/status')?.at(-1);
+  assert(workspaceStatusHandler, 'Missing workspace sites status handler');
+  const workspaceStatusRes = new FakeResponse();
+  await workspaceStatusHandler!(
+    { authUser: { uid: ownerId } },
+    workspaceStatusRes,
+  );
+  assert(workspaceStatusRes.statusCode === 200, `Workspace sites status route returned ${workspaceStatusRes.statusCode}`);
+  const workspaceStatusBody = workspaceStatusRes.body as any;
+  const activeSiteStatus = (workspaceStatusBody?.sites || []).find((site: any) => site.siteUrl === activeSiteUrl);
+  assert(activeSiteStatus?.warehouse?.jobs?.latest?.targetStartDate === oldGa4StartDate, 'Workspace status should surface the latest GA4 page-range job start date');
+  assert(activeSiteStatus?.warehouse?.jobs?.latest?.targetDate === oldGa4EndDate, 'Workspace status should surface the latest GA4 page-range job end date');
+
   const countBingFetches = (siteUrl: string) => fetchLog.filter((url) => {
     if (!url.startsWith('https://ssl.bing.com/webmaster/api.svc/json/GetQueryStats')) return false;
     return new URL(url).searchParams.get('siteUrl') === siteUrl;
@@ -401,10 +483,10 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    activeSiteJobsAfterOnboarding,
-    passiveKnownSiteJobs,
-    knownSiteJobs,
-    fetchLog,
+    activeSiteJobCount: activeSiteJobsAfterOnboarding.length,
+    passiveKnownSiteJobCount: passiveKnownSiteJobs.length,
+    knownSiteJobCount: knownSiteJobs.length,
+    fetchCount: fetchLog.length,
   }, null, 2));
 
   await db.close();

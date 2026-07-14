@@ -23,6 +23,7 @@ import {
   queueWarehouseBootstrapJobs,
   queueWarehouseCoreRangeJob,
   queueWarehouseGa4DimensionRangeJob,
+  queueWarehouseGa4PageRangeJob,
   queueWarehouseLlmRangeJob,
   queueWarehouseSyncJob,
 } from '../services/warehouseJobs.js';
@@ -39,6 +40,8 @@ import {
 const GA4_WAREHOUSE_METRICS = new Set(['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount']);
 const GA4_DIMENSION_WAREHOUSE_METRICS: Record<string, Set<string>> = {};
 const GA4_PAGE_WAREHOUSE_DIMENSIONS = new Set(['date', 'pagePath', 'landingPagePlusQueryString']);
+const CORE_WAREHOUSE_JOB_TYPES = ['daily-sync', 'core-range-sync'] as const;
+const GA4_PAGE_RANGE_JOB_TYPE = 'ga4-page-range-sync';
 const GA4_DIMENSION_WAREHOUSE_DIMENSIONS = new Set([
   'browser',
   'city',
@@ -167,6 +170,10 @@ const chunkAscendingDates = (dates: string[], maxDays: number) => {
   }
   return chunks;
 };
+
+const isCoreWarehouseJobType = (jobType: string): jobType is typeof CORE_WAREHOUSE_JOB_TYPES[number] => (
+  CORE_WAREHOUSE_JOB_TYPES.includes(jobType as typeof CORE_WAREHOUSE_JOB_TYPES[number])
+);
 
 const coverageFromRows = (
   expectedDates: string[],
@@ -503,17 +510,19 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         SELECT jobType, propertyId, status, targetStartDate, targetDate
         FROM warehouse_jobs
         WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
-          AND jobType IN ('daily-sync', 'core-range-sync')
+          AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync')
           AND status IN ('queued', 'retrying', 'running')
       `, [ownerId, siteUrl, startDate, effectiveEndDate]),
     ]);
+    const activeJobs = jobRows.filter((row) => (
+      row.status !== 'completed'
+      && (
+        row.jobType === GA4_PAGE_RANGE_JOB_TYPE
+        || (isCoreWarehouseJobType(row.jobType) && row.propertyId === propertyId)
+      )
+    ));
     const activeDates = new Set<string>();
-    for (const job of jobRows) {
-      if (job.propertyId !== propertyId) continue;
-      if (job.status !== 'completed') {
-        addJobDatesToSet(activeDates, [job], startDate, effectiveEndDate);
-      }
-    }
+    addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
     const coveredDates = new Set(coverageRows.map((row) => row.date));
     const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
     const datesToQueue = missingDates.filter((date) => !activeDates.has(date));
@@ -521,7 +530,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     if (autoQueue) {
       await promoteWarehouseJobsForRange(db, {
         endDate: effectiveEndDate,
-        jobTypes: ['core-range-sync'],
+        jobTypes: [GA4_PAGE_RANGE_JOB_TYPE],
         ownerId,
         priority: USER_REQUESTED_JOB_PRIORITY,
         propertyId,
@@ -529,7 +538,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         startDate,
       });
       for (const chunk of chunkAscendingDates(datesToQueue, CORE_RANGE_JOB_DAYS)) {
-        const job = await queueWarehouseCoreRangeJob(db, {
+        const job = await queueWarehouseGa4PageRangeJob(db, {
           endDate: chunk.endDate,
           ownerId,
           priority: USER_REQUESTED_JOB_PRIORITY,
@@ -544,7 +553,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const coverage = {
       ...coverageFromRows(expectedDates, coverageRows),
       activeDateCount: activeDates.size,
-      activeJobCount: jobRows.filter((row) => row.propertyId === propertyId && row.status !== 'completed').length + queuedJobs.length,
+      activeJobCount: activeJobs.length + queuedJobs.length,
       latestAvailableDate,
       queued: queuedJobs.length,
       queuedDateCount: autoQueue ? datesToQueue.length : 0,
@@ -1384,11 +1393,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         : '';
 
       const latestAvailableDate = latestStableReportingDate();
-      const earliestAvailableDate = earliestSearchConsoleReportingDate();
-      const effectiveStartDate = maxIsoDate(startDate, earliestAvailableDate);
+      const gscEarliestAvailableDate = earliestSearchConsoleReportingDate();
+      const effectiveStartDate = startDate;
+      const gscEffectiveStartDate = maxIsoDate(startDate, gscEarliestAvailableDate);
       const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
-      const expectedDates = eachIsoDate(effectiveStartDate, effectiveEndDate);
-      const useLightweightGscDetailCoverage = expectedDates.length >= LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD;
+      const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
+      const gscExpectedDates = gscEffectiveStartDate <= effectiveEndDate ? eachIsoDate(gscEffectiveStartDate, effectiveEndDate) : [];
+      const useLightweightGscDetailCoverage = gscExpectedDates.length >= LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD;
       const unavailableDates = endDate > latestAvailableDate
         ? eachIsoDate(maxIsoDate(startDate, addIsoDays(latestAvailableDate, 1)), endDate)
         : [];
@@ -1399,7 +1410,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
           ORDER BY date ASC
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
         useLightweightGscDetailCoverage
           ? Promise.resolve([])
           : db.all<{ date: string; rowCount: number }>(`
@@ -1408,7 +1419,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
-          `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+          `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
         useLightweightGscDetailCoverage
           ? Promise.resolve([])
           : db.all<{ date: string; rowCount: number }>(`
@@ -1417,7 +1428,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
-          `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+          `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
         useLightweightGscDetailCoverage
           ? Promise.resolve([])
           : db.all<{ date: string; rowCount: number }>(`
@@ -1426,7 +1437,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
-          `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+          `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
         effectivePropertyId
           ? db.all<{ date: string; rowCount: number }>(`
             SELECT date, COUNT(*) AS rowCount
@@ -1465,17 +1476,17 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           SELECT jobType, lastError, metricsJson, propertyId, status, targetStartDate, targetDate, updatedAt
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
-            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
+            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
           ORDER BY updatedAt DESC
         `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
         getBingCacheStatus(db, ownerId, siteUrl),
         db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [ownerId]),
       ]);
+      const activeJobs = warehouseJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
+      const errorJobs = warehouseJobRows.filter((row) => row.status === 'error');
       const gscQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscQueryRows;
       const gscPageQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscPageQueryRows;
       const gscCountryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscCountryRows;
-      const activeJobs = warehouseJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
-      const errorJobs = warehouseJobRows.filter((row) => row.status === 'error');
       const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
       const gscQueryDates = new Set(gscQueryCoverageRows.map((row) => row.date));
       const gscPageQueryDates = new Set(gscPageQueryCoverageRows.map((row) => row.date));
@@ -1483,11 +1494,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
       const ga4DimensionDateCounts = new Map(ga4DimensionRows.map((row) => [row.date, toCoverageNumber(row.rowCount)]));
       const ga4LlmDates = new Set(ga4LlmRows.map((row) => row.date));
-      const missingCoreDates = new Set(expectedDates.filter((date) => {
-        const needsGsc = (!gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date));
-        const needsGa4 = Boolean(effectivePropertyId && !ga4PageDates.has(date));
-        return needsGsc || needsGa4;
-      }));
+      const missingGscDates = new Set(gscExpectedDates.filter((date) => (
+        !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date)
+      )));
+      const missingGa4PageDates = new Set(expectedDates.filter((date) => Boolean(
+        effectivePropertyId
+        && !ga4PageDates.has(date),
+      )));
       const missingGa4DimensionDates = new Set(expectedDates.filter((date) => Boolean(
         effectivePropertyId
         && (ga4DimensionDateCounts.get(date) || 0) < GA4_DIMENSION_DATASET_COUNT,
@@ -1496,7 +1509,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         effectivePropertyId
         && !ga4LlmDates.has(date),
       )));
-      const missingDates = new Set([...missingCoreDates, ...missingGa4DimensionDates, ...missingGa4LlmDates]);
+      const missingDates = new Set([...missingGscDates, ...missingGa4PageDates, ...missingGa4DimensionDates, ...missingGa4LlmDates]);
       const relevantActiveJobs = activeJobs.filter((job) => {
         const dates = jobDatesWithin(job, effectiveStartDate, effectiveEndDate);
         if (job.jobType === 'ga4-dimension-range-sync') {
@@ -1505,7 +1518,20 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         if (job.jobType === 'ga4-llm-range-sync') {
           return dates.some((date) => missingGa4LlmDates.has(date));
         }
-        return dates.some((date) => missingCoreDates.has(date));
+        if (job.jobType === GA4_PAGE_RANGE_JOB_TYPE) {
+          return Boolean(
+            effectivePropertyId
+            && job.propertyId === effectivePropertyId
+            && dates.some((date) => missingGa4PageDates.has(date)),
+          );
+        }
+        if (!isCoreWarehouseJobType(job.jobType)) {
+          return false;
+        }
+        return dates.some((date) => (
+          missingGscDates.has(date)
+          || Boolean(effectivePropertyId && job.propertyId === effectivePropertyId && missingGa4PageDates.has(date))
+        ));
       });
       const relevantErrorJobs = errorJobs.filter((job) => {
         const dates = jobDatesWithin(job, effectiveStartDate, effectiveEndDate);
@@ -1515,18 +1541,49 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         if (job.jobType === 'ga4-llm-range-sync') {
           return dates.some((date) => missingGa4LlmDates.has(date));
         }
-        return dates.some((date) => missingCoreDates.has(date));
+        if (job.jobType === GA4_PAGE_RANGE_JOB_TYPE) {
+          return Boolean(
+            effectivePropertyId
+            && job.propertyId === effectivePropertyId
+            && dates.some((date) => missingGa4PageDates.has(date)),
+          );
+        }
+        if (!isCoreWarehouseJobType(job.jobType)) {
+          return false;
+        }
+        return dates.some((date) => (
+          missingGscDates.has(date)
+          || Boolean(effectivePropertyId && job.propertyId === effectivePropertyId && missingGa4PageDates.has(date))
+        ));
       });
       const coreActiveJobs = relevantActiveJobs.filter((job) => ['daily-sync', 'core-range-sync'].includes(job.jobType));
-      const sourceActiveSummary = (source: 'gsc' | 'ga4-pages') => coreActiveJobs.reduce((counts, job) => {
-        if (source === 'ga4-pages' && (!effectivePropertyId || (job.propertyId && job.propertyId !== effectivePropertyId))) return counts;
-        counts[job.status] = (counts[job.status] || 0) + 1;
-        return counts;
-      }, {} as Record<string, number>);
+      const ga4PageActiveJobs = relevantActiveJobs.filter((job) => (
+        job.jobType === GA4_PAGE_RANGE_JOB_TYPE
+        && effectivePropertyId
+        && job.propertyId === effectivePropertyId
+      ));
+      const coreJobSupportsGsc = (job: typeof coreActiveJobs[number]) => (
+        jobDatesWithin(job, effectiveStartDate, effectiveEndDate).some((date) => missingGscDates.has(date))
+      );
+      const coreJobSupportsGa4Pages = (job: typeof coreActiveJobs[number]) => Boolean(
+        effectivePropertyId
+        && job.propertyId === effectivePropertyId
+        && jobDatesWithin(job, effectiveStartDate, effectiveEndDate).some((date) => missingGa4PageDates.has(date)),
+      );
+      const sourceActiveSummary = (source: 'gsc' | 'ga4-pages') => {
+        const jobs = source === 'gsc'
+          ? coreActiveJobs.filter(coreJobSupportsGsc)
+          : [...coreActiveJobs.filter(coreJobSupportsGa4Pages), ...ga4PageActiveJobs];
+        return jobs.reduce((counts, job) => {
+          counts[job.status] = (counts[job.status] || 0) + 1;
+          return counts;
+        }, {} as Record<string, number>);
+      };
       const failedSource = (job: typeof relevantErrorJobs[number]) => {
         const metrics = parseWarehouseJobMetrics(job.metricsJson);
         const source = typeof metrics?.failedSource === 'string' ? metrics.failedSource : '';
         if (['gsc', 'ga4-pages', 'ga4-dimensions', 'ga4-llm'].includes(source)) return source;
+        if (job.jobType === GA4_PAGE_RANGE_JOB_TYPE) return 'ga4-pages';
         return ['daily-sync', 'core-range-sync'].includes(job.jobType) ? 'core' : source;
       };
       const sourceErrorSummary = (source: 'gsc' | 'ga4-pages' | 'core') => {
@@ -1548,6 +1605,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
       const autoQueueMissingHistory = req.query.autoQueue === 'true';
       let autoQueuedCoreJobs = 0;
+      let autoQueuedGa4PageJobs = 0;
       let autoQueuedGa4DimensionJobs = 0;
       let autoQueuedGa4LlmJobs = 0;
       if (autoQueueMissingHistory && expectedDates.length > 0) {
@@ -1556,30 +1614,33 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           [ownerId],
         );
         if (user?.gscRefreshToken) {
-          const handledCoreDates = new Set<string>();
-          const coreJobsByDate = new Map<string, Array<{ jobType: string; metricsJson: string | null; propertyId: string | null; status: string }>>();
-          for (const row of warehouseJobRows.filter((job) => (
-            ['daily-sync', 'core-range-sync'].includes(job.jobType)
-            && ['queued', 'retrying', 'running'].includes(job.status)
-          ))) {
-            for (const date of jobDatesWithin(row, effectiveStartDate, effectiveEndDate)) {
-              const rows = coreJobsByDate.get(date) || [];
-              rows.push(row);
-              coreJobsByDate.set(date, rows);
-            }
+          const handledGscDates = new Set<string>();
+          addJobDatesToSet(
+            handledGscDates,
+            warehouseJobRows.filter((row) => (
+              isCoreWarehouseJobType(row.jobType)
+              && ['queued', 'retrying', 'running'].includes(row.status)
+            )),
+            gscEffectiveStartDate,
+            effectiveEndDate,
+          );
+          for (const date of [...handledGscDates]) {
+            if (!missingGscDates.has(date)) handledGscDates.delete(date);
           }
-          for (const date of expectedDates) {
-            const jobsForDate = coreJobsByDate.get(date) || [];
-            const needsGscForDate = !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date);
-            const needsGa4ForDate = Boolean(effectivePropertyId && !ga4PageDates.has(date));
-            const hasGscJob = jobsForDate.length > 0;
-            const hasGa4Job = Boolean(
-              effectivePropertyId
-              && jobsForDate.some((row) => row.propertyId === effectivePropertyId),
-            );
-            if ((!needsGscForDate || hasGscJob) && (!needsGa4ForDate || hasGa4Job)) {
-              handledCoreDates.add(date);
-            }
+          const handledGa4PageDates = new Set<string>();
+          addJobDatesToSet(
+            handledGa4PageDates,
+            warehouseJobRows.filter((row) => (
+              Boolean(effectivePropertyId)
+              && row.propertyId === effectivePropertyId
+              && ['queued', 'retrying', 'running'].includes(row.status)
+              && (row.jobType === GA4_PAGE_RANGE_JOB_TYPE || isCoreWarehouseJobType(row.jobType))
+            )),
+            effectiveStartDate,
+            effectiveEndDate,
+          );
+          for (const date of [...handledGa4PageDates]) {
+            if (!missingGa4PageDates.has(date)) handledGa4PageDates.delete(date);
           }
           const handledGa4DimensionDates = new Set<string>();
           addJobDatesToSet(
@@ -1603,9 +1664,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             effectiveStartDate,
             effectiveEndDate,
           );
-          const coreDatesToQueue = expectedDates
-            .filter((date) => missingCoreDates.has(date) && !handledCoreDates.has(date))
+          const coreDatesToQueue = gscExpectedDates
+            .filter((date) => missingGscDates.has(date) && !handledGscDates.has(date))
             .sort();
+          const ga4PageDatesToQueue = effectivePropertyId
+            ? expectedDates
+              .filter((date) => missingGa4PageDates.has(date) && !handledGa4PageDates.has(date))
+              .sort()
+            : [];
           const ga4DimensionDatesToQueue = effectivePropertyId
             ? expectedDates
               .filter((date) => missingGa4DimensionDates.has(date) && !handledGa4DimensionDates.has(date))
@@ -1617,27 +1683,49 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               .sort()
             : [];
 
-          await promoteWarehouseJobsForRange(db, {
-            endDate: effectiveEndDate,
-            jobTypes: ['core-range-sync'],
-            ownerId,
-            priority: USER_REQUESTED_JOB_PRIORITY,
-            propertyId: effectivePropertyId || null,
-            siteUrl,
-            startDate: effectiveStartDate,
-          });
-          for (const chunk of chunkAscendingDates(coreDatesToQueue, CORE_RANGE_JOB_DAYS)) {
-            const job = await queueWarehouseCoreRangeJob(db, {
-              endDate: chunk.endDate,
+          if (gscExpectedDates.length > 0) {
+            await promoteWarehouseJobsForRange(db, {
+              endDate: effectiveEndDate,
+              jobTypes: ['core-range-sync'],
               ownerId,
               priority: USER_REQUESTED_JOB_PRIORITY,
               propertyId: effectivePropertyId || null,
               siteUrl,
-              startDate: chunk.startDate,
+              startDate: gscEffectiveStartDate,
             });
-            if (job) autoQueuedCoreJobs += 1;
+            for (const chunk of chunkAscendingDates(coreDatesToQueue, CORE_RANGE_JOB_DAYS)) {
+              const job = await queueWarehouseCoreRangeJob(db, {
+                endDate: chunk.endDate,
+                ownerId,
+                priority: USER_REQUESTED_JOB_PRIORITY,
+                propertyId: effectivePropertyId || null,
+                siteUrl,
+                startDate: chunk.startDate,
+              });
+              if (job) autoQueuedCoreJobs += 1;
+            }
           }
           if (effectivePropertyId) {
+            await promoteWarehouseJobsForRange(db, {
+              endDate: effectiveEndDate,
+              jobTypes: [GA4_PAGE_RANGE_JOB_TYPE],
+              ownerId,
+              priority: USER_REQUESTED_JOB_PRIORITY,
+              propertyId: effectivePropertyId,
+              siteUrl,
+              startDate: effectiveStartDate,
+            });
+            for (const chunk of chunkAscendingDates(ga4PageDatesToQueue, CORE_RANGE_JOB_DAYS)) {
+              const job = await queueWarehouseGa4PageRangeJob(db, {
+                endDate: chunk.endDate,
+                ownerId,
+                priority: USER_REQUESTED_JOB_PRIORITY,
+                propertyId: effectivePropertyId,
+                siteUrl,
+                startDate: chunk.startDate,
+              });
+              if (job) autoQueuedGa4PageJobs += 1;
+            }
             await promoteWarehouseJobsForRange(db, {
               endDate: effectiveEndDate,
               jobTypes: ['ga4-dimension-range-sync'],
@@ -1722,7 +1810,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           updatedAt: latestCrawl.updatedAt || null,
         } : null,
         dateRange: {
-          earliestAvailableDate,
+          earliestAvailableDate: gscEarliestAvailableDate,
           endDate: effectiveEndDate,
           requestedStartDate: startDate,
           latestAvailableDate,
@@ -1744,10 +1832,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           propertyId: effectivePropertyId || null,
         },
         gsc: {
-          country: coverageFromRows(expectedDates, gscCountryCoverageRows),
-          pageQuery: coverageFromRows(expectedDates, gscPageQueryCoverageRows),
-          query: coverageFromRows(expectedDates, gscQueryCoverageRows),
-          site: coverageFromRows(expectedDates, gscSiteRows),
+          country: coverageFromRows(gscExpectedDates, gscCountryCoverageRows),
+          pageQuery: coverageFromRows(gscExpectedDates, gscPageQueryCoverageRows),
+          query: coverageFromRows(gscExpectedDates, gscQueryCoverageRows),
+          site: coverageFromRows(gscExpectedDates, gscSiteRows),
         },
         bing: {
           enabled: Boolean(bingUser?.bingApiKey),
@@ -1776,7 +1864,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           activeDateCount: activeDates.size,
           completed: jobCountByStatus.completed || 0,
           error: jobCountByStatus.error || 0,
-          queued: (activeJobCountByStatus.queued || 0) + autoQueuedCoreJobs + autoQueuedGa4DimensionJobs + autoQueuedGa4LlmJobs,
+          queued: (activeJobCountByStatus.queued || 0) + autoQueuedCoreJobs + autoQueuedGa4PageJobs + autoQueuedGa4DimensionJobs + autoQueuedGa4LlmJobs,
           retrying: activeJobCountByStatus.retrying || 0,
           running: activeJobCountByStatus.running || 0,
           superseded: supersededJobCount,
@@ -1784,6 +1872,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         },
         autoQueue: {
           coreJobs: autoQueuedCoreJobs,
+          ga4PageJobs: autoQueuedGa4PageJobs,
           ga4DimensionJobs: autoQueuedGa4DimensionJobs,
           ga4LlmJobs: autoQueuedGa4LlmJobs,
           enabled: autoQueueMissingHistory,
@@ -1873,6 +1962,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       return res.json({
         coreJobs: result.core.length,
         ga4DimensionJobs: result.ga4Dimensions.length,
+        ga4PageJobs: result.ga4Pages.length,
         llmJobs: result.llm.length,
         totalJobs: result.totalQueued,
       });
@@ -1942,38 +2032,43 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       const latestAvailableDate = latestStableReportingDate();
-      const earliestAvailableDate = earliestSearchConsoleReportingDate();
-      const effectiveStartDate = maxIsoDate(startDate, earliestAvailableDate);
+      const gscEarliestAvailableDate = earliestSearchConsoleReportingDate();
+      const effectiveStartDate = startDate;
+      const gscEffectiveStartDate = maxIsoDate(startDate, gscEarliestAvailableDate);
       const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
-      const expectedDates = eachIsoDate(effectiveStartDate, effectiveEndDate);
-      const useLightweightGscDetailCoverage = expectedDates.length >= LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD;
+      const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
+      const gscExpectedDates = gscEffectiveStartDate <= effectiveEndDate ? eachIsoDate(gscEffectiveStartDate, effectiveEndDate) : [];
+      const useLightweightGscDetailCoverage = gscExpectedDates.length >= LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD;
       const requestedPropertyId = effectivePropertyId;
-      const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), SEARCH_CONSOLE_HISTORY_DAYS) : SEARCH_CONSOLE_HISTORY_DAYS;
+      const gscQueueLimit = Number.isFinite(Number(maxDates))
+        ? Math.min(Math.max(Number(maxDates), 1), SEARCH_CONSOLE_HISTORY_DAYS)
+        : SEARCH_CONSOLE_HISTORY_DAYS;
+      const ga4QueueLimit = expectedDates.length;
       const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, ga4DimensionRows, ga4LlmRows, jobRows] = await Promise.all([
         db.all<{ date: string }>(`
           SELECT date
           FROM gsc_site_metrics
           WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
         db.all<{ date: string }>(`
           SELECT date
           FROM gsc_query_metrics
           WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
         db.all<{ date: string }>(`
           SELECT date
           FROM gsc_page_query_metrics
           WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
         db.all<{ date: string }>(`
           SELECT date
           FROM gsc_country_metrics
           WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
         requestedPropertyId
           ? db.all<{ date: string }>(`
             SELECT date
@@ -2002,9 +2097,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           SELECT jobType, targetDate, targetStartDate, propertyId, status, metricsJson
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
-            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
+            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
             AND status IN ('queued', 'retrying', 'running')
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, startDate, effectiveEndDate]),
       ]);
       const gscQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscQueryRows;
       const gscPageQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscPageQueryRows;
@@ -2018,21 +2113,23 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const ga4LlmDates = new Set(ga4LlmRows.map((row) => row.date));
       const jobsByDate = new Map<string, Array<{ jobType: string; propertyId: string | null; status: string; metricsJson: string | null }>>();
       for (const row of jobRows) {
-        for (const date of jobDatesWithin(row, effectiveStartDate, effectiveEndDate)) {
+        for (const date of jobDatesWithin(row, startDate, effectiveEndDate)) {
           if (!jobsByDate.has(date)) {
             jobsByDate.set(date, []);
           }
           jobsByDate.get(date)?.push({ jobType: row.jobType, metricsJson: row.metricsJson || null, propertyId: row.propertyId || null, status: row.status });
         }
       }
-      const isCoreJob = (row: { jobType: string }) => row.jobType === 'daily-sync' || row.jobType === 'core-range-sync';
-      const hasAnyCoreWarehouseJob = (date: string) => Boolean(jobsByDate.get(date)?.some(isCoreJob));
-      const hasMatchingPropertyJob = (date: string) => Boolean(
+      const hasAnyCoreWarehouseJob = (date: string) => Boolean(jobsByDate.get(date)?.some((row) => (
+        isCoreWarehouseJobType(row.jobType)
+        && ['queued', 'retrying', 'running'].includes(row.status)
+      )));
+      const hasMatchingGa4PageJob = (date: string) => Boolean(
         requestedPropertyId
         && jobsByDate.get(date)?.some((row) => (
-          isCoreJob(row)
+          ['queued', 'retrying', 'running'].includes(row.status)
           && row.propertyId === requestedPropertyId
-          && ['queued', 'retrying', 'running'].includes(row.status)
+          && (row.jobType === GA4_PAGE_RANGE_JOB_TYPE || isCoreWarehouseJobType(row.jobType))
         )),
       );
       const hasMatchingDimensionJob = (date: string) => Boolean(
@@ -2051,7 +2148,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           && ['queued', 'retrying', 'running'].includes(row.status)
         )),
       );
-      const needsExistingGscSync = (date: string) => !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date);
+      const gscExpectedDateSet = new Set(gscExpectedDates);
+      const needsExistingGscSync = (date: string) => gscExpectedDateSet.has(date) && (
+        !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date)
+      );
       const needsGa4Sync = (date: string) => Boolean(requestedPropertyId && !ga4PageDates.has(date));
       const needsGa4DimensionSync = (date: string) => Boolean(
         requestedPropertyId
@@ -2063,46 +2163,69 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         && !ga4LlmDates.has(date)
         && !hasMatchingLlmJob(date),
       );
-      const needsCoreSync = (date: string) => (
-        (needsExistingGscSync(date) && !hasAnyCoreWarehouseJob(date))
-        || (needsGa4Sync(date) && !hasMatchingPropertyJob(date))
-      );
-      const coreDatesToQueue = expectedDates
-        .filter(needsCoreSync)
+      const coreDatesToQueue = gscExpectedDates
+        .filter((date) => needsExistingGscSync(date) && !hasAnyCoreWarehouseJob(date))
         .sort((a, b) => b.localeCompare(a))
-        .slice(0, queueLimit);
+        .slice(0, gscQueueLimit);
+      const ga4PageDatesToQueue = expectedDates
+        .filter((date) => needsGa4Sync(date) && !hasMatchingGa4PageJob(date))
+        .sort((a, b) => b.localeCompare(a))
+        .slice(0, ga4QueueLimit);
       const dimensionDatesToQueue = expectedDates
         .filter(needsGa4DimensionSync)
         .sort((a, b) => b.localeCompare(a))
-        .slice(0, queueLimit);
+        .slice(0, ga4QueueLimit);
       const llmDatesToQueue = expectedDates
         .filter(needsGa4LlmSync)
         .sort((a, b) => b.localeCompare(a))
-        .slice(0, queueLimit);
+        .slice(0, ga4QueueLimit);
 
       const jobs = [];
-      await promoteWarehouseJobsForRange(db, {
-        endDate: effectiveEndDate,
-        jobTypes: ['core-range-sync'],
-        ownerId,
-        priority: USER_REQUESTED_JOB_PRIORITY,
-        propertyId: requestedPropertyId || null,
-        siteUrl,
-        startDate,
-      });
-      for (const chunk of chunkAscendingDates(coreDatesToQueue, CORE_RANGE_JOB_DAYS)) {
-        const job = await queueWarehouseCoreRangeJob(db, {
-          dedupeCompleted: false,
-          endDate: chunk.endDate,
+      if (gscExpectedDates.length > 0) {
+        await promoteWarehouseJobsForRange(db, {
+          endDate: effectiveEndDate,
+          jobTypes: ['core-range-sync'],
           ownerId,
           priority: USER_REQUESTED_JOB_PRIORITY,
           propertyId: requestedPropertyId || null,
           siteUrl,
-          startDate: chunk.startDate,
+          startDate: gscEffectiveStartDate,
         });
-        jobs.push(job);
+        for (const chunk of chunkAscendingDates(coreDatesToQueue, CORE_RANGE_JOB_DAYS)) {
+          const job = await queueWarehouseCoreRangeJob(db, {
+            dedupeCompleted: false,
+            endDate: chunk.endDate,
+            ownerId,
+            priority: USER_REQUESTED_JOB_PRIORITY,
+            propertyId: requestedPropertyId || null,
+            siteUrl,
+            startDate: chunk.startDate,
+          });
+          jobs.push(job);
+        }
       }
       if (requestedPropertyId) {
+        await promoteWarehouseJobsForRange(db, {
+          endDate: effectiveEndDate,
+          jobTypes: [GA4_PAGE_RANGE_JOB_TYPE],
+          ownerId,
+          priority: USER_REQUESTED_JOB_PRIORITY,
+          propertyId: requestedPropertyId,
+          siteUrl,
+          startDate,
+        });
+        for (const chunk of chunkAscendingDates(ga4PageDatesToQueue, CORE_RANGE_JOB_DAYS)) {
+          const job = await queueWarehouseGa4PageRangeJob(db, {
+            dedupeCompleted: false,
+            endDate: chunk.endDate,
+            ownerId,
+            priority: USER_REQUESTED_JOB_PRIORITY,
+            propertyId: requestedPropertyId,
+            siteUrl,
+            startDate: chunk.startDate,
+          });
+          jobs.push(job);
+        }
         await promoteWarehouseJobsForRange(db, {
           endDate: effectiveEndDate,
           jobTypes: ['ga4-dimension-range-sync'],
@@ -2146,8 +2269,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           jobs.push(job);
         }
       }
-
-      const missingCoreCount = expectedDates.filter(needsCoreSync).length;
+      const missingCoreCount = gscExpectedDates.filter(needsExistingGscSync).length;
+      const missingGa4PageCount = expectedDates.filter(needsGa4Sync).length;
       const missingDimensionCount = expectedDates.filter(needsGa4DimensionSync).length;
       const missingLlmCount = expectedDates.filter(needsGa4LlmSync).length;
 
@@ -2156,9 +2279,11 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         latestAvailableDate,
         queued: jobs.length,
         queuedCoreDates: coreDatesToQueue.length,
+        queuedGa4PageDates: ga4PageDatesToQueue.length,
         queuedGa4DimensionDates: dimensionDatesToQueue.length,
         queuedLlmDates: llmDatesToQueue.length,
         remainingMissingDates: Math.max(missingCoreCount - coreDatesToQueue.length, 0)
+          + Math.max(missingGa4PageCount - ga4PageDatesToQueue.length, 0)
           + Math.max(missingDimensionCount - dimensionDatesToQueue.length, 0)
           + Math.max(missingLlmCount - llmDatesToQueue.length, 0),
         skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),

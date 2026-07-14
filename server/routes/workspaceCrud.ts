@@ -65,13 +65,13 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
             MAX(updatedAt) AS latestUpdatedAt
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ?
-            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
+            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
         `, [ownerId, siteUrl]);
         const latestImportJob = await db.get<any>(`
           SELECT status, targetStartDate, targetDate, rowsSynced, lastError, updatedAt
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ?
-            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
+            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
             AND status != 'superseded'
           ORDER BY updatedAt DESC
           LIMIT 1
