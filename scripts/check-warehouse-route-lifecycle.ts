@@ -170,6 +170,20 @@ globalThis.fetch = (async (input: string | URL | Request) => {
       },
     } as Response;
   }
+  if (url === 'https://analyticsadmin.googleapis.com/v1beta/accountSummaries') {
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          accountSummaries: [{
+            name: 'accountSummaries/1',
+            propertySummaries: [{ displayName: 'Primary GA4', property: 'properties/123' }],
+          }],
+        };
+      },
+    } as Response;
+  }
   if (url === 'https://analyticsadmin.googleapis.com/v1beta/properties/123') {
     return {
       ok: true,
@@ -348,6 +362,21 @@ try {
   );
   assert(onboardingRes.statusCode === 200, `Onboarding route returned ${onboardingRes.statusCode}`);
 
+  const defaultGa4Handler = app.routes.get('PUT:/api/users/:id/default-ga4-property')?.at(-1);
+  assert(defaultGa4Handler, 'Missing default GA4 property handler');
+  const unknownPropertyRes = new FakeResponse();
+  await defaultGa4Handler!(
+    {
+      body: {
+        activatedGa4PropertyId: 'properties/999',
+        activatedGa4DisplayName: 'Unknown GA4',
+        siteUrl: activeSiteUrl,
+      },
+      params: { id: ownerId },
+    },
+    unknownPropertyRes,
+  );
+  assert(unknownPropertyRes.statusCode === 403, 'A Google token must not authorize an unknown GA4 property');
   const activeSiteJobsAfterOnboarding = await db.all<{ jobType: string; siteUrl: string; targetStartDate: string | null; targetDate: string }>(
     'SELECT jobType, siteUrl, targetStartDate, targetDate FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? ORDER BY jobType, targetStartDate, targetDate',
     [ownerId, activeSiteUrl],

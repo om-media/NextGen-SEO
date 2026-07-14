@@ -65,7 +65,6 @@ export function OnboardingFlow({
   const [propertySearch, setPropertySearch] = useState("");
   const [ga4Search, setGa4Search] = useState("");
   const isFirstActivation = !userProfile?.onboardingCompleted;
-  const effectiveUnlockedSites = isFirstActivation ? [] : (userProfile?.unlockedSites || []);
 
   useEffect(() => {
     if (googleConnected) {
@@ -77,9 +76,9 @@ export function OnboardingFlow({
     return {
       siteUrl: site.siteUrl,
       label: getPropertyLabel(site),
-      isUnlocked: true,
+      isUnlocked: !isFirstActivation && Boolean(userProfile?.unlockedSites.includes(site.siteUrl)),
     };
-  }), [sites]);
+  }), [isFirstActivation, sites, userProfile?.unlockedSites]);
 
   const selectedProperty = propertyOptions.find((site) => site.siteUrl === selectedSite);
   const filteredPropertyOptions = propertyOptions.filter((site) =>

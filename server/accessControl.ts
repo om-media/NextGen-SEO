@@ -41,7 +41,7 @@ export async function canAccessSite(db: AppDatabase, ownerId: string, siteUrl: s
 
 export async function canAccessGa4Property(db: AppDatabase, ownerId: string, propertyId: string) {
   const user = await db.get<WorkspaceAccessUser>(
-    'SELECT tier, activatedGa4PropertyId, gscRefreshToken FROM users WHERE id = ?',
+    'SELECT tier, activatedGa4PropertyId FROM users WHERE id = ?',
     [ownerId],
   );
 
@@ -52,7 +52,6 @@ export async function canAccessGa4Property(db: AppDatabase, ownerId: string, pro
     [ownerId, propertyId],
   );
   if (mapping) return true;
-  if (user.gscRefreshToken) return true;
 
   const storedRows = await db.get<{ count: number }>(
     `

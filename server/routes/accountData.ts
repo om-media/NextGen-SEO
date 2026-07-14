@@ -7,8 +7,8 @@ import { getPlanCrawlLimits } from '../../shared/plans.js';
 import { buildLegacyBingRangeMeta, getBingCacheStatus, listBingQueryStatsForRange, listCachedBingQueryStats, syncBingQueryStats, syncBingSites } from '../services/bingWarehouse.js';
 import { getCrawlStatus, queueCrawlJob } from '../services/crawl.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
-import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
-import { ensureWorkspaceGa4PropertyMetadata, resolveWorkspaceGa4Property, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
+import { canAccessSite } from '../accessControl.js';
+import { ensureWorkspaceGa4PropertyMetadata, resolveWorkspaceGa4Property, upsertWorkspaceGa4Mapping, verifyGoogleGa4PropertyAccess } from '../services/ga4Mappings.js';
 import { getInitialRegistrationTier } from '../services/registrationTier.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
@@ -206,6 +206,9 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
       }
+      if (activatedGa4PropertyId && !(await verifyGoogleGa4PropertyAccess(db, req.params.id, activatedGa4PropertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not available to the connected Google account.' });
+      }
 
       let unlockedSites = uniqueSites(parseStoredSites(user.unlockedSites));
 
@@ -238,7 +241,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         activatedGa4DisplayName: activatedGa4DisplayName || null,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(err.status || 500).json(err.payload || { error: err.message });
     }
   });
 
@@ -277,8 +280,8 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
       const user = await db.get<any>('SELECT activatedSiteUrl, knownSites, tier, unlockedSites FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
 
-      if (!(await canAccessGa4Property(db, req.params.id, activatedGa4PropertyId))) {
-        return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      if (!(await verifyGoogleGa4PropertyAccess(db, req.params.id, activatedGa4PropertyId))) {
+        return res.status(403).json({ error: 'This GA4 property is not available to the connected Google account.' });
       }
 
       const activeSiteUrl = isNonEmptyString(user.activatedSiteUrl) ? user.activatedSiteUrl.trim() : '';
@@ -290,6 +293,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         await upsertWorkspaceGa4Mapping(db, {
           displayName: activatedGa4DisplayName || null,
           ownerId: req.params.id,
+          propertyAccessVerified: true,
           propertyId: activatedGa4PropertyId,
           siteUrl: mappedSiteUrl,
         });
@@ -316,7 +320,7 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         activatedGa4DisplayName: activatedGa4DisplayName || null,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(err.status || 500).json(err.payload || { error: err.message });
     }
   });
 

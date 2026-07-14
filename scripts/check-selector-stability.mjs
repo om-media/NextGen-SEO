@@ -9,6 +9,40 @@ const appContentSource = fs.readFileSync('src/components/app/AppContent.tsx', 'u
 const bingGridSource = fs.readFileSync('components/dashboard/BingDataGrid.tsx', 'utf8');
 const reconciliationSource = fs.readFileSync('components/dashboard/ReconciliationView.tsx', 'utf8');
 
+const inventoryEffectStart = source.indexOf('const googleConnected = Boolean(userProfile?.googleConnected)');
+const inventoryEffectEnd = source.indexOf('const handleSiteSelect', inventoryEffectStart);
+const inventoryEffect = source.slice(inventoryEffectStart, inventoryEffectEnd);
+assert(
+  !inventoryEffect.includes('[backgroundEffectsReady, dataSource, isOnboarding, selectedSite, user, userProfile]'),
+  'Changing the selected site must not refetch source inventories',
+);
+assert(
+  inventoryEffect.includes('[backgroundEffectsReady, dataSource, isOnboarding, user, userProfile]'),
+  'Source inventories should be keyed to source and account state only',
+);
+assert(
+  source.includes('explicitSiteSelectionRef.current = false;\n    if (!selectedSite || !selectedSiteIsAccessible)')
+    && source.includes('explicitGa4SelectionRef.current = false;\n      setSelectedGa4Property'),
+  'Invalid manual site and GA4 selections must release their guard and recover to an available option',
+);
+assert(
+  !source.includes('ga4SitesWithSavedDefault') && source.includes('const accessibleGa4Sites = ga4Sites;'),
+  'A saved GA4 default must not be injected into the verified property inventory',
+);
+assert(
+  source.includes('const settingsWorkspaceSite = accessibleWorkspaceSites.some')
+    && source.includes('await updateDefaultSite(settingsWorkspaceSite);')
+    && source.includes('selectedSite={settingsWorkspaceSite}'),
+  'Settings must only save an accessible workspace site, never a source-only selection',
+);
+
+const onboardingSource = fs.readFileSync('src/components/app/OnboardingFlow.tsx', 'utf8');
+assert(
+  onboardingSource.includes('isUnlocked: !isFirstActivation && Boolean(userProfile?.unlockedSites.includes(site.siteUrl))')
+    && !onboardingSource.includes('isUnlocked: true'),
+  'First-run onboarding must not claim that every discovered property is already active',
+);
+
 assert(
   source.includes('useSelectorRequestGate<"gsc" | "bing" | "ga4" | "onboarding-ga4" | "annotations">()'),
   'App must gate selector fetches through useSelectorRequestGate',

@@ -7,6 +7,7 @@ export type WorkspaceGa4Mapping = {
   ownerId: string;
   propertyId: string;
   propertyCreatedAt?: string | null;
+  propertyAccessVerified?: boolean;
   siteUrl: string;
 };
 
@@ -19,7 +20,7 @@ export async function upsertWorkspaceGa4Mapping(db: AppDatabase, mapping: Worksp
 
   const [siteAllowed, propertyAllowed] = await Promise.all([
     canAccessSite(db, mapping.ownerId, siteUrl),
-    canAccessGa4Property(db, mapping.ownerId, propertyId),
+    mapping.propertyAccessVerified || canAccessGa4Property(db, mapping.ownerId, propertyId),
   ]);
   if (!siteAllowed || !propertyAllowed) return;
 
@@ -42,6 +43,22 @@ export async function upsertWorkspaceGa4Mapping(db: AppDatabase, mapping: Worksp
   `, [mapping.ownerId, siteUrl, propertyId, mapping.displayName || null, mapping.propertyCreatedAt || null, nowIso()]);
 }
 
+export async function verifyGoogleGa4PropertyAccess(db: AppDatabase, ownerId: string, propertyId: string) {
+  const normalizedPropertyId = propertyId.trim();
+  if (!/^properties\/\d+$/.test(normalizedPropertyId)) return false;
+  if (await canAccessGa4Property(db, ownerId, normalizedPropertyId)) return true;
+
+  const data = await googleApiFetchJson(
+    db,
+    ownerId,
+    'https://analyticsadmin.googleapis.com/v1beta/accountSummaries',
+  );
+  const accountSummaries = Array.isArray(data?.accountSummaries) ? data.accountSummaries : [];
+  return accountSummaries.some((account: any) =>
+    Array.isArray(account?.propertySummaries)
+      && account.propertySummaries.some((property: any) => property?.property === normalizedPropertyId),
+  );
+}
 export async function ensureWorkspaceGa4PropertyMetadata(db: AppDatabase, mapping: WorkspaceGa4Mapping) {
   const siteUrl = mapping.siteUrl.trim();
   const propertyId = mapping.propertyId.trim();
@@ -63,6 +80,7 @@ export async function ensureWorkspaceGa4PropertyMetadata(db: AppDatabase, mappin
   await upsertWorkspaceGa4Mapping(db, {
     ...mapping,
     displayName: mapping.displayName || (typeof property?.displayName === 'string' ? property.displayName : null),
+    propertyAccessVerified: true,
     propertyCreatedAt,
     siteUrl,
   });
