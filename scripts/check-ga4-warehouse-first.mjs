@@ -26,7 +26,26 @@ const llmTraffic = read('components/dashboard/Ga4LlmTraffic.tsx');
 assert(!llmTraffic.includes('authFetch('), 'LLM traffic view must use the shared GA4 service instead of a direct fetch');
 assert(llmTraffic.includes('getLlmTrafficReport('), 'LLM traffic view must read through the stored GA4 service helper');
 assert(!llmTraffic.includes('autoQueue: true'), 'LLM traffic navigation must not queue warehouse imports');
+assert(llmTraffic.includes('propertyId: string;'), 'LLM traffic view must require an explicit propertyId prop');
+assert(!llmTraffic.includes('userProfile?.activatedGa4PropertyId'), 'LLM traffic view must not fall back to the profile GA4 property');
+assert(!llmTraffic.includes('userProfile?.activatedSiteUrl'), 'LLM traffic view must not fall back to the profile workspace site');
+assert(llmTraffic.includes('Stored LLM traffic requires both a GA4 property and workspace site.'), 'LLM traffic view must fail closed when scope is missing');
+
+for (const sourcePath of [
+  'components/dashboard/Ga4DataGrid.tsx',
+  'components/dashboard/Ga4Demographics.tsx',
+  'components/dashboard/Ga4Overview.tsx',
+]) {
+  const source = read(sourcePath);
+  assert(source.includes('propertyId: string'), `${sourcePath} must require an explicit propertyId prop`);
+}
+
 const appContent = read('src/components/app/AppContent.tsx');
+assert(appContent.includes('const selectedGa4PropertyId = dataSource === "ga4" ? selectedSite : "";'), 'AppContent must derive the selected GA4 property ID explicitly');
+assert(appContent.includes('<Ga4Overview propertyId={selectedGa4PropertyId} workspaceSiteUrl={workspaceSiteUrl}'), 'GA4 overview must receive explicit propertyId and workspaceSiteUrl props');
+assert(appContent.includes('<Ga4DataGrid propertyId={selectedGa4PropertyId} workspaceSiteUrl={workspaceSiteUrl}'), 'GA4 data grids must receive explicit propertyId and workspaceSiteUrl props');
+assert(appContent.includes('<Ga4Demographics propertyId={selectedGa4PropertyId} workspaceSiteUrl={workspaceSiteUrl}'), 'GA4 demographics must receive explicit propertyId and workspaceSiteUrl props');
+assert(appContent.includes('<Ga4LlmTraffic propertyId={selectedGa4PropertyId} workspaceSiteUrl={workspaceSiteUrl}'), 'GA4 LLM traffic must receive explicit propertyId and workspaceSiteUrl props');
 for (const dimension of ['date', 'eventName', 'pagePath', 'sessionSourceMedium', 'country', 'city', 'region', 'deviceCategory', 'browser', 'operatingSystem']) {
   assert(appContent.includes(`dimension="${dimension}"`) || appContent.includes(`value="${dimension}"`), `GA4 app surface must keep ${dimension} warehouse-backed`);
 }

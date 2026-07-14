@@ -8,7 +8,7 @@ import { DateRange } from "react-day-picker"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts'
 
 interface Ga4DemographicsProps {
-  siteUrl: string;
+  propertyId: string;
   workspaceSiteUrl?: string;
   dateRange?: DateRange;
   refreshKey?: number;
@@ -78,7 +78,7 @@ const aggregateCoverage = (states: Record<DemographicDimensionKey, DimensionLoad
   }), {});
 };
 
-export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange, refreshKey = 0 }: Ga4DemographicsProps) {
+export function Ga4Demographics({ propertyId, workspaceSiteUrl, dateRange, refreshKey = 0 }: Ga4DemographicsProps) {
   const { userProfile } = useAuth()
   const [dimensionStates, setDimensionStates] = useState<Record<DemographicDimensionKey, DimensionLoadState>>(() => emptyDimensionState())
   const [loading, setLoading] = useState(false)
@@ -98,7 +98,7 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange, refreshK
   ), [dimensionStates]);
 
   useEffect(() => {
-    if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    if (!userProfile?.googleConnected || !propertyId || !dateRange?.from || !dateRange?.to) return;
     const controller = new AbortController()
     let isCurrent = true
 
@@ -112,7 +112,7 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange, refreshK
 
         const results = await Promise.allSettled(DIMENSIONS.map(async (dimension) => {
           const result = await ga4Service.runReport(
-            siteUrl,
+            propertyId,
             startDate,
             endDate,
             [dimension.key],
@@ -175,7 +175,7 @@ export function Ga4Demographics({ siteUrl, workspaceSiteUrl, dateRange, refreshK
       isCurrent = false
       controller.abort()
     }
-  }, [siteUrl, workspaceSiteUrl, dateRange, userProfile?.googleConnected, pollKey, refreshKey])
+  }, [propertyId, workspaceSiteUrl, dateRange, userProfile?.googleConnected, pollKey, refreshKey])
 
   useEffect(() => {
     if (loading) return;

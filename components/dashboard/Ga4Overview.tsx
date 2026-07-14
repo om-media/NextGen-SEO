@@ -153,7 +153,7 @@ function AnnotationReferenceLabel(props: any) {
 }
 
 export function Ga4Overview({
-  siteUrl,
+  propertyId,
   workspaceSiteUrl,
   dateRange,
   isCompareMode,
@@ -163,7 +163,7 @@ export function Ga4Overview({
   annotations = [],
   refreshKey = 0,
 }: {
-  siteUrl: string
+  propertyId: string
   workspaceSiteUrl?: string
   dateRange?: DateRange
   isCompareMode?: boolean
@@ -199,7 +199,7 @@ export function Ga4Overview({
   }
 
   useEffect(() => {
-    if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return
+    if (!userProfile?.googleConnected || !propertyId || !dateRange?.from || !dateRange?.to) return
     const controller = new AbortController()
     let isCurrent = true
 
@@ -214,7 +214,7 @@ export function Ga4Overview({
         const metrics = ["sessions", "totalUsers", "screenPageViews", "bounceRate", "eventCount"]
 
         const reportOptions = { signal: controller.signal, siteUrl: workspaceSiteUrl }
-        const primaryResult = await ga4Service.runReport(siteUrl, startDate, endDate, ["date"], metrics, dimensionFilter, reportOptions)
+        const primaryResult = await ga4Service.runReport(propertyId, startDate, endDate, ["date"], metrics, dimensionFilter, reportOptions)
         if (!isCurrent) return
         setData(primaryResult.rows || [])
         setCompareData([])
@@ -224,7 +224,7 @@ export function Ga4Overview({
           try {
             const compareStartDate = format(compareDateRange.from, "yyyy-MM-dd")
             const compareEndDate = format(compareDateRange.to, "yyyy-MM-dd")
-            const compareResult = await ga4Service.runReport(siteUrl, compareStartDate, compareEndDate, ["date"], metrics, dimensionFilter, reportOptions)
+            const compareResult = await ga4Service.runReport(propertyId, compareStartDate, compareEndDate, ["date"], metrics, dimensionFilter, reportOptions)
             if (!isCurrent) return
             setCompareData(compareResult.rows || [])
           } catch (compareError: any) {
@@ -254,7 +254,7 @@ export function Ga4Overview({
       isCurrent = false
       controller.abort()
     }
-  }, [siteUrl, workspaceSiteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected, pollKey, refreshKey])
+  }, [propertyId, workspaceSiteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected, pollKey, refreshKey])
 
 
   useEffect(() => {

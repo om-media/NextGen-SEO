@@ -29,7 +29,7 @@ import {
 } from '../services/warehouseJobs.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { getBingCacheStatus } from '../services/bingWarehouse.js';
-import { upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
+import { resolveWorkspaceGa4PropertyStartDate, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
 import {
   getGscSummaryWindow,
   hasGscMonthlySummariesForRange,
@@ -217,6 +217,37 @@ const coverageFromRowsWithMinimum = (
     missingDateCount: missingDates.length,
     missingDates: missingDates.slice(0, 31),
     totalRows,
+  };
+};
+
+const buildGa4DateWindow = (
+  startDate: string,
+  endDate: string,
+  latestAvailableDate: string,
+  propertyStartDate: string | null,
+) => {
+  const effectiveStartDate = propertyStartDate ? maxIsoDate(startDate, propertyStartDate) : startDate;
+  const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
+  const expectedDates = effectiveStartDate <= effectiveEndDate ? eachIsoDate(effectiveStartDate, effectiveEndDate) : [];
+  const unavailableDateSet = new Set<string>();
+
+  if (propertyStartDate && startDate < propertyStartDate) {
+    for (const date of eachIsoDate(startDate, minIsoDate(endDate, addIsoDays(propertyStartDate, -1)))) {
+      unavailableDateSet.add(date);
+    }
+  }
+  if (endDate > latestAvailableDate) {
+    for (const date of eachIsoDate(maxIsoDate(startDate, addIsoDays(latestAvailableDate, 1)), endDate)) {
+      unavailableDateSet.add(date);
+    }
+  }
+
+  return {
+    effectiveEndDate,
+    effectiveStartDate,
+    expectedDates,
+    skippedUnavailableDates: unavailableDateSet.size,
+    unavailableDates: Array.from(unavailableDateSet).sort(),
   };
 };
 
@@ -455,12 +486,17 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     metrics: string[],
     dimensionFilter?: any,
     autoQueue = false,
+    propertyStartDate: string | null = null,
   ) => {
     const latestAvailableDate = latestStableReportingDate();
-    const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
-    const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
+    const { effectiveEndDate, effectiveStartDate, expectedDates, skippedUnavailableDates } = buildGa4DateWindow(
+      startDate,
+      endDate,
+      latestAvailableDate,
+      propertyStartDate,
+    );
     const whereParts = ['ownerId = ?', 'propertyId = ?', 'siteUrl = ?', 'date >= ?', 'date <= ?'];
-    const params: unknown[] = [ownerId, propertyId, siteUrl, startDate, effectiveEndDate];
+    const params: unknown[] = [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate];
     const exactPageFilterValue = getExactPageFilterValue(dimensionFilter);
     if (exactPageFilterValue) {
       whereParts.push('pageKey = ?');
@@ -505,14 +541,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         FROM ga4_page_metrics
         WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
         GROUP BY date
-      `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
+      `, [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
       db.all<{ jobType: string; propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null }>(`
         SELECT jobType, propertyId, status, targetStartDate, targetDate
         FROM warehouse_jobs
         WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
           AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync')
           AND status IN ('queued', 'retrying', 'running')
-      `, [ownerId, siteUrl, startDate, effectiveEndDate]),
+      `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
     ]);
     const activeJobs = jobRows.filter((row) => (
       row.status !== 'completed'
@@ -522,12 +558,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       )
     ));
     const activeDates = new Set<string>();
-    addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
+    addJobDatesToSet(activeDates, activeJobs, effectiveStartDate, effectiveEndDate);
     const coveredDates = new Set(coverageRows.map((row) => row.date));
     const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
     const datesToQueue = missingDates.filter((date) => !activeDates.has(date));
     const queuedJobs = [];
-    if (autoQueue) {
+    if (autoQueue && expectedDates.length > 0) {
       await promoteWarehouseJobsForRange(db, {
         endDate: effectiveEndDate,
         jobTypes: [GA4_PAGE_RANGE_JOB_TYPE],
@@ -535,7 +571,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         priority: USER_REQUESTED_JOB_PRIORITY,
         propertyId,
         siteUrl,
-        startDate,
+        startDate: effectiveStartDate,
       });
       for (const chunk of chunkAscendingDates(datesToQueue, CORE_RANGE_JOB_DAYS)) {
         const job = await queueWarehouseGa4PageRangeJob(db, {
@@ -547,7 +583,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           startDate: chunk.startDate,
         });
         queuedJobs.push(job);
-        addJobDatesToSet(activeDates, [job], startDate, effectiveEndDate);
+        addJobDatesToSet(activeDates, [job], effectiveStartDate, effectiveEndDate);
       }
     }
     const coverage = {
@@ -557,7 +593,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       latestAvailableDate,
       queued: queuedJobs.length,
       queuedDateCount: autoQueue ? datesToQueue.length : 0,
-      skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
+      skippedUnavailableDates,
     };
 
     return {
@@ -579,10 +615,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     startDate: string,
     endDate: string,
     autoQueue = false,
+    propertyStartDate: string | null = null,
   ) => {
     const latestAvailableDate = latestStableReportingDate();
-    const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
-    const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
+    const { effectiveEndDate, effectiveStartDate, expectedDates, skippedUnavailableDates } = buildGa4DateWindow(
+      startDate,
+      endDate,
+      latestAvailableDate,
+      propertyStartDate,
+    );
 
     const [rowDates, jobRows] = await Promise.all([
       db.all<{ date: string }>(`
@@ -590,25 +631,25 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         FROM ga4_dimension_metrics
         WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND dimension = ? AND date >= ? AND date <= ?
         GROUP BY date
-      `, [ownerId, propertyId, siteUrl, warehouseDimension, startDate, effectiveEndDate]),
+      `, [ownerId, propertyId, siteUrl, warehouseDimension, effectiveStartDate, effectiveEndDate]),
       db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
         SELECT jobType, status, targetStartDate, targetDate
         FROM warehouse_jobs
         WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-dimension-range-sync'
           AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
           AND status IN ('queued', 'retrying', 'running', 'completed', 'error')
-      `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
+      `, [ownerId, siteUrl, propertyId, effectiveStartDate, effectiveEndDate]),
     ]);
 
     const activeJobs = jobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
     const coveredDates = new Set(rowDates.map((row) => row.date));
     const activeDates = new Set<string>();
-    addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
+    addJobDatesToSet(activeDates, activeJobs, effectiveStartDate, effectiveEndDate);
 
     const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
     const datesToQueue = missingDates.filter((date) => !activeDates.has(date));
     const queuedJobs = [];
-    if (autoQueue) {
+    if (autoQueue && expectedDates.length > 0) {
       await promoteWarehouseJobsForRange(db, {
         endDate: effectiveEndDate,
         jobTypes: ['ga4-dimension-range-sync'],
@@ -616,7 +657,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         priority: USER_REQUESTED_JOB_PRIORITY,
         propertyId,
         siteUrl,
-        startDate,
+        startDate: effectiveStartDate,
       });
       for (const chunk of chunkAscendingDates(datesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
         const job = await queueWarehouseGa4DimensionRangeJob(db, {
@@ -628,7 +669,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           startDate: chunk.startDate,
         });
         queuedJobs.push(job);
-        addJobDatesToSet(activeDates, [job], startDate, effectiveEndDate);
+        addJobDatesToSet(activeDates, [job], effectiveStartDate, effectiveEndDate);
       }
     }
 
@@ -643,7 +684,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       missingDateCount: missingDates.length,
       queued: queuedJobs.length,
       queuedDateCount: autoQueue ? datesToQueue.length : 0,
-      skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
+      skippedUnavailableDates,
     };
   };
 
@@ -657,9 +698,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     dimensions: string[],
     metrics: string[],
     dimensionFilter?: any,
+    propertyStartDate: string | null = null,
   ) => {
+    const latestAvailableDate = latestStableReportingDate();
+    const { effectiveEndDate, effectiveStartDate } = buildGa4DateWindow(startDate, endDate, latestAvailableDate, propertyStartDate);
     const whereParts = ['ownerId = ?', 'propertyId = ?', 'siteUrl = ?', 'dimension = ?', 'date >= ?', 'date <= ?', "dimensionValue <> ''"];
-    const params: unknown[] = [ownerId, propertyId, siteUrl, warehouseDimension, startDate, endDate];
+    const params: unknown[] = [ownerId, propertyId, siteUrl, warehouseDimension, effectiveStartDate, effectiveEndDate];
     const exactFilter = getExactDimensionFilter(dimensionFilter);
     if (exactFilter?.fieldName === warehouseDimension) {
       whereParts.push('dimensionValue = ?');
@@ -745,6 +789,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       if (isNonEmptyString(siteUrl) && !(await canAccessSite(db, ownerId, siteUrl))) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
+      const ga4PropertyStartDate = await resolveWorkspaceGa4PropertyStartDate(db, ownerId, resolvedSiteUrl, propertyId);
 
       if (canServeGa4PageWarehouseReport(dimensions, metrics, dimensionFilter)) {
         const report = await readGa4WarehouseReport(
@@ -757,6 +802,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           metrics,
           dimensionFilter,
           autoQueue,
+          ga4PropertyStartDate,
         );
         return res.json(report);
       }
@@ -770,7 +816,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           });
         }
         const [coverage, report] = await Promise.all([
-          getGa4DimensionCoverage(ownerId, propertyId, resolvedSiteUrl, warehouseDimension, startDate, endDate, autoQueue),
+          getGa4DimensionCoverage(ownerId, propertyId, resolvedSiteUrl, warehouseDimension, startDate, endDate, autoQueue, ga4PropertyStartDate),
           readGa4DimensionWarehouseReport(
             ownerId,
             propertyId,
@@ -781,6 +827,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             dimensions,
             metrics,
             dimensionFilter,
+            ga4PropertyStartDate,
           ),
         ]);
         return res.json({
@@ -846,8 +893,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       const latestAvailableDate = latestStableReportingDate();
-      const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
-      const expectedDates = eachIsoDate(startDate, effectiveEndDate);
+      const ga4PropertyStartDate = await resolveWorkspaceGa4PropertyStartDate(db, ownerId, siteUrl, effectivePropertyId);
+      const { effectiveEndDate, effectiveStartDate, expectedDates, skippedUnavailableDates } = buildGa4DateWindow(
+        startDate,
+        endDate,
+        latestAvailableDate,
+        ga4PropertyStartDate,
+      );
       const queueLimit = Number.isFinite(Number(maxDates)) ? Math.min(Math.max(Number(maxDates), 1), 720) : 365;
       const [rowDates, jobRows] = await Promise.all([
         db.all<{ date: string }>(`
@@ -855,17 +907,17 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           FROM ga4_llm_referral_metrics
           WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
-        `, [ownerId, effectivePropertyId, siteUrl, startDate, effectiveEndDate]),
+        `, [ownerId, effectivePropertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
         db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
           SELECT jobType, status, targetStartDate, targetDate
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType IN ('ga4-llm-sync', 'ga4-llm-range-sync')
             AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
             AND status IN ('queued', 'retrying', 'running')
-        `, [ownerId, siteUrl, effectivePropertyId, startDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, effectivePropertyId, effectiveStartDate, effectiveEndDate]),
       ]);
       const coveredDates = new Set(rowDates.map((row) => row.date));
-      addJobDatesToSet(coveredDates, jobRows.filter((row) => row.jobType === 'ga4-llm-range-sync' && ['queued', 'retrying', 'running'].includes(row.status)), startDate, effectiveEndDate);
+      addJobDatesToSet(coveredDates, jobRows.filter((row) => row.jobType === 'ga4-llm-range-sync' && ['queued', 'retrying', 'running'].includes(row.status)), effectiveStartDate, effectiveEndDate);
       await promoteWarehouseJobsForRange(db, {
         endDate: effectiveEndDate,
         jobTypes: ['ga4-llm-range-sync'],
@@ -873,7 +925,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         priority: USER_REQUESTED_JOB_PRIORITY,
         propertyId: effectivePropertyId,
         siteUrl,
-        startDate,
+        startDate: effectiveStartDate,
       });
       const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
       const datesToQueue = missingDates.slice(Math.max(missingDates.length - queueLimit, 0));
@@ -898,7 +950,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
          WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType = 'ga4-llm-sync'
            AND status IN ('queued', 'retrying')
            AND targetDate >= ? AND targetDate <= ?`,
-        [supersededAt, supersededAt, ownerId, siteUrl, effectivePropertyId, startDate, effectiveEndDate],
+        [supersededAt, supersededAt, ownerId, siteUrl, effectivePropertyId, effectiveStartDate, effectiveEndDate],
       );
 
       return res.json({
@@ -907,7 +959,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         queued: jobs.length,
         queuedDates: datesToQueue.length,
         remainingMissingDates: Math.max(missingDates.length - datesToQueue.length, 0),
-        skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
+        skippedUnavailableDates,
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Failed to start LLM traffic import' });
@@ -930,8 +982,13 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
 
       const latestAvailableDate = latestStableReportingDate();
-      const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
-      const expectedDates = eachIsoDate(startDate, effectiveEndDate);
+      const ga4PropertyStartDate = await resolveWorkspaceGa4PropertyStartDate(db, ownerId, siteUrl, propertyId);
+      const { effectiveEndDate, effectiveStartDate, expectedDates, skippedUnavailableDates } = buildGa4DateWindow(
+        startDate,
+        endDate,
+        latestAvailableDate,
+        ga4PropertyStartDate,
+      );
       const [dailyRows, sourceRows, landingPageRows, coveredRows, llmJobRows] = await Promise.all([
         db.all<any>(`
           SELECT
@@ -941,7 +998,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND source <> ''
           GROUP BY date
           ORDER BY date ASC
-        `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
+        `, [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
         db.all<any>(`
           SELECT
             sourceClass,
@@ -953,7 +1010,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND source <> ''
           GROUP BY sourceClass
           ORDER BY sessions DESC
-        `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
+        `, [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
         db.all<any>(`
           SELECT
             MIN(pagePath) AS pagePath,
@@ -968,29 +1025,29 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           GROUP BY pageKey, sourceClass
           ORDER BY sessions DESC
           LIMIT 500
-        `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
+        `, [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
         db.all<{ date: string }>(`
           SELECT date
           FROM ga4_llm_referral_metrics
           WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
           GROUP BY date
-        `, [ownerId, propertyId, siteUrl, startDate, effectiveEndDate]),
+        `, [ownerId, propertyId, siteUrl, effectiveStartDate, effectiveEndDate]),
         db.all<{ jobType: string; status: string; targetDate: string; targetStartDate: string | null }>(`
           SELECT jobType, status, targetStartDate, targetDate
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND COALESCE(propertyId, '') = ? AND jobType IN ('ga4-llm-sync', 'ga4-llm-range-sync')
             AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
-        `, [ownerId, siteUrl, propertyId, startDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, propertyId, effectiveStartDate, effectiveEndDate]),
       ]);
       const activeJobs = llmJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
       const activeJobCount = activeJobs.length;
       const activeDates = new Set<string>();
-      addJobDatesToSet(activeDates, activeJobs, startDate, effectiveEndDate);
+      addJobDatesToSet(activeDates, activeJobs, effectiveStartDate, effectiveEndDate);
       const coveredDates = new Set(coveredRows.map((row) => row.date));
       const missingDates = expectedDates.filter((date) => !coveredDates.has(date));
       const datesToQueue = missingDates.filter((date) => !activeDates.has(date));
       const queuedJobs = [];
-      if (autoQueue) {
+      if (autoQueue && expectedDates.length > 0) {
         await promoteWarehouseJobsForRange(db, {
           endDate: effectiveEndDate,
           jobTypes: ['ga4-llm-range-sync'],
@@ -998,7 +1055,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           priority: USER_REQUESTED_JOB_PRIORITY,
           propertyId,
           siteUrl,
-          startDate,
+          startDate: effectiveStartDate,
         });
         for (const chunk of chunkAscendingDates(datesToQueue, LLM_RANGE_JOB_DAYS)) {
           const job = await queueWarehouseLlmRangeJob(db, {
@@ -1010,7 +1067,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             startDate: chunk.startDate,
           });
           queuedJobs.push(job);
-          addJobDatesToSet(activeDates, [job], startDate, effectiveEndDate);
+          addJobDatesToSet(activeDates, [job], effectiveStartDate, effectiveEndDate);
         }
       }
       const coveredDateCount = coveredDates.size;
@@ -1041,7 +1098,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           missingDateCount: missingDates.length,
           queued: queuedJobs.length,
           queuedDateCount: autoQueue ? datesToQueue.length : 0,
-          skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
+          skippedUnavailableDates,
         },
         daily: {
           rows: dailyRows.map((row) => ({
@@ -1395,9 +1452,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const latestAvailableDate = latestStableReportingDate();
       const gscEarliestAvailableDate = earliestSearchConsoleReportingDate();
       const effectiveStartDate = startDate;
+      const ga4PropertyStartDate = effectivePropertyId
+        ? await resolveWorkspaceGa4PropertyStartDate(db, ownerId, siteUrl, effectivePropertyId)
+        : null;
+      const ga4DateWindow = buildGa4DateWindow(startDate, endDate, latestAvailableDate, ga4PropertyStartDate);
+      const ga4EffectiveStartDate = ga4DateWindow.effectiveStartDate;
       const gscEffectiveStartDate = maxIsoDate(startDate, gscEarliestAvailableDate);
-      const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
-      const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
+      const effectiveEndDate = ga4DateWindow.effectiveEndDate;
+      const expectedDates = ga4DateWindow.expectedDates;
       const gscExpectedDates = gscEffectiveStartDate <= effectiveEndDate ? eachIsoDate(gscEffectiveStartDate, effectiveEndDate) : [];
       const useLightweightGscDetailCoverage = gscExpectedDates.length >= LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD;
       const unavailableDates = endDate > latestAvailableDate
@@ -1445,7 +1507,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
-          `, [ownerId, effectivePropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
+          `, [ownerId, effectivePropertyId, siteUrl, ga4EffectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         effectivePropertyId
           ? db.all<{ date: string; rowCount: number }>(`
@@ -1454,7 +1516,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
-          `, [ownerId, effectivePropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
+          `, [ownerId, effectivePropertyId, siteUrl, ga4EffectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         effectivePropertyId
           ? db.all<{ date: string; rowCount: number }>(`
@@ -1463,7 +1525,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
-          `, [ownerId, effectivePropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
+          `, [ownerId, effectivePropertyId, siteUrl, ga4EffectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         db.get<any>(`
           SELECT *
@@ -1478,7 +1540,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
             AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
           ORDER BY updatedAt DESC
-        `, [ownerId, siteUrl, effectiveStartDate, effectiveEndDate]),
+        `, [ownerId, siteUrl, startDate, effectiveEndDate]),
         getBingCacheStatus(db, ownerId, siteUrl),
         db.get<any>('SELECT bingApiKey FROM users WHERE id = ?', [ownerId]),
       ]);
@@ -1608,7 +1670,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       let autoQueuedGa4PageJobs = 0;
       let autoQueuedGa4DimensionJobs = 0;
       let autoQueuedGa4LlmJobs = 0;
-      if (autoQueueMissingHistory && expectedDates.length > 0) {
+      if (autoQueueMissingHistory && (gscExpectedDates.length > 0 || expectedDates.length > 0)) {
         const user = await db.get<{ gscRefreshToken?: string | null }>(
           'SELECT gscRefreshToken FROM users WHERE id = ?',
           [ownerId],
@@ -1636,7 +1698,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               && ['queued', 'retrying', 'running'].includes(row.status)
               && (row.jobType === GA4_PAGE_RANGE_JOB_TYPE || isCoreWarehouseJobType(row.jobType))
             )),
-            effectiveStartDate,
+            ga4EffectiveStartDate,
             effectiveEndDate,
           );
           for (const date of [...handledGa4PageDates]) {
@@ -1650,7 +1712,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               && row.propertyId === effectivePropertyId
               && ['queued', 'retrying', 'running'].includes(row.status)
             )),
-            effectiveStartDate,
+            ga4EffectiveStartDate,
             effectiveEndDate,
           );
           const handledGa4LlmDates = new Set<string>();
@@ -1661,7 +1723,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               && row.propertyId === effectivePropertyId
               && ['queued', 'retrying', 'running'].includes(row.status)
             )),
-            effectiveStartDate,
+            ga4EffectiveStartDate,
             effectiveEndDate,
           );
           const coreDatesToQueue = gscExpectedDates
@@ -1705,7 +1767,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               if (job) autoQueuedCoreJobs += 1;
             }
           }
-          if (effectivePropertyId) {
+          if (effectivePropertyId && expectedDates.length > 0) {
             await promoteWarehouseJobsForRange(db, {
               endDate: effectiveEndDate,
               jobTypes: [GA4_PAGE_RANGE_JOB_TYPE],
@@ -1713,7 +1775,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               priority: USER_REQUESTED_JOB_PRIORITY,
               propertyId: effectivePropertyId,
               siteUrl,
-              startDate: effectiveStartDate,
+              startDate: ga4EffectiveStartDate,
             });
             for (const chunk of chunkAscendingDates(ga4PageDatesToQueue, CORE_RANGE_JOB_DAYS)) {
               const job = await queueWarehouseGa4PageRangeJob(db, {
@@ -1733,7 +1795,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               priority: USER_REQUESTED_JOB_PRIORITY,
               propertyId: effectivePropertyId,
               siteUrl,
-              startDate: effectiveStartDate,
+              startDate: ga4EffectiveStartDate,
             });
             for (const chunk of chunkAscendingDates(ga4DimensionDatesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
               const job = await queueWarehouseGa4DimensionRangeJob(db, {
@@ -1753,7 +1815,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               priority: USER_REQUESTED_JOB_PRIORITY,
               propertyId: effectivePropertyId,
               siteUrl,
-              startDate: effectiveStartDate,
+              startDate: ga4EffectiveStartDate,
             });
             for (const chunk of chunkAscendingDates(ga4LlmDatesToQueue, LLM_RANGE_JOB_DAYS)) {
               const job = await queueWarehouseLlmRangeJob(db, {
@@ -2034,9 +2096,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const latestAvailableDate = latestStableReportingDate();
       const gscEarliestAvailableDate = earliestSearchConsoleReportingDate();
       const effectiveStartDate = startDate;
+      const ga4PropertyStartDate = effectivePropertyId
+        ? await resolveWorkspaceGa4PropertyStartDate(db, ownerId, siteUrl, effectivePropertyId)
+        : null;
+      const ga4DateWindow = buildGa4DateWindow(startDate, endDate, latestAvailableDate, ga4PropertyStartDate);
+      const ga4EffectiveStartDate = ga4DateWindow.effectiveStartDate;
       const gscEffectiveStartDate = maxIsoDate(startDate, gscEarliestAvailableDate);
-      const effectiveEndDate = minIsoDate(endDate, latestAvailableDate);
-      const expectedDates = startDate <= effectiveEndDate ? eachIsoDate(startDate, effectiveEndDate) : [];
+      const effectiveEndDate = ga4DateWindow.effectiveEndDate;
+      const expectedDates = ga4DateWindow.expectedDates;
       const gscExpectedDates = gscEffectiveStartDate <= effectiveEndDate ? eachIsoDate(gscEffectiveStartDate, effectiveEndDate) : [];
       const useLightweightGscDetailCoverage = gscExpectedDates.length >= LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD;
       const requestedPropertyId = effectivePropertyId;
@@ -2075,7 +2142,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             FROM ga4_page_metrics
             WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
-        `, [ownerId, requestedPropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
+        `, [ownerId, requestedPropertyId, siteUrl, ga4EffectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         requestedPropertyId
           ? db.all<{ date: string; rowCount: number }>(`
@@ -2083,7 +2150,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             FROM ga4_dimension_metrics
             WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
-        `, [ownerId, requestedPropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
+        `, [ownerId, requestedPropertyId, siteUrl, ga4EffectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         requestedPropertyId
           ? db.all<{ date: string }>(`
@@ -2091,7 +2158,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             FROM ga4_llm_referral_metrics
             WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
-        `, [ownerId, requestedPropertyId, siteUrl, effectiveStartDate, effectiveEndDate])
+        `, [ownerId, requestedPropertyId, siteUrl, ga4EffectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
         db.all<{ jobType: string; targetDate: string; targetStartDate: string | null; propertyId: string | null; status: string; metricsJson: string | null }>(`
           SELECT jobType, targetDate, targetStartDate, propertyId, status, metricsJson
@@ -2204,7 +2271,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           jobs.push(job);
         }
       }
-      if (requestedPropertyId) {
+      if (requestedPropertyId && expectedDates.length > 0) {
         await promoteWarehouseJobsForRange(db, {
           endDate: effectiveEndDate,
           jobTypes: [GA4_PAGE_RANGE_JOB_TYPE],
@@ -2212,7 +2279,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           priority: USER_REQUESTED_JOB_PRIORITY,
           propertyId: requestedPropertyId,
           siteUrl,
-          startDate,
+          startDate: ga4EffectiveStartDate,
         });
         for (const chunk of chunkAscendingDates(ga4PageDatesToQueue, CORE_RANGE_JOB_DAYS)) {
           const job = await queueWarehouseGa4PageRangeJob(db, {
@@ -2233,7 +2300,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           priority: USER_REQUESTED_JOB_PRIORITY,
           propertyId: requestedPropertyId,
           siteUrl,
-          startDate,
+          startDate: ga4EffectiveStartDate,
         });
         for (const chunk of chunkAscendingDates(dimensionDatesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
           const job = await queueWarehouseGa4DimensionRangeJob(db, {
@@ -2254,7 +2321,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           priority: USER_REQUESTED_JOB_PRIORITY,
           propertyId: requestedPropertyId,
           siteUrl,
-          startDate,
+          startDate: ga4EffectiveStartDate,
         });
         for (const chunk of chunkAscendingDates(llmDatesToQueue, LLM_RANGE_JOB_DAYS)) {
           const job = await queueWarehouseLlmRangeJob(db, {
@@ -2286,7 +2353,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           + Math.max(missingGa4PageCount - ga4PageDatesToQueue.length, 0)
           + Math.max(missingDimensionCount - dimensionDatesToQueue.length, 0)
           + Math.max(missingLlmCount - llmDatesToQueue.length, 0),
-        skippedUnavailableDates: Math.max(eachIsoDate(startDate, endDate).length - expectedDates.length, 0),
+        skippedUnavailableDates: endDate > latestAvailableDate
+          ? eachIsoDate(maxIsoDate(startDate, addIsoDays(latestAvailableDate, 1)), endDate).length
+          : 0,
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Failed to start missing-days import' });

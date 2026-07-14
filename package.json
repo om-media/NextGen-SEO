@@ -14,7 +14,7 @@
     "lint": "tsc --noEmit",
     "audit:prod": "npm audit --omit=dev",
     "guard:public-files": "node scripts/check-public-files.mjs --tracked",
-    "verify": "npm run guard:public-files && npm run lint && npm run check:warehouse-backfill && npm run check:warehouse-source-errors && npm run check:warehouse-job-leases && npm run check:gsc-summaries && npm run check:bing-query-dedupe && npm run check:bing-query-facts && npm run check:internal-link-quality && npm run check:crawl-worker-claims && npm run check:crawl-canonical-orphans && npm run check:internal-link-worker-claims && npm run check:postgres-hardening && npm run check:load-harness && npm run check:ga4-warehouse && npm run check:ga4-property-metadata && npm run check:gsc-analytical-workflows && npm run check:warehouse-daily-lifecycle && npm run check:warehouse-route-lifecycle && npm run check:selector-stability && npm run check:workspace-defaults && npm run audit:prod && npm run build && npm run check:runtime-roles",
+    "verify": "npm run guard:public-files && npm run lint && npm run check:warehouse-backfill && npm run check:warehouse-source-errors && npm run check:warehouse-job-leases && npm run check:gsc-summaries && npm run check:bing-query-dedupe && npm run check:bing-query-facts && npm run check:internal-link-quality && npm run check:crawl-worker-claims && npm run check:crawl-canonical-orphans && npm run check:internal-link-worker-claims && npm run check:postgres-hardening && npm run check:load-harness && npm run check:ga4-warehouse && npm run check:ga4-property-metadata && npm run check:ga4-property-start-boundary && npm run check:gsc-analytical-workflows && npm run check:warehouse-daily-lifecycle && npm run check:warehouse-route-lifecycle && npm run check:selector-stability && npm run check:workspace-defaults && npm run audit:prod && npm run build && npm run check:runtime-roles",
     "verify:docker": "node scripts/verify-docker-smoke.mjs",
     "verify:production-url": "node scripts/verify-production-url.mjs",
     "secrets:generate": "node scripts/generate-production-secrets.mjs",
@@ -61,7 +61,8 @@
     "load:production": "node scripts/load/run-production-load.mjs",
     "load:fixtures": "node scripts/load/prepare-local-fixtures.mjs",
     "check:bing-query-facts": "tsx --tsconfig tsconfig.server.json scripts/check-bing-query-facts.ts",
-    "check:warehouse-job-leases": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-job-leases.ts"
+    "check:warehouse-job-leases": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-job-leases.ts",
+    "check:ga4-property-start-boundary": "tsx --tsconfig tsconfig.server.json scripts/check-ga4-property-start-boundary.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

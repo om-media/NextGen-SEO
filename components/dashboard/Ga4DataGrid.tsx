@@ -25,7 +25,7 @@ const WAREHOUSED_GA4_DIMENSIONS = new Set([
 ]);
 
 interface Ga4DataGridProps {
-  siteUrl: string;
+  propertyId: string;
   workspaceSiteUrl?: string;
   dateRange?: DateRange;
   dimension?: 'date' | 'pagePath' | 'sessionSourceMedium' | 'country' | 'city' | 'region' | 'deviceCategory' | 'browser' | 'operatingSystem' | 'eventName';
@@ -77,7 +77,7 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   window.URL.revokeObjectURL(url);
 }
 
-export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'], refreshKey = 0 }: Ga4DataGridProps) {
+export function Ga4DataGrid({ propertyId, workspaceSiteUrl, dateRange, dimension = 'date', isCompareMode, compareDateRange, metrics = ['sessions', 'totalUsers', 'screenPageViews', 'bounceRate', 'eventCount'], refreshKey = 0 }: Ga4DataGridProps) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<ExtendedGa4DataRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -101,7 +101,12 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
   // Keep an opened historic trend visible while users adjust date and compare controls.
   useEffect(() => {
     setSelectedRowKey(null)
-  }, [siteUrl, dimension])
+  }, [propertyId, dimension])
+
+  const stripWorkspaceSite = (value: string) => {
+    if (!workspaceSiteUrl) return value
+    return value.replace(workspaceSiteUrl, '') || '/'
+  }
 
   useEffect(() => {
     if (!isWarehouseDimension) {
@@ -111,7 +116,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
       setCoverage(null)
       return
     }
-    if (!userProfile?.googleConnected || !siteUrl || !dateRange?.from || !dateRange?.to) return;
+    if (!userProfile?.googleConnected || !propertyId || !dateRange?.from || !dateRange?.to) return;
     const controller = new AbortController()
     let isCurrent = true
 
@@ -124,7 +129,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
         const reportOptions = { signal: controller.signal, siteUrl: workspaceSiteUrl }
         const primaryResult = await ga4Service.runReport(
-          siteUrl,
+          propertyId,
           startDate,
           endDate,
           [dimension],
@@ -144,7 +149,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
             const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
             const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
             const compareResult = await ga4Service.runReport(
-              siteUrl,
+              propertyId,
               compareStartDate,
               compareEndDate,
               [dimension],
@@ -209,7 +214,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
       isCurrent = false
       controller.abort()
     }
-  }, [siteUrl, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey, refreshKey, metricsKey])
+  }, [propertyId, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey, refreshKey, metricsKey])
 
   useEffect(() => {
     if (!coverage || loading) return;
@@ -280,17 +285,17 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
     const sessionsSorted = [...data].sort((a, b) => parseFloat(b.metricValues?.[0]?.value || "0") - parseFloat(a.metricValues?.[0]?.value || "0"));
     
     const topSessions = sessionsSorted.slice(0, 5).map(item => ({
-      name: getGa4DimensionValue(item).replace(siteUrl, '') || getGa4DimensionValue(item),
+      name: stripWorkspaceSite(getGa4DimensionValue(item)),
       value: parseInt(item.metricValues?.[0]?.value || "0")
     }));
     
     const topUsers = sessionsSorted.slice(0, 5).map(item => ({
-      name: getGa4DimensionValue(item).replace(siteUrl, '') || getGa4DimensionValue(item),
+      name: stripWorkspaceSite(getGa4DimensionValue(item)),
       value: parseInt(item.metricValues?.[1]?.value || "0")
     }));
 
     return { sessions: topSessions, users: topUsers };
-  }, [data, dimension, siteUrl]);
+  }, [data, dimension, workspaceSiteUrl]);
 
   // Pagination logic
   const pageCount = Math.ceil(sortedData.length / pageSize)
@@ -467,7 +472,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
             <div>
               <h3 className="font-semibold text-lg">Historic Trend</h3>
               <p className="text-sm text-muted-foreground">
-                Performance over time for {dimension}: <span className="font-medium text-foreground">{selectedRowKey.replace(siteUrl, '') || '/'}</span>
+                Performance over time for {dimension}: <span className="font-medium text-foreground">{stripWorkspaceSite(selectedRowKey)}</span>
               </p>
             </div>
             <Button variant="outline" size="sm" onClick={() => setSelectedRowKey(null)}>
@@ -477,7 +482,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
           </div>
           <div className="p-5">
             <Ga4Overview 
-              siteUrl={siteUrl} 
+              propertyId={propertyId}
               workspaceSiteUrl={workspaceSiteUrl}
               dateRange={dateRange} 
               isCompareMode={isCompareMode}
@@ -644,7 +649,7 @@ export function Ga4DataGrid({ siteUrl, workspaceSiteUrl, dateRange, dimension = 
                         }
                       }}
                     >
-                      <TableCell className="font-medium max-w-[300px] truncate" title={formattedDim}>{dimension === 'pagePath' && siteUrl ? formattedDim.replace(siteUrl, '') || '/' : formattedDim}</TableCell>
+                      <TableCell className="font-medium max-w-[300px] truncate" title={formattedDim}>{dimension === 'pagePath' ? stripWorkspaceSite(formattedDim) : formattedDim}</TableCell>
                       {metrics.map((metric, idx) => {
                         const val = parseFloat(row.metricValues[idx]?.value || "0");
                         const compareVal = row.compareMetricValues ? parseFloat(row.compareMetricValues[idx]?.value || "0") : undefined;

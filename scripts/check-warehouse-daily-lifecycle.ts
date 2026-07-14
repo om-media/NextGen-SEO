@@ -109,8 +109,8 @@ await db.exec(`
   CREATE TABLE gsc_page_metrics (ownerId TEXT, siteUrl TEXT, date TEXT, page TEXT, pageKey TEXT, clicks INTEGER, impressions INTEGER, ctr REAL, position REAL, queryCount INTEGER);
   CREATE TABLE gsc_country_metrics (ownerId TEXT, siteUrl TEXT, date TEXT, country TEXT, clicks INTEGER, impressions INTEGER, ctr REAL, position REAL);
   CREATE TABLE ga4_page_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, pagePath TEXT, pageKey TEXT, sessions REAL, totalUsers REAL, pageViews REAL, bounceRate REAL, eventCount REAL);
-  CREATE TABLE ga4_dimension_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, dimension TEXT, dimensionValue TEXT, sessions REAL, totalUsers REAL, screenPageViews REAL, bounceRate REAL, eventCount REAL);
-  CREATE TABLE ga4_llm_referral_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, source TEXT, sourceClass TEXT, pagePath TEXT, pageKey TEXT, sessions REAL, engagedSessions REAL, keyEvents REAL, averageSessionDuration REAL);
+  CREATE TABLE ga4_dimension_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, dimension TEXT, dimensionValue TEXT, sessions REAL, totalUsers REAL, pageViews REAL, bounceRate REAL, eventCount REAL, PRIMARY KEY (ownerId, propertyId, siteUrl, date, dimension, dimensionValue));
+  CREATE TABLE ga4_llm_referral_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, source TEXT, sourceClass TEXT, pagePath TEXT, pageKey TEXT, sessions REAL, engagedSessions REAL, keyEvents REAL, averageSessionDuration REAL, PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey));
 `);
 
 const ownerId = 'owner-1';

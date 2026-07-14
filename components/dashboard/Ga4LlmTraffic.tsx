@@ -11,7 +11,7 @@ import { Ga4ApiService, Ga4LlmWarehouseReportResponse, Ga4WarehouseCoverage } fr
 import { DateRange } from "react-day-picker"
 
 interface Ga4LlmTrafficProps {
-  siteUrl: string;
+  propertyId: string;
   workspaceSiteUrl?: string;
   dateRange: DateRange;
   isCompareMode: boolean;
@@ -54,7 +54,7 @@ function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   window.URL.revokeObjectURL(url)
 }
 
-export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSiteUrl, dateRange, isCompareMode, compareDateRange, refreshKey = 0 }: Ga4LlmTrafficProps) {
+export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompareMode, compareDateRange, refreshKey = 0 }: Ga4LlmTrafficProps) {
   const { userProfile } = useAuth()
   const [data, setData] = useState<Ga4LlmWarehouseReportResponse | null>(null)
   const [compareData, setCompareData] = useState<Ga4LlmWarehouseReportResponse | null>(null)
@@ -65,14 +65,23 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
   const [coverage, setCoverage] = useState<Ga4WarehouseCoverage | null>(null)
 
   useEffect(() => {
-    const propertyId = siteUrl?.startsWith("properties/") ? siteUrl : userProfile?.activatedGa4PropertyId
-    const workspaceSiteUrl = explicitWorkspaceSiteUrl || userProfile?.activatedSiteUrl || (!siteUrl?.startsWith("properties/") ? siteUrl : null)
-    if (!userProfile?.googleConnected || !propertyId || !workspaceSiteUrl || !dateRange.from || !dateRange.to) {
+    if (!userProfile?.googleConnected || !dateRange.from || !dateRange.to) {
       setLoading(false)
       setData(null)
       setCompareData(null)
       setCoverage(null)
       setRefreshing(false)
+      setError(null)
+      return
+    }
+
+    if (!propertyId || !workspaceSiteUrl) {
+      setLoading(false)
+      setData(null)
+      setCompareData(null)
+      setCoverage(null)
+      setRefreshing(false)
+      setError("Stored LLM traffic requires both a GA4 property and workspace site.")
       return
     }
 
@@ -147,7 +156,7 @@ export function Ga4LlmTraffic({ siteUrl, workspaceSiteUrl: explicitWorkspaceSite
       controller.abort()
       if (pollTimer) window.clearTimeout(pollTimer)
     }
-  }, [siteUrl, explicitWorkspaceSiteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.activatedGa4PropertyId, userProfile?.activatedSiteUrl, userProfile?.googleConnected, pollKey, refreshKey])
+  }, [propertyId, workspaceSiteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.googleConnected, pollKey, refreshKey])
 
 
   const formatValue = (metric: string, value: string) => {
