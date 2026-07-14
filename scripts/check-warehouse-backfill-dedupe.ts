@@ -10,6 +10,7 @@ import {
   recentStableWarehouseDates,
   startWarehouseJobWorker,
 } from '../server/services/warehouseJobs.js';
+import { ga4CoverageFromLedger } from '../server/routes/warehouse.js';
 
 class MemoryDatabase implements AppDatabase {
   dialect = 'sqlite' as const;
@@ -194,6 +195,21 @@ async function createMemoryDatabase() {
       averageSessionDuration REAL,
       PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey)
     );
+    CREATE TABLE warehouse_dataset_coverage (
+      ownerId TEXT,
+      propertyId TEXT,
+      siteUrl TEXT,
+      date TEXT,
+      dataset TEXT,
+      status TEXT,
+      rowCount INTEGER,
+      truncated INTEGER,
+      jobId TEXT,
+      lastError TEXT,
+      completedAt TEXT,
+      updatedAt TEXT,
+      PRIMARY KEY (ownerId, propertyId, siteUrl, date, dataset)
+    );
   `);
   return db;
 }
@@ -319,6 +335,22 @@ async function waitForJobStatus(db: AppDatabase, jobId: string, statuses: string
   throw new Error(`Timed out waiting for warehouse job ${jobId} to reach ${statuses.join(', ')}; last status=${lastStatus}; last metrics=${lastMetricsJson ?? 'null'}`);
 }
 
+async function assertDatasetCoverage(
+  db: AppDatabase,
+  input: { dataset: string; date: string; expectedRowCount?: number; expectedStatus: string; requireError?: boolean },
+) {
+  const row = await db.get<{ lastError: string | null; rowCount: number; status: string; truncated: number }>(
+    'SELECT lastError, rowCount, status, truncated FROM warehouse_dataset_coverage WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date = ? AND dataset = ?',
+    [ownerId, propertyId, siteUrl, input.date, input.dataset],
+  );
+  assert(row?.status === input.expectedStatus, `Expected ${input.dataset} coverage status ${input.expectedStatus}, got ${row?.status || 'missing'}`);
+  if (input.expectedRowCount !== undefined) {
+    assert(Number(row?.rowCount || 0) === input.expectedRowCount, `Expected ${input.dataset} coverage rowCount ${input.expectedRowCount}, got ${String(row?.rowCount)}`);
+  }
+  assert(Number(row?.truncated || 0) === 0, `Expected ${input.dataset} fixture coverage to be untruncated`);
+  if (input.requireError) assert(Boolean(row?.lastError), `Expected ${input.dataset} coverage to preserve the source error`);
+  else assert(row?.lastError == null, `Expected ${input.dataset} coverage to clear source errors after success`);
+}
 async function runBackfillDedupeChecks() {
   const db = await createMemoryDatabase();
   try {
@@ -453,6 +485,7 @@ async function runGa4PageExecutionChecks() {
     );
     assert(storedRow?.pagePath === '/landing', 'Expected GA4 page sync to store the fetched page path');
     assert(Number(storedRow?.sessions || 0) === 5, 'Expected GA4 page sync to store the fetched sessions count');
+    await assertDatasetCoverage(successDb, { dataset: 'pages', date: targetDate, expectedRowCount: 1, expectedStatus: 'complete' });
   } finally {
     stopSuccessWorker();
     restoreSuccessFetch();
@@ -481,6 +514,7 @@ async function runGa4PageExecutionChecks() {
 
     const syncStatusCount = await errorDb.get<{ count: number }>('SELECT COUNT(*) AS count FROM warehouse_sync_status');
     assert(Number(syncStatusCount?.count || 0) === 0, 'Failed GA4 page range job must not mutate warehouse_sync_status');
+    await assertDatasetCoverage(errorDb, { dataset: 'pages', date: targetDate, expectedStatus: 'error', requireError: true });
   } finally {
     stopErrorWorker();
     restoreErrorFetch();
@@ -538,6 +572,7 @@ async function runGa4DimensionExecutionChecks() {
     );
     assert(storedSessionSource?.dimensionValue === 'sessionSourceMedium-value', 'Expected GA4 dimension sync to store the fetched dimension value');
     assert(Number(storedSessionSource?.pageViews || 0) === 7, 'Expected GA4 dimension sync to store the fetched pageViews count');
+    await assertDatasetCoverage(successDb, { dataset: 'sessionSourceMedium', date: targetDate, expectedRowCount: 1, expectedStatus: 'complete' });
   } finally {
     stopSuccessWorker();
     restoreSuccessFetch();
@@ -574,6 +609,7 @@ async function runGa4DimensionExecutionChecks() {
     );
     assert(sentinelRow?.dimension === 'browser', 'Expected zero-row GA4 dimension range job to preserve the dimension name');
     assert(Number(sentinelRow?.pageViews || 0) === 0 && Number(sentinelRow?.sessions || 0) === 0, 'Expected zero-row GA4 dimension sentinel rows to store zero metrics');
+    await assertDatasetCoverage(sentinelDb, { dataset: 'browser', date: targetDate, expectedRowCount: 0, expectedStatus: 'zero' });
   } finally {
     stopSentinelWorker();
     restoreSentinelFetch();
@@ -604,6 +640,7 @@ async function runGa4DimensionExecutionChecks() {
 
     const syncStatusCount = await retryDb.get<{ count: number }>('SELECT COUNT(*) AS count FROM warehouse_sync_status');
     assert(Number(syncStatusCount?.count || 0) === 0, 'Retrying GA4 dimension range job must not mutate warehouse_sync_status before success');
+    await assertDatasetCoverage(retryDb, { dataset: 'eventName', date: targetDate, expectedStatus: 'error', requireError: true });
   } finally {
     stopRetryWorker();
     restoreRetryFetch();
@@ -654,6 +691,7 @@ async function runGa4LlmExecutionChecks() {
     assert(storedRow?.source === 'chatgpt.com', 'Expected GA4 LLM sync to store the fetched referral source');
     assert(storedRow?.sourceClass === 'ChatGPT', 'Expected GA4 LLM sync to classify the fetched referral source');
     assert(Number(storedRow?.sessions || 0) === 6, 'Expected GA4 LLM sync to store the fetched sessions count');
+    await assertDatasetCoverage(successDb, { dataset: 'llm', date: targetDate, expectedRowCount: 1, expectedStatus: 'complete' });
   } finally {
     stopSuccessWorker();
     restoreSuccessFetch();
@@ -686,6 +724,7 @@ async function runGa4LlmExecutionChecks() {
     assert(sentinelRow?.sourceClass === '', 'Expected zero-row GA4 LLM range job to write an empty-source-class sentinel row');
     assert(sentinelRow?.pagePath === '' && sentinelRow?.pageKey === '', 'Expected zero-row GA4 LLM range job to write empty page sentinel fields');
     assert(Number(sentinelRow?.sessions || 0) === 0, 'Expected zero-row GA4 LLM sentinel rows to store zero metrics');
+    await assertDatasetCoverage(sentinelDb, { dataset: 'llm', date: targetDate, expectedRowCount: 0, expectedStatus: 'zero' });
   } finally {
     stopSentinelWorker();
     restoreSentinelFetch();
@@ -715,6 +754,7 @@ async function runGa4LlmExecutionChecks() {
 
     const syncStatusCount = await errorDb.get<{ count: number }>('SELECT COUNT(*) AS count FROM warehouse_sync_status');
     assert(Number(syncStatusCount?.count || 0) === 0, 'Failed GA4 LLM range job must not mutate warehouse_sync_status');
+    await assertDatasetCoverage(errorDb, { dataset: 'llm', date: targetDate, expectedStatus: 'error', requireError: true });
   } finally {
     stopErrorWorker();
     restoreErrorFetch();
@@ -724,6 +764,41 @@ async function runGa4LlmExecutionChecks() {
   return { targetDate };
 }
 
+function runGa4CoverageLedgerChecks() {
+  const expectedDates = ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04'];
+  const coverage = ga4CoverageFromLedger(
+    expectedDates,
+    [
+      { dataset: 'pages', date: '2026-06-02', lastError: null, rowCount: 0, status: 'zero', truncated: 0 },
+      { dataset: 'pages', date: '2026-06-03', lastError: 'source failed', rowCount: 0, status: 'error', truncated: 0 },
+      { dataset: 'pages', date: '2026-06-04', lastError: null, rowCount: 250000, status: 'partial', truncated: 1 },
+    ],
+    ['pages'],
+    [{ date: '2026-06-01', rowCount: 1 }],
+  );
+  assert(coverage.coveredDateCount === 3, `Expected legacy, zero, and partial GA4 dates to be covered; got ${coverage.coveredDateCount}`);
+  assert(coverage.completeDateCount === 1, `Expected one legacy-complete GA4 date; got ${coverage.completeDateCount}`);
+  assert(coverage.zeroDateCount === 1, `Expected one zero-activity GA4 date; got ${coverage.zeroDateCount}`);
+  assert(coverage.partialDateCount === 1, `Expected one partial GA4 date; got ${coverage.partialDateCount}`);
+  assert(coverage.errorDateCount === 1 && coverage.lastError === 'source failed', 'Expected failed-only GA4 date to remain visible as an error');
+  assert(coverage.allMissingDates.length === 1 && coverage.allMissingDates[0] === '2026-06-03', 'Expected only the failed-only GA4 date to remain missing');
+
+  const mixedDimensionCoverage = ga4CoverageFromLedger(
+    ['2026-06-05'],
+    [
+      { dataset: 'browser', date: '2026-06-05', lastError: null, rowCount: 0, status: 'zero', truncated: 0 },
+      { dataset: 'country', date: '2026-06-05', lastError: null, rowCount: 2, status: 'complete', truncated: 0 },
+    ],
+    ['browser', 'country'],
+    [],
+    2,
+  );
+  assert(mixedDimensionCoverage.coveredDateCount === 1, 'Expected a complete mixed zero/non-zero GA4 dimension date to be covered');
+  assert(mixedDimensionCoverage.completeDateCount === 1, 'Expected mixed zero/non-zero GA4 dimensions to classify as complete');
+
+  return { coveredDateCount: coverage.coveredDateCount, errorDateCount: coverage.errorDateCount };
+}
+const coverageLedger = runGa4CoverageLedgerChecks();
 const backfill = await runBackfillDedupeChecks();
 const compatibility = await runGa4PageCompatibilityChecks();
 const pageExecution = await runGa4PageExecutionChecks();
@@ -732,6 +807,7 @@ const llmExecution = await runGa4LlmExecutionChecks();
 
 console.log(JSON.stringify({
   backfill,
+  coverageLedger,
   compatibility,
   pageExecution,
   dimensionExecution,

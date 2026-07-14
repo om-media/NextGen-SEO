@@ -66,7 +66,14 @@ assert(
   'eventName must not be restricted to a reduced GA4 warehouse metric set',
 );
 
+assert(warehouseRoute.includes('ga4CoverageFromLedger'), 'GA4 coverage must read explicit dataset completion states');
+assert(warehouseRoute.includes('FROM warehouse_dataset_coverage'), 'GA4 coverage must query the dataset completeness ledger');
+
+const database = read('server/database.ts');
+assert(database.includes('CREATE TABLE IF NOT EXISTS warehouse_dataset_coverage'), 'Database schema must include the GA4 dataset completeness ledger');
+
 const warehouseJobs = read('server/services/warehouseJobs.ts');
+assert(warehouseJobs.includes('upsertGa4DatasetCoverage'), 'GA4 workers must persist dataset completeness');
 for (const llmSource of ['gemini', 'you', 'mistral', 'meta.*ai', 'grok']) {
   assert(warehouseJobs.includes(llmSource), `LLM warehouse import must include ${llmSource}`);
 }

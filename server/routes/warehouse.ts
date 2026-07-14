@@ -197,29 +197,77 @@ const coverageFromRows = (
   };
 };
 
-const coverageFromRowsWithMinimum = (
+type Ga4DatasetCoverageRow = {
+  dataset: string;
+  date: string;
+  lastError: string | null;
+  rowCount: number | null;
+  status: 'complete' | 'error' | 'partial' | 'zero';
+  truncated: number | null;
+};
+
+export const ga4CoverageFromLedger = (
   expectedDates: string[],
-  rows: Array<{ date?: string | null; rowCount?: number | null }>,
-  minimumRowCount: number,
-  completedDates = new Set<string>(),
+  ledgerRows: Ga4DatasetCoverageRow[],
+  requiredDatasets: string[],
+  fallbackRows: Array<{ date?: string | null; rowCount?: number | null }>,
+  fallbackMinimumRowCount = 1,
 ) => {
-  const countByDate = new Map(rows.map((row) => [String(row.date || ''), toCoverageNumber(row.rowCount)]));
-  const coveredDates = expectedDates.filter((date) => (countByDate.get(date) || 0) >= minimumRowCount || completedDates.has(date));
+  const rowsByDate = new Map<string, Map<string, Ga4DatasetCoverageRow>>();
+  for (const row of ledgerRows) {
+    const datasets = rowsByDate.get(row.date) || new Map<string, Ga4DatasetCoverageRow>();
+    datasets.set(row.dataset, row);
+    rowsByDate.set(row.date, datasets);
+  }
+
+  const fallbackCountByDate = new Map(fallbackRows.map((row) => [String(row.date || ''), toCoverageNumber(row.rowCount)]));
+  const statusByDate = new Map<string, 'complete' | 'error' | 'partial' | 'zero'>();
+  let lastError: string | null = null;
+  for (const date of expectedDates) {
+    const datasets = rowsByDate.get(date);
+    const requiredRows = requiredDatasets.map((dataset) => datasets?.get(dataset)).filter(Boolean) as Ga4DatasetCoverageRow[];
+    const allDatasetsStored = requiredRows.length === requiredDatasets.length
+      && requiredRows.every((row) => ['complete', 'partial', 'zero'].includes(row.status));
+    const hasFallback = (fallbackCountByDate.get(date) || 0) >= fallbackMinimumRowCount;
+    if (allDatasetsStored || hasFallback) {
+      if (requiredRows.some((row) => row.status === 'partial' || Number(row.truncated || 0) > 0)) statusByDate.set(date, 'partial');
+      else if (requiredRows.length === requiredDatasets.length && requiredRows.every((row) => row.status === 'zero')) statusByDate.set(date, 'zero');
+      else statusByDate.set(date, 'complete');
+      continue;
+    }
+    const errorRow = requiredRows.find((row) => row.status === 'error');
+    if (errorRow) {
+      statusByDate.set(date, 'error');
+      lastError ||= errorRow.lastError || null;
+    }
+  }
+
+  const coveredDates = expectedDates.filter((date) => {
+    const status = statusByDate.get(date);
+    return status === 'complete' || status === 'partial' || status === 'zero';
+  });
   const missingDates = expectedDates.filter((date) => !coveredDates.includes(date));
-  const totalRows = rows.reduce((sum, row) => sum + toCoverageNumber(row.rowCount), 0);
+  const countStatus = (status: 'complete' | 'error' | 'partial' | 'zero') => (
+    expectedDates.filter((date) => statusByDate.get(date) === status).length
+  );
 
   return {
+    completeDateCount: countStatus('complete'),
     coveredDateCount: coveredDates.length,
     coverageRatio: expectedDates.length > 0 ? coveredDates.length / expectedDates.length : 0,
+    errorDateCount: countStatus('error'),
     expectedDateCount: expectedDates.length,
     firstCoveredDate: coveredDates[0] || null,
     lastCoveredDate: coveredDates[coveredDates.length - 1] || null,
+    lastError,
+    allMissingDates: missingDates,
     missingDateCount: missingDates.length,
     missingDates: missingDates.slice(0, 31),
-    totalRows,
+    partialDateCount: countStatus('partial'),
+    totalRows: fallbackRows.reduce((sum, row) => sum + toCoverageNumber(row.rowCount), 0),
+    zeroDateCount: countStatus('zero'),
   };
 };
-
 const buildGa4DateWindow = (
   startDate: string,
   endDate: string,
@@ -1465,7 +1513,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const unavailableDates = endDate > latestAvailableDate
         ? eachIsoDate(maxIsoDate(startDate, addIsoDays(latestAvailableDate, 1)), endDate)
         : [];
-      const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, ga4DimensionRows, ga4LlmRows, latestCrawl, warehouseJobRows, bingStatus, bingUser] = await Promise.all([
+      const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, ga4DimensionRows, ga4LlmRows, ga4DatasetCoverageRows, latestCrawl, warehouseJobRows, bingStatus, bingUser] = await Promise.all([
         db.all<{ date: string; rowCount: number }>(`
           SELECT date, COUNT(*) AS rowCount
           FROM gsc_site_metrics
@@ -1527,6 +1575,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             ORDER BY date ASC
           `, [ownerId, effectivePropertyId, siteUrl, ga4EffectiveStartDate, effectiveEndDate])
           : Promise.resolve([]),
+        effectivePropertyId
+          ? db.all<Ga4DatasetCoverageRow>(`
+            SELECT dataset, date, lastError, rowCount, status, truncated
+            FROM warehouse_dataset_coverage
+            WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+            ORDER BY date ASC, dataset ASC
+          `, [ownerId, effectivePropertyId, siteUrl, ga4EffectiveStartDate, effectiveEndDate])
+          : Promise.resolve([]),
         db.get<any>(`
           SELECT *
           FROM crawl_jobs
@@ -1553,24 +1609,27 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const gscQueryDates = new Set(gscQueryCoverageRows.map((row) => row.date));
       const gscPageQueryDates = new Set(gscPageQueryCoverageRows.map((row) => row.date));
       const gscCountryDates = new Set(gscCountryCoverageRows.map((row) => row.date));
-      const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
-      const ga4DimensionDateCounts = new Map(ga4DimensionRows.map((row) => [row.date, toCoverageNumber(row.rowCount)]));
-      const ga4LlmDates = new Set(ga4LlmRows.map((row) => row.date));
+      const pageLedgerRows = ga4DatasetCoverageRows.filter((row) => row.dataset === 'pages');
+      const dimensionLedgerRows = ga4DatasetCoverageRows.filter((row) => GA4_DIMENSION_WAREHOUSE_DIMENSIONS.has(row.dataset));
+      const llmLedgerRows = ga4DatasetCoverageRows.filter((row) => row.dataset === 'llm');
+      const pageCoverageWithMissing = ga4CoverageFromLedger(expectedDates, pageLedgerRows, ['pages'], ga4PageRows);
+      const dimensionCoverageWithMissing = ga4CoverageFromLedger(
+        expectedDates,
+        dimensionLedgerRows,
+        Array.from(GA4_DIMENSION_WAREHOUSE_DIMENSIONS),
+        ga4DimensionRows,
+        GA4_DIMENSION_DATASET_COUNT,
+      );
+      const llmCoverageWithMissing = ga4CoverageFromLedger(expectedDates, llmLedgerRows, ['llm'], ga4LlmRows);
+      const { allMissingDates: ga4PageMissingDateList, ...ga4PageCoverage } = pageCoverageWithMissing;
+      const { allMissingDates: ga4DimensionMissingDateList, ...ga4DimensionCoverage } = dimensionCoverageWithMissing;
+      const { allMissingDates: ga4LlmMissingDateList, ...ga4LlmCoverage } = llmCoverageWithMissing;
       const missingGscDates = new Set(gscExpectedDates.filter((date) => (
         !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date)
       )));
-      const missingGa4PageDates = new Set(expectedDates.filter((date) => Boolean(
-        effectivePropertyId
-        && !ga4PageDates.has(date),
-      )));
-      const missingGa4DimensionDates = new Set(expectedDates.filter((date) => Boolean(
-        effectivePropertyId
-        && (ga4DimensionDateCounts.get(date) || 0) < GA4_DIMENSION_DATASET_COUNT,
-      )));
-      const missingGa4LlmDates = new Set(expectedDates.filter((date) => Boolean(
-        effectivePropertyId
-        && !ga4LlmDates.has(date),
-      )));
+      const missingGa4PageDates = new Set(effectivePropertyId ? ga4PageMissingDateList : []);
+      const missingGa4DimensionDates = new Set(effectivePropertyId ? ga4DimensionMissingDateList : []);
+      const missingGa4LlmDates = new Set(effectivePropertyId ? ga4LlmMissingDateList : []);
       const missingDates = new Set([...missingGscDates, ...missingGa4PageDates, ...missingGa4DimensionDates, ...missingGa4LlmDates]);
       const relevantActiveJobs = activeJobs.filter((job) => {
         const dates = jobDatesWithin(job, effectiveStartDate, effectiveEndDate);
@@ -1902,13 +1961,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         },
         ga4: {
           enabled: Boolean(effectivePropertyId),
-          dimensions: effectivePropertyId
-            ? coverageFromRowsWithMinimum(expectedDates, ga4DimensionRows, GA4_DIMENSION_DATASET_COUNT)
-            : coverageFromRows(expectedDates, []),
-          llm: effectivePropertyId
-            ? coverageFromRows(expectedDates, ga4LlmRows)
-            : coverageFromRows(expectedDates, []),
-          pages: coverageFromRows(expectedDates, ga4PageRows),
+          dimensions: effectivePropertyId ? ga4DimensionCoverage : coverageFromRows(expectedDates, []),
+          llm: effectivePropertyId ? ga4LlmCoverage : coverageFromRows(expectedDates, []),
+          pages: effectivePropertyId ? ga4PageCoverage : coverageFromRows(expectedDates, []),
           propertyId: effectivePropertyId || null,
         },
         gsc: {

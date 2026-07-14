@@ -1,14 +1,19 @@
 import { authFetch } from "@/src/lib/authFetch";
 
 export type CoverageDataset = {
+  completeDateCount?: number;
   coveredDateCount: number;
   coverageRatio: number;
+  errorDateCount?: number;
   expectedDateCount: number;
   firstCoveredDate: string | null;
   lastCoveredDate: string | null;
+  lastError?: string | null;
   missingDateCount: number;
   missingDates: string[];
+  partialDateCount?: number;
   totalRows: number;
+  zeroDateCount?: number;
 };
 
 export type WarehouseSourceJobState = {

@@ -219,6 +219,88 @@ function classifyLlmSource(source: unknown) {
   return String(source || 'Other');
 }
 
+type Ga4DatasetCoverageStatus = 'complete' | 'error' | 'partial' | 'zero';
+
+const ga4RowsByDate = (rows: any[]) => {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const date = normalizeGa4Date(row.dimensionValues?.[0]?.value);
+    if (date) counts.set(date, (counts.get(date) || 0) + 1);
+  }
+  return counts;
+};
+
+async function upsertGa4DatasetCoverage(db: AppDatabase, input: {
+  dataset: string;
+  date: string;
+  job: WarehouseJob;
+  rowCount: number;
+  status: Ga4DatasetCoverageStatus;
+  truncated?: boolean;
+}) {
+  if (!input.job.propertyId) return;
+  const timestamp = nowIso();
+  await db.run(
+    `INSERT INTO warehouse_dataset_coverage
+       (ownerId, propertyId, siteUrl, date, dataset, status, rowCount, truncated, jobId, lastError, completedAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+     ON CONFLICT(ownerId, propertyId, siteUrl, date, dataset) DO UPDATE SET
+       status=excluded.status,
+       rowCount=excluded.rowCount,
+       truncated=excluded.truncated,
+       jobId=excluded.jobId,
+       lastError=NULL,
+       completedAt=excluded.completedAt,
+       updatedAt=excluded.updatedAt`,
+    [
+      input.job.ownerId,
+      input.job.propertyId,
+      input.job.siteUrl,
+      input.date,
+      input.dataset,
+      input.status,
+      input.rowCount,
+      input.truncated ? 1 : 0,
+      input.job.id,
+      timestamp,
+      timestamp,
+    ],
+  );
+}
+
+const ga4DatasetsForSource = (source: WarehouseSyncSource) => {
+  if (source === 'ga4-pages') return ['pages'];
+  if (source === 'ga4-llm') return ['llm'];
+  if (source === 'ga4-dimensions') return GA4_DIMENSION_SYNC_CONFIGS.map((config) => config.dimension);
+  return [];
+};
+
+async function markGa4DatasetCoverageError(db: AppDatabase, job: WarehouseJob, source: WarehouseSyncSource, error: unknown) {
+  if (!job.propertyId) return;
+  const datasets = ga4DatasetsForSource(source);
+  if (datasets.length === 0) return;
+  const timestamp = nowIso();
+  const message = error instanceof Error ? error.message : 'Warehouse sync failed';
+  for (const date of eachIsoDate(job.targetStartDate || job.targetDate, job.targetDate)) {
+    for (const dataset of datasets) {
+      await db.run(
+        `INSERT INTO warehouse_dataset_coverage
+           (ownerId, propertyId, siteUrl, date, dataset, status, rowCount, truncated, jobId, lastError, completedAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, 'error', 0, 0, ?, ?, NULL, ?)
+         ON CONFLICT(ownerId, propertyId, siteUrl, date, dataset) DO UPDATE SET
+           status=CASE
+             WHEN warehouse_dataset_coverage.status IN ('complete', 'zero', 'partial') THEN warehouse_dataset_coverage.status
+             ELSE 'error'
+           END,
+           jobId=excluded.jobId,
+           lastError=excluded.lastError,
+           updatedAt=excluded.updatedAt`,
+        [job.ownerId, job.propertyId, job.siteUrl, date, dataset, job.id, message, timestamp],
+      );
+    }
+  }
+}
+
 async function fetchGscRowsForRange(db: AppDatabase, ownerId: string, siteUrl: string, startDate: string, endDate: string, dimensions: string[]) {
   const rows = [];
   let startRow = 0;
@@ -430,6 +512,7 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
   const insertPage = prepareWarehouseStatement(db, insertPageSql);
   const rows = [];
   let offset = 0;
+  let truncated = false;
 
   const apiStartedAt = Date.now();
   for (let page = 0; page < GA4_MAX_PAGES_PER_DATASET; page += 1) {
@@ -453,10 +536,12 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
     if (batch.length < GA4_ROW_LIMIT) {
       break;
     }
+    if (page === GA4_MAX_PAGES_PER_DATASET - 1) truncated = true;
     offset += GA4_ROW_LIMIT;
   }
   const apiMs = elapsedMs(apiStartedAt);
 
+  const rowCountsByDate = ga4RowsByDate(rows);
   const writeStartedAt = Date.now();
   await db.transaction(async () => {
     await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, job.siteUrl, startDate, endDate]);
@@ -480,6 +565,17 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
         insertPageSql,
         [job.ownerId, job.propertyId, job.siteUrl, date, '', '', 0, 0, 0, 0, 0],
       );
+    }
+    for (const date of eachIsoDate(startDate, endDate)) {
+      const rowCount = rowCountsByDate.get(date) || 0;
+      await upsertGa4DatasetCoverage(db, {
+        dataset: 'pages',
+        date,
+        job,
+        rowCount,
+        status: truncated ? 'partial' : rowCount > 0 ? 'complete' : 'zero',
+        truncated,
+      });
     }
   })();
   const writeMs = elapsedMs(writeStartedAt);
@@ -515,12 +611,13 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
   let apiMs = 0;
   let rowsSynced = 0;
   const rowsByDimension: Record<string, number> = {};
-  const phaseMetrics: Record<string, { apiMs: number; rows: number; writeMs: number }> = {};
+  const phaseMetrics: Record<string, { apiMs: number; rows: number; truncated: boolean; writeMs: number }> = {};
   let writeMs = 0;
 
   for (const config of GA4_DIMENSION_SYNC_CONFIGS) {
     const rows = [];
     let offset = 0;
+    let truncated = false;
 
     const apiStartedAt = Date.now();
     for (let page = 0; page < GA4_MAX_PAGES_PER_DATASET; page += 1) {
@@ -544,9 +641,11 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
       if (batch.length < GA4_ROW_LIMIT) {
         break;
       }
+      if (page === GA4_MAX_PAGES_PER_DATASET - 1) truncated = true;
       offset += GA4_ROW_LIMIT;
     }
     const dimensionApiMs = elapsedMs(apiStartedAt);
+    const rowCountsByDate = ga4RowsByDate(rows);
     apiMs += dimensionApiMs;
 
     const writeStartedAt = Date.now();
@@ -594,6 +693,17 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
           [job.ownerId, job.propertyId, job.siteUrl, date, config.dimension, '', 0, 0, 0, 0, 0],
         );
       }
+      for (const date of eachIsoDate(startDate, endDate)) {
+        const rowCount = rowCountsByDate.get(date) || 0;
+        await upsertGa4DatasetCoverage(db, {
+          dataset: config.dimension,
+          date,
+          job,
+          rowCount,
+          status: truncated ? 'partial' : rowCount > 0 ? 'complete' : 'zero',
+          truncated,
+        });
+      }
     })();
     const dimensionWriteMs = elapsedMs(writeStartedAt);
     writeMs += dimensionWriteMs;
@@ -603,6 +713,7 @@ async function syncGa4DimensionRange(db: AppDatabase, job: WarehouseJob, startDa
     phaseMetrics[config.dimension] = {
       apiMs: dimensionApiMs,
       rows: rows.length,
+      truncated,
       writeMs: dimensionWriteMs,
     };
   }
@@ -631,6 +742,7 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
   const insertLlm = prepareWarehouseStatement(db, insertLlmSql);
   const rows = [];
   let offset = 0;
+  let truncated = false;
 
   const apiStartedAt = Date.now();
   for (let page = 0; page < GA4_MAX_PAGES_PER_DATASET; page += 1) {
@@ -663,10 +775,12 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
     if (batch.length < GA4_ROW_LIMIT) {
       break;
     }
+    if (page === GA4_MAX_PAGES_PER_DATASET - 1) truncated = true;
     offset += GA4_ROW_LIMIT;
   }
   const apiMs = elapsedMs(apiStartedAt);
 
+  const rowCountsByDate = ga4RowsByDate(rows);
   const writeStartedAt = Date.now();
   await db.transaction(async () => {
     await db.run('DELETE FROM ga4_llm_referral_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, job.siteUrl, startDate, endDate]);
@@ -704,6 +818,17 @@ async function syncGa4LlmRange(db: AppDatabase, job: WarehouseJob, startDate: st
         insertLlmSql,
         [job.ownerId, job.propertyId, job.siteUrl, date, '', '', '', '', 0, 0, 0, 0],
       );
+    }
+    for (const date of eachIsoDate(startDate, endDate)) {
+      const rowCount = rowCountsByDate.get(date) || 0;
+      await upsertGa4DatasetCoverage(db, {
+        dataset: 'llm',
+        date,
+        job,
+        rowCount,
+        status: truncated ? 'partial' : rowCount > 0 ? 'complete' : 'zero',
+        truncated,
+      });
     }
   })();
   const writeMs = elapsedMs(writeStartedAt);
@@ -1063,10 +1188,15 @@ async function failOrRetry(db: AppDatabase, job: WarehouseJob, lease: ReturnType
   await lease.finalize({
     completedAt: shouldRetry ? null : failedAt,
     lastError: error instanceof Error ? error.message : 'Warehouse sync failed',
-        metricsJson: JSON.stringify({ failedAt, failedSource, jobType: job.jobType }),
+    metricsJson: JSON.stringify({ failedAt, failedSource, jobType: job.jobType }),
     nextRunAt: shouldRetry ? new Date(Date.now() + delayMs).toISOString() : null,
     status: shouldRetry ? 'retrying' : 'error',
   });
+  try {
+    await markGa4DatasetCoverageError(db, job, failedSource, error);
+  } catch (coverageError) {
+    console.error('[warehouse] Failed to persist GA4 dataset coverage error:', coverageError);
+  }
 }
 
 const normalizedJobPriority = (priority: number | undefined) => {

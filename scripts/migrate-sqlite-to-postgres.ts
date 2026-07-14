@@ -36,6 +36,7 @@ const migrations: TableMigration[] = [
   { table: 'bing_query_stats', conflictColumns: ['ownerId', 'siteUrl', 'query'] },
   { table: 'bing_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
   { table: 'warehouse_sync_status', conflictColumns: ['ownerId', 'siteUrl'] },
+  { table: 'warehouse_dataset_coverage', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'dataset'] },
   { table: 'tracked_keywords', conflictColumns: ['id'] },
   { table: 'keyword_rankings', conflictColumns: ['keywordId', 'date'] },
   { table: 'url_inspection_cache', conflictColumns: ['ownerId', 'siteUrl', 'url'] },

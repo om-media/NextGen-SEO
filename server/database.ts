@@ -313,6 +313,22 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey)
   );
 
+  CREATE TABLE IF NOT EXISTS warehouse_dataset_coverage (
+    ownerId TEXT,
+    propertyId TEXT,
+    siteUrl TEXT,
+    date TEXT,
+    dataset TEXT,
+    status TEXT,
+    rowCount INTEGER DEFAULT 0,
+    truncated INTEGER DEFAULT 0,
+    jobId TEXT,
+    lastError TEXT,
+    completedAt TEXT,
+    updatedAt TEXT,
+    PRIMARY KEY (ownerId, propertyId, siteUrl, date, dataset)
+  );
+
   CREATE TABLE IF NOT EXISTS warehouse_sync_status (
     ownerId TEXT,
     siteUrl TEXT,
@@ -677,6 +693,7 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_date ON ga4_llm_referral_metrics(ownerId, propertyId, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_source_date ON ga4_llm_referral_metrics(ownerId, propertyId, sourceClass, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_page_date ON ga4_llm_referral_metrics(ownerId, propertyId, pageKey, date);
+  CREATE INDEX IF NOT EXISTS idx_warehouse_dataset_coverage_scope_date ON warehouse_dataset_coverage(ownerId, propertyId, siteUrl, dataset, date);
   CREATE INDEX IF NOT EXISTS idx_bing_query_stats_owner_site_fetched ON bing_query_stats(ownerId, siteUrl, fetchedAt);
   CREATE INDEX IF NOT EXISTS idx_bing_query_metrics_owner_site_date ON bing_query_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_bing_query_metrics_owner_site_query_date ON bing_query_metrics(ownerId, siteUrl, query, date);

@@ -171,6 +171,7 @@ async function installSchema(db: AppDatabase) {
     CREATE TABLE ga4_page_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, pageKey TEXT, pagePath TEXT, sessions REAL, totalUsers REAL, pageViews REAL, bounceRate REAL, eventCount REAL);
     CREATE TABLE ga4_dimension_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, dimension TEXT, dimensionValue TEXT, sessions REAL, totalUsers REAL, pageViews REAL, bounceRate REAL, eventCount REAL);
     CREATE TABLE ga4_llm_referral_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, source TEXT, sourceClass TEXT, pageKey TEXT, pagePath TEXT, sessions REAL, engagedSessions REAL, keyEvents REAL, averageSessionDuration REAL);
+    CREATE TABLE warehouse_dataset_coverage (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, dataset TEXT, status TEXT, rowCount INTEGER, truncated INTEGER, jobId TEXT, lastError TEXT, completedAt TEXT, updatedAt TEXT, PRIMARY KEY (ownerId, propertyId, siteUrl, date, dataset));
     CREATE TABLE crawl_jobs (id TEXT PRIMARY KEY, ownerId TEXT, siteUrl TEXT, status TEXT, startedAt TEXT, completedAt TEXT, updatedAt TEXT);
     CREATE TABLE crawl_pages (ownerId TEXT, siteUrl TEXT, jobId TEXT, statusCode INTEGER, noindex INTEGER);
     CREATE TABLE bing_query_stats (ownerId TEXT, siteUrl TEXT, fetchedAt TEXT);
