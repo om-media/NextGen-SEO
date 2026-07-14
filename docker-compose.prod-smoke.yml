@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: gsc_plus
       POSTGRES_USER: gsc_plus
@@ -13,11 +13,29 @@ services:
     volumes:
       - postgres-smoke-data:/var/lib/postgresql/data
 
-  app:
-    build: .
+  database-prepare:
+    image: gscplus-prod-smoke-app:local
+    command: ["npm", "run", "db:prepare"]
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      NODE_ENV: production
+      APP_BASE_URL: https://example.com
+      GOOGLE_OAUTH_REDIRECT_URI: https://example.com/api/google/oauth/callback
+      GOOGLE_OAUTH_STATE_SECRET: smoke_state_secret_32_chars_minimum
+      GOOGLE_TOKEN_ENCRYPTION_KEY: smoke_token_secret_32_chars_minimum
+      GOOGLE_OAUTH_CLIENT_ID: smoke-client-id
+      GOOGLE_OAUTH_CLIENT_SECRET: smoke-client-secret
+      DATABASE_URL: postgresql://gsc_plus:gsc_plus_smoke_password@postgres:5432/gsc_plus
+      POSTGRES_SSL: "false"
+      RUN_DATABASE_BACKFILLS: "true"
+  app:
+    build: .
+    image: gscplus-prod-smoke-app:local
+    depends_on:
+      database-prepare:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -37,6 +55,56 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  warehouse-worker:
+    image: gscplus-prod-smoke-app:local
+    command: ["npm", "run", "start:worker:warehouse"]
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      APP_BASE_URL: https://example.com
+      GOOGLE_OAUTH_REDIRECT_URI: https://example.com/api/google/oauth/callback
+      GOOGLE_OAUTH_STATE_SECRET: smoke_state_secret_32_chars_minimum
+      GOOGLE_TOKEN_ENCRYPTION_KEY: smoke_token_secret_32_chars_minimum
+      GOOGLE_OAUTH_CLIENT_ID: smoke-client-id
+      GOOGLE_OAUTH_CLIENT_SECRET: smoke-client-secret
+      DATABASE_URL: postgresql://gsc_plus:gsc_plus_smoke_password@postgres:5432/gsc_plus
+      POSTGRES_SSL: "false"
+      RUN_DATABASE_BACKFILLS: "false"
+      WORKER_HEALTH_PORT: "3103"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3103/ready').then(r=>r.json()).then(b=>process.exit(b.ok&&b.role==='warehouse'?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  scheduler:
+    image: gscplus-prod-smoke-app:local
+    command: ["npm", "run", "start:scheduler"]
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      APP_BASE_URL: https://example.com
+      GOOGLE_OAUTH_REDIRECT_URI: https://example.com/api/google/oauth/callback
+      GOOGLE_OAUTH_STATE_SECRET: smoke_state_secret_32_chars_minimum
+      GOOGLE_TOKEN_ENCRYPTION_KEY: smoke_token_secret_32_chars_minimum
+      GOOGLE_OAUTH_CLIENT_ID: smoke-client-id
+      GOOGLE_OAUTH_CLIENT_SECRET: smoke-client-secret
+      DATABASE_URL: postgresql://gsc_plus:gsc_plus_smoke_password@postgres:5432/gsc_plus
+      POSTGRES_SSL: "false"
+      RUN_DATABASE_BACKFILLS: "false"
+      WORKER_HEALTH_PORT: "3104"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3104/ready').then(r=>r.json()).then(b=>process.exit(b.ok&&b.role==='scheduler'?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
   postgres-smoke-data:

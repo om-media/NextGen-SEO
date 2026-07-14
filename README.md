@@ -132,24 +132,31 @@ Add the exact production callback URI to the Google OAuth client.
 
 ## Docker
 
-Build a production image:
+The supported production deployment runs separate web, warehouse, scheduler, crawl, and internal-link processes. This is required for automatic history imports and daily data refreshes.
+
+Create the production environment file and start the complete stack:
+
+```bash
+cp .env.production.example .env.production
+# Replace every CHANGE_ME value before continuing.
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+```
+
+To build or inspect only the web image, you can still use:
 
 ```bash
 docker build -t nextgen-seo .
-```
-
-Run it with production environment variables:
-
-```bash
 docker run --rm -p 3000:3000 \
   --env-file .env.production \
   nextgen-seo
 ```
 
-The image runs `npm run verify` during build, starts with `npm start`, and includes the system libraries needed by Puppeteer crawl rendering.
+The standalone `docker run` command starts the web role only. It does not run the scheduler or warehouse worker, so it must not be used as the complete production deployment.
+
+The image runs `npm run verify` during build and includes the system libraries needed by Puppeteer crawl rendering.
 For container deploys, `DATABASE_URL` must use a hostname reachable from inside the container, such as a managed database host or a Compose service name.
 
-Run a production-like Docker smoke test with an internal Postgres service:
+Run a production-like Docker smoke test with internal PostgreSQL, web, warehouse-worker, and scheduler services:
 
 ```bash
 npm run verify:docker
