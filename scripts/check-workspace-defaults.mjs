@@ -11,6 +11,18 @@ assert(
   'New registrations must receive the full workspace default tier',
 );
 
+for (const environmentExample of ['.env.example', '.env.production.example']) {
+  assert(
+    !read(environmentExample).includes('BILLING_'),
+    'Environment examples must only document configuration used by the open workspace',
+  );
+}
+
+const settingsDialog = read('src/components/app/SettingsDialog.tsx');
+assert(
+  !/billing|upgrade|known properties cache/i.test(settingsDialog),
+  'Settings must not expose commercial or storage implementation assumptions',
+);
 const authRoutes = read('server/routes/auth.ts');
 assert(
   authRoutes.includes("tier: (user.tier as 'free' | 'pro' | 'enterprise') || 'enterprise'"),

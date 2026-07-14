@@ -184,8 +184,8 @@ export function SettingsDialog({
               </div>
 
               <div className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-2">
-                <p className="text-sm font-medium">Known properties cache</p>
-                <p className="text-sm text-muted-foreground">We currently know about {knownSites.length} properties for faster workspace recovery.</p>
+                <p className="text-sm font-medium">Available properties</p>
+                <p className="text-sm text-muted-foreground">Google has reported {knownSites.length} properties for this workspace.</p>
               </div>
             </TabsContent>
 

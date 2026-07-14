@@ -341,6 +341,31 @@ async function run() {
       }
     });
 
+    await runScenario(report, 'workspace-settings', async (scenario) => {
+      const context = await createAuthedContext(browser, baseUrl, token);
+      context.setDefaultNavigationTimeout(30000);
+      const page = await context.newPage();
+      const monitor = installPageMonitor(page);
+
+      try {
+        await waitForAppShell(page);
+        await page.getByRole('button', { name: 'Settings', exact: true }).click();
+        await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'Settings' });
+        await dialog.waitFor({ state: 'visible', timeout: 30000 });
+        await dialog.getByRole('tab', { name: 'Workspace', exact: true }).click();
+        await dialog.getByText('Available properties', { exact: true }).waitFor({ state: 'visible' });
+        const dialogText = await dialog.innerText();
+        assert(!/billing|upgrade|current plan|known properties cache/i.test(dialogText), 'Settings exposed removed product assumptions.');
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'workspace-settings'));
+
+        if (monitor.hasUnexpectedFailures()) {
+          scenario.failures.push(...summarizeFailures(monitor.events));
+        }
+      } finally {
+        await context.close();
+      }
+    });
     await runScenario(report, 'gsc-dashboard-live', async (scenario) => {
       const context = await createAuthedContext(browser, baseUrl, token);
       context.setDefaultNavigationTimeout(30000);
