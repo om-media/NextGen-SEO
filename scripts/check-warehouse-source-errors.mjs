@@ -30,6 +30,10 @@ assert(
 
 const coverageService = read('src/services/dataCoverageService.ts');
 assert(coverageService.includes('sourceJobs?: {'), 'Coverage client must type source-specific job state');
+for (const state of ['ga4Dimensions', 'ga4Llm', 'ga4Pages']) {
+  assert(warehouseRoute.includes(`${state}: {`), `Coverage API must expose ${state} job state`);
+  assert(coverageService.includes(`${state}: WarehouseSourceJobState;`), `Coverage client must type ${state} job state`);
+}
 
 const blendedView = read('components/dashboard/BlendedPagesView.tsx');
 for (const state of ['gscJobState', 'ga4PageJobState', 'coreJobState']) {

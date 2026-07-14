@@ -1624,6 +1624,16 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         && effectivePropertyId
         && job.propertyId === effectivePropertyId
       ));
+      const ga4DimensionActiveJobs = relevantActiveJobs.filter((job) => (
+        job.jobType === 'ga4-dimension-range-sync'
+        && effectivePropertyId
+        && job.propertyId === effectivePropertyId
+      ));
+      const ga4LlmActiveJobs = relevantActiveJobs.filter((job) => (
+        job.jobType === 'ga4-llm-range-sync'
+        && effectivePropertyId
+        && job.propertyId === effectivePropertyId
+      ));
       const coreJobSupportsGsc = (job: typeof coreActiveJobs[number]) => (
         jobDatesWithin(job, effectiveStartDate, effectiveEndDate).some((date) => missingGscDates.has(date))
       );
@@ -1648,7 +1658,11 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         if (job.jobType === GA4_PAGE_RANGE_JOB_TYPE) return 'ga4-pages';
         return ['daily-sync', 'core-range-sync'].includes(job.jobType) ? 'core' : source;
       };
-      const sourceErrorSummary = (source: 'gsc' | 'ga4-pages' | 'core') => {
+      const summarizeActiveJobs = (jobs: typeof relevantActiveJobs) => jobs.reduce((counts, job) => {
+        counts[job.status] = (counts[job.status] || 0) + 1;
+        return counts;
+      }, {} as Record<string, number>);
+      const sourceErrorSummary = (source: 'gsc' | 'ga4-pages' | 'ga4-dimensions' | 'ga4-llm' | 'core') => {
         const jobs = relevantErrorJobs.filter((job) => failedSource(job) === source);
         return {
           error: jobs.length,
@@ -1657,8 +1671,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       };
       const gscActiveSummary = sourceActiveSummary('gsc');
       const ga4PageActiveSummary = sourceActiveSummary('ga4-pages');
+      const ga4DimensionActiveSummary = summarizeActiveJobs(ga4DimensionActiveJobs);
+      const ga4LlmActiveSummary = summarizeActiveJobs(ga4LlmActiveJobs);
       const gscErrorSummary = sourceErrorSummary('gsc');
       const ga4PageErrorSummary = sourceErrorSummary('ga4-pages');
+      const ga4DimensionErrorSummary = sourceErrorSummary('ga4-dimensions');
+      const ga4LlmErrorSummary = sourceErrorSummary('ga4-llm');
       const coreErrorSummary = sourceErrorSummary('core');
       const activeDates = new Set<string>();
       addJobDatesToSet(activeDates, relevantActiveJobs, effectiveStartDate, effectiveEndDate);
@@ -1913,6 +1931,20 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             queued: ga4PageActiveSummary.queued || 0,
             retrying: ga4PageActiveSummary.retrying || 0,
             running: ga4PageActiveSummary.running || 0,
+          },
+          ga4Dimensions: {
+            error: ga4DimensionErrorSummary.error,
+            lastError: ga4DimensionErrorSummary.lastError,
+            queued: ga4DimensionActiveSummary.queued || 0,
+            retrying: ga4DimensionActiveSummary.retrying || 0,
+            running: ga4DimensionActiveSummary.running || 0,
+          },
+          ga4Llm: {
+            error: ga4LlmErrorSummary.error,
+            lastError: ga4LlmErrorSummary.lastError,
+            queued: ga4LlmActiveSummary.queued || 0,
+            retrying: ga4LlmActiveSummary.retrying || 0,
+            running: ga4LlmActiveSummary.running || 0,
           },
           gsc: {
             error: gscErrorSummary.error,

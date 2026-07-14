@@ -67,6 +67,8 @@ export type DataCoverageResponse = {
   siteUrl: string;
   sourceJobs?: {
     core: WarehouseSourceJobState;
+    ga4Dimensions: WarehouseSourceJobState;
+    ga4Llm: WarehouseSourceJobState;
     ga4Pages: WarehouseSourceJobState;
     gsc: WarehouseSourceJobState;
   };
