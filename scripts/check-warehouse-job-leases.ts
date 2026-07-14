@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import type { AppDatabase, QueryParams, RunResult } from '../server/database.js';
 import {
+  claimNextWarehouseJob,
   createWarehouseJobLease,
   finalizeOwnedWarehouseJob,
   recoverStaleWarehouseJobs,
@@ -63,12 +64,22 @@ try {
   await db.exec(`
     CREATE TABLE warehouse_jobs (
       id TEXT PRIMARY KEY,
+      ownerId TEXT,
+      siteUrl TEXT,
+      propertyId TEXT,
+      jobType TEXT,
       status TEXT NOT NULL,
+      targetStartDate TEXT,
+      targetDate TEXT,
+      priority INTEGER DEFAULT 0,
+      attemptCount INTEGER DEFAULT 0,
+      maxAttempts INTEGER DEFAULT 3,
       lockedAt TEXT,
+      nextRunAt TEXT,
+      startedAt TEXT,
       updatedAt TEXT,
       completedAt TEXT,
       lastError TEXT,
-      nextRunAt TEXT,
       metricsJson TEXT,
       rowsSynced INTEGER
     );
@@ -127,8 +138,33 @@ try {
   assert.equal(stale?.lockedAt, null);
   assert.equal(fresh?.status, 'running', 'Recovery must not reclaim a recently renewed lease');
   assert.equal(fresh?.lockedAt, '2026-07-14T08:05:00.000Z');
+  await db.run("UPDATE warehouse_jobs SET status = 'completed', lockedAt = NULL WHERE id IN (?, ?)", ['stale-job', 'fresh-job']);
+  await db.run(
+    "INSERT INTO warehouse_jobs (id, ownerId, siteUrl, status, lockedAt, updatedAt, targetDate) VALUES (?, ?, ?, 'running', ?, ?, ?)",
+    ['site-a-running', 'owner-a', 'site-a', '2026-07-14T08:10:00.000Z', '2026-07-14T08:10:00.000Z', '2026-07-12'],
+  );
+  await db.run(
+    "INSERT INTO warehouse_jobs (id, ownerId, siteUrl, status, updatedAt, targetDate) VALUES (?, ?, ?, 'queued', ?, ?)",
+    ['site-a-queued', 'owner-a', 'site-a', '2026-07-14T08:11:00.000Z', '2026-07-11'],
+  );
+  await db.run(
+    "INSERT INTO warehouse_jobs (id, ownerId, siteUrl, status, updatedAt, targetDate) VALUES (?, ?, ?, 'queued', ?, ?)",
+    ['site-b-queued', 'owner-a', 'site-b', '2026-07-14T08:11:00.000Z', '2026-07-10'],
+  );
 
-  console.log('Warehouse job lease heartbeat, fencing, and recovery checks passed.');
+  const crossSiteClaim = await claimNextWarehouseJob(db);
+  assert.equal(crossSiteClaim?.id, 'site-b-queued', 'A busy site must not prevent another site from using worker capacity');
+  const siteBLease = createWarehouseJobLease(db, crossSiteClaim!, 60_000);
+  await siteBLease.finalize({ completedAt: '2026-07-14T08:12:00.000Z', status: 'completed' });
+  await siteBLease.stop();
+
+  const blockedClaim = await claimNextWarehouseJob(db);
+  assert.equal(blockedClaim, null, 'A second warehouse job for a running site must remain queued');
+  await db.run("UPDATE warehouse_jobs SET status = 'completed', lockedAt = NULL WHERE id = ?", ['site-a-running']);
+  const resumedClaim = await claimNextWarehouseJob(db);
+  assert.equal(resumedClaim?.id, 'site-a-queued', 'The next site job should become claimable after the active job completes');
+
+  console.log('Warehouse job lease heartbeat, fencing, recovery, and per-site serialization checks passed.');
 } finally {
   await db.close();
 }

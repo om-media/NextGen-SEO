@@ -1161,11 +1161,33 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: Re
   await lease.finalize({ completedAt, lastError: null, metricsJson, rowsSynced: syncResult.rowsSynced, status: 'completed' });
 }
 
-async function claimJob(db: AppDatabase) {
+export async function claimNextWarehouseJob(db: AppDatabase) {
   const now = nowIso();
-  const job = await db.get<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE status IN ('queued', 'retrying') AND (nextRunAt IS NULL OR nextRunAt <= ?) ORDER BY COALESCE(priority, 0) DESC, nextRunAt ASC, targetDate DESC, updatedAt ASC LIMIT 1", [now]);
+  const job = await db.get<WarehouseJob>(`
+    SELECT queued.*
+    FROM warehouse_jobs queued
+    WHERE queued.status IN ('queued', 'retrying')
+      AND (queued.nextRunAt IS NULL OR queued.nextRunAt <= ?)
+      AND NOT EXISTS (
+        SELECT 1
+        FROM warehouse_jobs running_site
+        WHERE running_site.status = 'running'
+          AND running_site.ownerId = queued.ownerId
+          AND running_site.siteUrl = queued.siteUrl
+      )
+    ORDER BY COALESCE(queued.priority, 0) DESC, queued.nextRunAt ASC, queued.targetDate DESC, queued.updatedAt ASC
+    LIMIT 1
+  `, [now]);
   if (!job) return null;
-  const result = await db.run("UPDATE warehouse_jobs SET status = 'running', attemptCount = COALESCE(attemptCount, 0) + 1, startedAt = COALESCE(startedAt, ?), updatedAt = ?, lockedAt = ?, lastError = NULL, metricsJson = NULL WHERE id = ? AND status IN ('queued', 'retrying')", [now, now, now, job.id]);
+  let result;
+  try {
+    result = await db.run("UPDATE warehouse_jobs SET status = 'running', attemptCount = COALESCE(attemptCount, 0) + 1, startedAt = COALESCE(startedAt, ?), updatedAt = ?, lockedAt = ?, lastError = NULL, metricsJson = NULL WHERE id = ? AND status IN ('queued', 'retrying') AND NOT EXISTS (SELECT 1 FROM warehouse_jobs running_site WHERE running_site.status = 'running' AND running_site.ownerId = warehouse_jobs.ownerId AND running_site.siteUrl = warehouse_jobs.siteUrl)", [now, now, now, job.id]);
+  } catch (error: any) {
+    if (error?.code === '23505' || String(error?.message || '').includes('idx_warehouse_jobs_one_running_per_site')) {
+      return null;
+    }
+    throw error;
+  }
   if (result.changes === 0) return null;
   return db.get<WarehouseJob>('SELECT * FROM warehouse_jobs WHERE id = ?', [job.id]);
 }
@@ -1933,7 +1955,7 @@ export function startWarehouseJobWorker(db: AppDatabase) {
       while (processedThisTick < JOBS_PER_TICK) {
         const batch: WarehouseJob[] = [];
         for (let i = 0; i < maxConcurrentJobs && processedThisTick + batch.length < JOBS_PER_TICK; i += 1) {
-          const job = await claimJob(db);
+          const job = await claimNextWarehouseJob(db);
           if (!job) break;
           batch.push(job);
         }

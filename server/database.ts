@@ -702,6 +702,7 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site ON warehouse_jobs(ownerId, siteUrl, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_target_status ON warehouse_jobs(ownerId, siteUrl, targetDate, status);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_range_status ON warehouse_jobs(ownerId, siteUrl, targetStartDate, targetDate, status);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouse_jobs_one_running_per_site ON warehouse_jobs(ownerId, siteUrl) WHERE status = 'running';
   CREATE INDEX IF NOT EXISTS idx_crawl_jobs_owner_site_status ON crawl_jobs(ownerId, siteUrl, status, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_crawl_jobs_queue ON crawl_jobs(status, nextRunAt, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_job ON crawl_pages(ownerId, siteUrl, jobId);
@@ -722,6 +723,31 @@ const indexSql = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_link_jobs_active_unique ON internal_link_analysis_jobs(ownerId, siteUrl) WHERE status IN ('queued', 'running');
   CREATE INDEX IF NOT EXISTS idx_internal_link_opps_owner_site_status ON internal_link_opportunities(ownerId, siteUrl, status, stale, priorityScore);
   CREATE INDEX IF NOT EXISTS idx_internal_link_opps_job ON internal_link_opportunities(jobId, priorityScore);
+`;
+
+const requeueDuplicateRunningWarehouseJobsSql = `
+  WITH ranked_running_jobs AS (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY ownerId, siteUrl
+        ORDER BY COALESCE(lockedAt, updatedAt, startedAt) DESC, id
+      ) AS siteRunRank
+    FROM warehouse_jobs
+    WHERE status = 'running'
+  )
+  UPDATE warehouse_jobs
+  SET
+    status = 'queued',
+    lockedAt = NULL,
+    nextRunAt = COALESCE(nextRunAt, updatedAt, lockedAt, startedAt, '1970-01-01T00:00:00.000Z'),
+    updatedAt = COALESCE(updatedAt, lockedAt, startedAt, '1970-01-01T00:00:00.000Z'),
+    lastError = COALESCE(lastError, 'Requeued to enforce one active import per site.')
+  WHERE id IN (
+    SELECT id
+    FROM ranked_running_jobs
+    WHERE siteRunRank > 1
+  );
 `;
 
 const camelCaseColumns: Record<string, string> = {
@@ -1647,6 +1673,7 @@ function applySqliteMigrations(db: Database.Database) {
   }
 
   migrateSqliteGa4SiteScopedKeys(db);
+  db.exec(requeueDuplicateRunningWarehouseJobsSql);
   db.exec(indexSql);
 }
 
@@ -1781,6 +1808,7 @@ async function applyPostgresMigrations(db: AppDatabase) {
     ALTER TABLE ga4_llm_referral_metrics ADD PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey);
   `);
 
+  await db.exec(requeueDuplicateRunningWarehouseJobsSql);
   await db.exec(indexSql);
 }
 
