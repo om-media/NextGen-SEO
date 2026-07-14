@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { Download, Loader2, Search } from "lucide-react";
 import type { DateRange } from "react-day-picker";
@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchCrawlJobs, fetchCrawlLinks, fetchCrawlPages, type CrawlIssueFilter, type CrawlJob, type CrawlLinkRow, type CrawlPageRow } from "@/src/services/crawlService";
 import { fetchRawGa4PageRows, fetchRawGa4ReportRows, fetchRawGscRows, type RawGa4Kind, type RawGa4PageRow, type RawGa4ReportRow, type RawGscKind, type RawGscRow, type RawPage } from "@/src/services/rawDataService";
+import { createRawDataRequestFence, getCrawlJobsSelectionKey, getRawDataRowsSelectionKey } from "./rawDataRequestFence";
 
 type RawDataViewProps = {
   dateRange: DateRange;
@@ -89,6 +90,7 @@ function Pagination({ page, onPageChange }: { page: RawPage; onPageChange: (offs
 }
 
 export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewProps) {
+  const requestFenceRef = useRef(createRawDataRequestFence());
   const [source, setSource] = useState<Source>("gsc");
   const [gscKind, setGscKind] = useState<RawGscKind>("page");
   const [ga4Kind, setGa4Kind] = useState<RawGa4Kind>("page");
@@ -116,46 +118,95 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
   }, [source, gscKind, ga4Kind, crawlKind, search, siteUrl, ga4PropertyId, startDate, endDate, selectedCrawlJobId, crawlIssueFilter]);
 
   useEffect(() => {
-    if (!siteUrl) return;
+    if (!siteUrl) {
+      setCrawlJobs([]);
+      setSelectedCrawlJobId("");
+      return;
+    }
+    const selectionKey = getCrawlJobsSelectionKey(siteUrl);
+    const request = requestFenceRef.current.begin("crawl-jobs", selectionKey);
+
     fetchCrawlJobs(siteUrl)
       .then((result) => {
+        if (!requestFenceRef.current.isCurrent("crawl-jobs", request, selectionKey)) return;
         setCrawlJobs(result.jobs);
-        if (!selectedCrawlJobId && result.jobs[0]) {
-          setSelectedCrawlJobId(result.jobs[0].id);
-        }
+        setSelectedCrawlJobId((current) => current || result.jobs[0]?.id || "");
       })
-      .catch(() => setCrawlJobs([]));
+      .catch(() => {
+        if (!requestFenceRef.current.isCurrent("crawl-jobs", request, selectionKey)) return;
+        setCrawlJobs([]);
+      });
+
+    return () => {
+      requestFenceRef.current.cancel("crawl-jobs");
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteUrl]);
 
   useEffect(() => {
-    if (!siteUrl) return;
+    if (!siteUrl) {
+      setLoading(false);
+      setError(null);
+      setPage({ limit: pageSize, offset: 0, total: 0 });
+      setGscRows([]);
+      setGa4Rows([]);
+      setGa4ReportRows([]);
+      setCrawlRows([]);
+      setCrawlLinkRows([]);
+      return;
+    }
+
+    const selectionKey = getRawDataRowsSelectionKey({
+      crawlIssueFilter,
+      crawlKind,
+      endDate,
+      ga4Kind,
+      ga4PropertyId,
+      gscKind,
+      offset,
+      search,
+      selectedCrawlJobId,
+      siteUrl,
+      source,
+      startDate,
+    });
+    const request = requestFenceRef.current.begin("rows", selectionKey);
+
     setLoading(true);
     setError(null);
 
     const load = async () => {
       if (source === "gsc") {
         const result = await fetchRawGscRows({ endDate, kind: gscKind, limit: pageSize, offset, search, siteUrl, startDate });
+        if (!requestFenceRef.current.isCurrent("rows", request, selectionKey)) return;
         setGscRows(result.rows);
         setGa4Rows([]);
+        setGa4ReportRows([]);
         setCrawlRows([]);
+        setCrawlLinkRows([]);
         setPage(result.page);
         return;
       }
 
       if (source === "ga4") {
         if (!ga4PropertyId) {
+          if (!requestFenceRef.current.isCurrent("rows", request, selectionKey)) return;
+          setGscRows([]);
           setGa4Rows([]);
           setGa4ReportRows([]);
+          setCrawlRows([]);
+          setCrawlLinkRows([]);
           setPage({ limit: pageSize, offset: 0, total: 0 });
           return;
         }
         if (ga4PageKinds.has(ga4Kind)) {
           const result = await fetchRawGa4PageRows({ endDate, kind: ga4Kind, limit: pageSize, offset, propertyId: ga4PropertyId, search, siteUrl, startDate });
+          if (!requestFenceRef.current.isCurrent("rows", request, selectionKey)) return;
           setGa4Rows(result.rows);
           setGa4ReportRows([]);
           setGscRows([]);
           setCrawlRows([]);
+          setCrawlLinkRows([]);
           setPage(result.page);
           return;
         }
@@ -170,35 +221,52 @@ export function RawDataView({ dateRange, ga4PropertyId, siteUrl }: RawDataViewPr
           siteUrl,
           startDate,
         });
+        if (!requestFenceRef.current.isCurrent("rows", request, selectionKey)) return;
         setGa4ReportRows(result.rows);
         setGa4Rows([]);
         setGscRows([]);
         setCrawlRows([]);
+        setCrawlLinkRows([]);
         setPage(result.page);
         return;
       }
 
       if (crawlKind === "links") {
         const result = await fetchCrawlLinks({ jobId: selectedCrawlJobId || null, limit: pageSize, offset, search, siteUrl });
+        if (!requestFenceRef.current.isCurrent("rows", request, selectionKey)) return;
         setCrawlLinkRows(result.rows);
         setCrawlRows([]);
         setGscRows([]);
         setGa4Rows([]);
+        setGa4ReportRows([]);
         setPage(result.page);
         return;
       }
 
       const result = await fetchCrawlPages({ issue: crawlIssueFilter, jobId: selectedCrawlJobId || null, limit: pageSize, offset, search, siteUrl });
+      if (!requestFenceRef.current.isCurrent("rows", request, selectionKey)) return;
       setCrawlRows(result.rows);
       setCrawlLinkRows([]);
       setGscRows([]);
       setGa4Rows([]);
+      setGa4ReportRows([]);
       setPage(result.page);
     };
 
     load()
-      .catch((err: any) => setError(err.message || "Failed to load source rows"))
-      .finally(() => setLoading(false));
+      .catch((err: any) => {
+        if (!requestFenceRef.current.isCurrent("rows", request, selectionKey)) return;
+        setError(err.message || "Failed to load source rows");
+      })
+      .finally(() => {
+        if (requestFenceRef.current.isCurrent("rows", request, selectionKey)) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      requestFenceRef.current.cancel("rows");
+    };
   }, [crawlIssueFilter, crawlKind, endDate, ga4Kind, ga4PropertyId, gscKind, offset, search, selectedCrawlJobId, siteUrl, source, startDate]);
 
   const fetchAllRows = async <T,>(fetchPage: (nextOffset: number) => Promise<{ page: RawPage; rows: T[] }>) => {

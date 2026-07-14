@@ -39,7 +39,7 @@
     "check:gsc-analytical-workflows": "node scripts/check-gsc-analytical-workflows.mjs",
     "check:warehouse-daily-lifecycle": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-daily-lifecycle.ts",
     "check:warehouse-route-lifecycle": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-route-lifecycle.ts",
-    "check:selector-stability": "node scripts/check-selector-stability.mjs",
+    "check:selector-stability": "node scripts/check-selector-stability.mjs && tsx components/dashboard/rawDataRequestFence.test.ts && tsx components/dashboard/crawlInventoryRequestFence.test.ts",
     "check:workspace-defaults": "node scripts/check-workspace-defaults.mjs",
     "check:bing-query-dedupe": "tsx --tsconfig tsconfig.server.json scripts/check-bing-query-dedupe.ts",
     "check:internal-link-quality": "node scripts/check-internal-link-quality-fixtures.mjs",

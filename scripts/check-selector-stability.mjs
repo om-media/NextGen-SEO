@@ -7,10 +7,16 @@ import ts from 'typescript';
 const source = fs.readFileSync('src/App.tsx', 'utf8');
 const appContentSource = fs.readFileSync('src/components/app/AppContent.tsx', 'utf8');
 const bingGridSource = fs.readFileSync('components/dashboard/BingDataGrid.tsx', 'utf8');
+const reconciliationSource = fs.readFileSync('components/dashboard/ReconciliationView.tsx', 'utf8');
 
 assert(
-  source.includes('useSelectorRequestGate<"gsc" | "bing" | "ga4" | "onboarding-ga4">()'),
+  source.includes('useSelectorRequestGate<"gsc" | "bing" | "ga4" | "onboarding-ga4" | "annotations">()'),
   'App must gate selector fetches through useSelectorRequestGate',
+);
+assert(
+  source.includes('selectorRequestGate.begin("annotations")')
+    && source.includes('selectorRequestGate.isCurrent("annotations", annotationsRequestId)'),
+  'Annotation fetches must ignore stale responses after workspace site changes',
 );
 assert(
   source.includes('resolveSourceSwitchSelection({'),
@@ -35,6 +41,16 @@ assert(
 assert(
   bingGridSource.includes('requestSequence.current !== requestId'),
   'Bing report requests must ignore stale site or date-range responses',
+);
+assert(
+  reconciliationSource.includes('useSelectorRequestGate<"crawl-jobs" | "rows">()')
+    && reconciliationSource.includes('reconciliationRequestGate.isCurrent("crawl-jobs", crawlJobsRequestId)')
+    && reconciliationSource.includes('reconciliationRequestGate.isCurrent("rows", rowsRequestId)'),
+  'Reconciliation jobs and row requests must ignore stale site-switch responses',
+);
+assert(
+  reconciliationSource.includes('const effectiveCrawlJobId = selectedCrawlJobSiteRef.current === siteUrl ? selectedCrawlJobId : ""'),
+  'Reconciliation view must scope crawl job selection to the active workspace site',
 );
 assert(
   source.includes("if (dataSource === 'bing')") && source.includes('currentSites.some((site) => site.siteUrl === selectedSite)'),

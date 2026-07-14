@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { Download, Eye, Loader2, Search } from "lucide-react";
 import type { DateRange } from "react-day-picker";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { fetchCrawlJobs, type CrawlJob } from "@/src/services/crawlService";
+import { useSelectorRequestGate } from "@/src/lib/useSelectorRequestGate";
 import { fetchPageReconciliation, type PageReconciliationRow, type PageReconciliationResponse, type ReconciliationStatus } from "@/src/services/reconciliationService";
 
 type ReconciliationViewProps = {
@@ -143,9 +144,12 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [selectedRow, setSelectedRow] = useState<PageReconciliationRow | null>(null);
+  const reconciliationRequestGate = useSelectorRequestGate<"crawl-jobs" | "rows">();
+  const selectedCrawlJobSiteRef = useRef(siteUrl);
 
   const startDate = useMemo(() => toIsoDate(dateRange?.from, new Date()), [dateRange?.from]);
   const endDate = useMemo(() => toIsoDate(dateRange?.to, new Date()), [dateRange?.to]);
+  const effectiveCrawlJobId = selectedCrawlJobSiteRef.current === siteUrl ? selectedCrawlJobId : "";
   const rows = data?.rows || [];
   const page = data?.page || { limit: pageSize, offset: 0, total: 0 };
   const totals = data?.meta.totals || { crawlErrors: 0, issues: 0, matched: 0, missingCrawl: 0, missingGa4: 0, missingGsc: 0, total: 0 };
@@ -161,24 +165,54 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
 
   useEffect(() => {
     setOffset(0);
-  }, [endDate, ga4PropertyId, search, selectedCrawlJobId, siteUrl, startDate, status]);
+  }, [effectiveCrawlJobId, endDate, ga4PropertyId, search, siteUrl, startDate, status]);
 
   useEffect(() => {
-    if (!siteUrl) return;
+    if (!siteUrl) {
+      reconciliationRequestGate.cancel("crawl-jobs");
+      selectedCrawlJobSiteRef.current = "";
+      setCrawlJobs([]);
+      setSelectedCrawlJobId("");
+      return;
+    }
+
+    const crawlJobsRequestId = reconciliationRequestGate.begin("crawl-jobs");
+    selectedCrawlJobSiteRef.current = siteUrl;
+    setCrawlJobs([]);
+    setSelectedCrawlJobId("");
+
     fetchCrawlJobs(siteUrl)
       .then((result) => {
+        if (!reconciliationRequestGate.isCurrent("crawl-jobs", crawlJobsRequestId)) return;
         setCrawlJobs(result.jobs);
       })
-      .catch(() => setCrawlJobs([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteUrl]);
+      .catch(() => {
+        if (!reconciliationRequestGate.isCurrent("crawl-jobs", crawlJobsRequestId)) return;
+        setCrawlJobs([]);
+      });
+
+    return () => {
+      reconciliationRequestGate.cancel("crawl-jobs");
+    };
+  }, [reconciliationRequestGate, siteUrl]);
 
   useEffect(() => {
-    if (!siteUrl) return;
+    if (!siteUrl) {
+      reconciliationRequestGate.cancel("rows");
+      setData(null);
+      setError(null);
+      setLoading(false);
+      setSelectedRow(null);
+      return;
+    }
+
+    const rowsRequestId = reconciliationRequestGate.begin("rows");
     setLoading(true);
     setError(null);
+    setSelectedRow(null);
+
     fetchPageReconciliation({
-      crawlJobId: selectedCrawlJobId || null,
+      crawlJobId: effectiveCrawlJobId || null,
       endDate,
       limit: pageSize,
       offset,
@@ -188,10 +222,24 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
       startDate,
       status,
     })
-      .then(setData)
-      .catch((err: any) => setError(err.message || "Failed to load reconciliation data"))
-      .finally(() => setLoading(false));
-  }, [endDate, ga4PropertyId, offset, search, selectedCrawlJobId, siteUrl, startDate, status]);
+      .then((result) => {
+        if (!reconciliationRequestGate.isCurrent("rows", rowsRequestId)) return;
+        setData(result);
+      })
+      .catch((err: any) => {
+        if (!reconciliationRequestGate.isCurrent("rows", rowsRequestId)) return;
+        setError(err.message || "Failed to load reconciliation data");
+      })
+      .finally(() => {
+        if (reconciliationRequestGate.isCurrent("rows", rowsRequestId)) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      reconciliationRequestGate.cancel("rows");
+    };
+  }, [effectiveCrawlJobId, endDate, ga4PropertyId, offset, reconciliationRequestGate, search, siteUrl, startDate, status]);
 
   const exportAllRows = async () => {
     if (!siteUrl) return;
@@ -205,7 +253,7 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
 
       do {
         const result = await fetchPageReconciliation({
-          crawlJobId: selectedCrawlJobId || null,
+          crawlJobId: effectiveCrawlJobId || null,
           endDate,
           limit: exportBatchSize,
           offset: nextOffset,
@@ -240,7 +288,13 @@ export function ReconciliationView({ dateRange, ga4PropertyId, siteUrl }: Reconc
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Select value={selectedCrawlJobId || "__latest__"} onValueChange={(value) => setSelectedCrawlJobId(value === "__latest__" ? "" : value)}>
+              <Select
+                value={effectiveCrawlJobId || "__latest__"}
+                onValueChange={(value) => {
+                  selectedCrawlJobSiteRef.current = siteUrl;
+                  setSelectedCrawlJobId(value === "__latest__" ? "" : value);
+                }}
+              >
                 <SelectTrigger className="h-10 w-[280px] rounded-xl">
                   <SelectValue placeholder="Latest crawl" />
                 </SelectTrigger>

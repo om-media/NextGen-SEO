@@ -79,7 +79,7 @@ function MainApp() {
   const [gscSyncVersion, setGscSyncVersion] = useState(0)
   const [backgroundEffectsReady, setBackgroundEffectsReady] = useState(false)
   const bumpGscSyncVersion = useCallback(() => setGscSyncVersion((version) => version + 1), [])
-  const selectorRequestGate = useSelectorRequestGate<"gsc" | "bing" | "ga4" | "onboarding-ga4">()
+  const selectorRequestGate = useSelectorRequestGate<"gsc" | "bing" | "ga4" | "onboarding-ga4" | "annotations">()
   
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>({
@@ -130,26 +130,47 @@ function MainApp() {
     setGa4DashboardTab("overview")
   }, [dataSource, selectedSite])
 
-  const fetchAnnotations = async () => {
-    if (user?.uid) {
-       try {
-         const data = await AnnotationsService.getAnnotations(user.uid, selectedSite);
-         setAnnotations(data);
-       } catch (err) {
-         console.warn("Failed to fetch annotations:", err)
-       }
+  const fetchAnnotations = useCallback(async () => {
+    const userId = user?.uid;
+    if (!userId) {
+      selectorRequestGate.cancel("annotations");
+      setAnnotations([]);
+      return;
     }
-  }
+
+    const annotationsRequestId = selectorRequestGate.begin("annotations");
+
+    try {
+      const data = await AnnotationsService.getAnnotations(userId, selectedSite);
+      if (!selectorRequestGate.isCurrent("annotations", annotationsRequestId)) return;
+      setAnnotations(data);
+    } catch (err) {
+      if (!selectorRequestGate.isCurrent("annotations", annotationsRequestId)) return;
+      console.warn("Failed to fetch annotations:", err)
+    }
+  }, [selectedSite, selectorRequestGate, user?.uid])
 
   useEffect(() => {
+    selectorRequestGate.cancel("annotations");
+
+    if (!user?.uid) {
+      setAnnotations([]);
+      return;
+    }
+
+    setAnnotations([]);
+
     if (!backgroundEffectsReady) return;
 
     const timer = window.setTimeout(() => {
       void fetchAnnotations();
     }, 1200);
 
-    return () => window.clearTimeout(timer);
-  }, [backgroundEffectsReady, selectedSite, user?.uid])
+    return () => {
+      window.clearTimeout(timer);
+      selectorRequestGate.cancel("annotations");
+    };
+  }, [backgroundEffectsReady, fetchAnnotations, selectorRequestGate, user?.uid])
 
   useEffect(() => {
     if (!user) {

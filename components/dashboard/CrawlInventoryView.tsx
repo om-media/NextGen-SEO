@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import type { QueueMetadata } from "@/src/services/queueMetadata";
 import { getPlanCrawlLimits } from "@/shared/plans";
 import { useAuth } from "@/src/contexts/AuthContext";
+import { useCrawlInventoryRequestFence, type CrawlInventoryRequestScope } from "./crawlInventoryRequestFence";
 import {
   cancelCrawl,
   fetchCrawlJobs,
@@ -238,6 +239,7 @@ const exportBatchSize = 5000;
 export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryViewProps) {
   const { userProfile } = useAuth();
   const crawlLimits = getPlanCrawlLimits(userProfile?.tier);
+  const requestFence = useCrawlInventoryRequestFence();
   const [job, setJob] = useState<CrawlJob | null>(null);
   const [queue, setQueue] = useState<QueueMetadata | null>(null);
   const [jobs, setJobs] = useState<CrawlJob[]>([]);
@@ -334,22 +336,36 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
   }, [siteUrl, searchTerm, issueFilter]);
 
   useEffect(() => {
+    requestFence.invalidateSiteSelection();
     setSelectedJobId("");
     setJobs([]);
     setJob(null);
     setQueue(null);
     setSummary(null);
     setRows([]);
+    setCompare(null);
+    setError(null);
+    setLoading(false);
+    setJobsLoading(false);
     setPageTotal(0);
     setHasLoadedJobs(false);
+  }, [requestFence, siteUrl]);
 
-  }, [siteUrl]);
+  useEffect(() => {
+    requestFence.invalidateJobSelection();
+  }, [requestFence, selectedJobId]);
+
+  const isCurrentRequest = (scope: CrawlInventoryRequestScope, requestId: number) => requestFence.isCurrent(scope, requestId);
 
   const loadJobs = async () => {
     if (!siteUrl) return [];
+    const requestId = requestFence.begin("jobs");
     setJobsLoading(true);
     try {
       const result = await fetchCrawlJobs(siteUrl);
+      if (!isCurrentRequest("jobs", requestId)) {
+        return [];
+      }
       setQueue(result.queue ?? null);
       const nextJobs = result.jobs.length > 0 ? result.jobs : job ? [job] : [];
       setJobs(nextJobs);
@@ -359,22 +375,41 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
         setSelectedJobId("");
       }
       return nextJobs;
+    } catch (err) {
+      if (!isCurrentRequest("jobs", requestId)) {
+        return [];
+      }
+      throw err;
     } finally {
-      setHasLoadedJobs(true);
-      setJobsLoading(false);
+      if (isCurrentRequest("jobs", requestId)) {
+        setHasLoadedJobs(true);
+        setJobsLoading(false);
+      }
     }
   };
 
   const loadStatus = async (jobId?: string | null) => {
     if (!siteUrl) return;
-    const result = await fetchCrawlStatus(siteUrl, jobId ?? activeJobId);
-    setJob(result.job);
-    setQueue(result.queue ?? null);
-    setSummary(result.summary);
+    const requestId = requestFence.begin("status");
+    try {
+      const result = await fetchCrawlStatus(siteUrl, jobId ?? activeJobId);
+      if (!isCurrentRequest("status", requestId)) {
+        return;
+      }
+      setJob(result.job);
+      setQueue(result.queue ?? null);
+      setSummary(result.summary);
+    } catch (err) {
+      if (!isCurrentRequest("status", requestId)) {
+        return;
+      }
+      throw err;
+    }
   };
 
   const loadPages = async (jobId?: string | null, pageIndexOverride?: number) => {
     if (!siteUrl) return;
+    const requestId = requestFence.begin("pages");
     setLoading(true);
     setError(null);
     try {
@@ -386,25 +421,42 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
         search: searchTerm,
         siteUrl,
       });
+      if (!isCurrentRequest("pages", requestId)) {
+        return;
+      }
       setJob(result.job);
       setQueue(result.queue ?? null);
       setSummary(result.summary);
       setRows(result.rows);
       setPageTotal(result.page.total);
     } catch (err: any) {
-      setError(err.message || "Failed to load crawl inventory");
+      if (isCurrentRequest("pages", requestId)) {
+        setError(err.message || "Failed to load crawl inventory");
+      }
     } finally {
-      setLoading(false);
+      if (isCurrentRequest("pages", requestId)) {
+        setLoading(false);
+      }
     }
   };
 
   const loadCompare = async (jobId?: string | null) => {
     if (!siteUrl) return;
-    const result = await fetchCrawlCompare({
-      baseJobId: jobId ?? activeJobId,
-      siteUrl,
-    });
-    setCompare(result);
+    const requestId = requestFence.begin("compare");
+    try {
+      const result = await fetchCrawlCompare({
+        baseJobId: jobId ?? activeJobId,
+        siteUrl,
+      });
+      if (!isCurrentRequest("compare", requestId)) {
+        return;
+      }
+      setCompare(result);
+    } catch {
+      if (isCurrentRequest("compare", requestId)) {
+        setCompare(null);
+      }
+    }
   };
 
   const exportAllRows = async () => {
@@ -478,8 +530,8 @@ export function CrawlInventoryView({ defaultStartUrl, siteUrl }: CrawlInventoryV
   }, [siteUrl]);
 
   useEffect(() => {
-    loadPages().catch((err) => setError(err.message || "Failed to load crawl inventory"));
-    loadCompare().catch(() => setCompare(null));
+    void loadPages();
+    void loadCompare();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteUrl, pageIndex, searchTerm, selectedJobId, issueFilter]);
 
