@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { AlertCircle, CheckCircle2, Download, ExternalLink, FileText, Link2, Loader2, Play, RefreshCw, RotateCcw, Search, StopCircle, XCircle } from 'lucide-react';
 import type { DateRange } from 'react-day-picker';
@@ -27,6 +27,7 @@ import {
 } from '@/src/services/internalLinksService';
 import { fetchCrawlStatus, startCrawl, type CrawlJob, type CrawlSummary } from '@/src/services/crawlService';
 import type { QueueMetadata } from '@/src/services/queueMetadata';
+import { pendingAnalysisStorageKey, shouldBootstrapInternalLinkAnalysis, shouldStartAnalysisAfterCrawl } from './internalLinkLifecycle';
 
 type InternalLinksViewProps = {
   dateRange: DateRange;
@@ -309,6 +310,7 @@ function groupRows(rows: InternalLinkOpportunity[]): OpportunityGroup[] {
 export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps) {
   const [rows, setRows] = useState<InternalLinkOpportunity[]>([]);
   const [jobs, setJobs] = useState<InternalLinkAnalysisJob[]>([]);
+  const [jobsLoaded, setJobsLoaded] = useState(false);
   const [activeJob, setActiveJob] = useState<InternalLinkAnalysisJob | null>(null);
   const [queue, setQueue] = useState<QueueMetadata | null>(null);
   const [folders, setFolders] = useState<string[]>([]);
@@ -330,6 +332,8 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
   const [starting, setStarting] = useState(false);
   const [batchStarting, setBatchStarting] = useState(false);
   const [crawlStarting, setCrawlStarting] = useState(false);
+  const [pendingAnalysisCrawlId, setPendingAnalysisCrawlId] = useState<string | null>(null);
+  const autoAnalysisStartedRef = useRef(new Set<string>());
   const [jobActionId, setJobActionId] = useState<string | null>(null);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [noteSavingId, setNoteSavingId] = useState<string | null>(null);
@@ -353,7 +357,7 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
   const reviewConfigured = providerConfigured(providerSettings, reviewProvider);
   const usesLocalSemanticEmbedding = embeddingProvider === 'local' || embeddingProvider === 'ollama';
   const usableSentenceCount = Number(estimate?.estimatedLocalUnits || 0);
-  const recrawlSignal = [message, estimateError].filter(Boolean).join(' ').toLowerCase();
+  const recrawlSignal = [estimateError].filter(Boolean).join(' ').toLowerCase();
   const needsFreshCrawl = recrawlSignal.includes('recrawl') || recrawlSignal.includes('sentence-level context') || recrawlSignal.includes('run a crawl') || (!!estimate && usableSentenceCount <= 0);
   const analysisBlockedByCrawl = crawlRunning || crawlStarting || needsFreshCrawl;
   const getDraftNote = (row: InternalLinkOpportunity) => noteDrafts[row.id] ?? row.userNote ?? '';
@@ -364,6 +368,7 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
     setJobs(result.jobs);
     setQueue(result.queue ?? null);
     setActiveJob((current) => current && result.jobs.some((job) => job.id === current.id) ? result.jobs.find((job) => job.id === current.id) || current : result.jobs[0] || null);
+    setJobsLoaded(true);
   };
 
   const loadRows = async () => {
@@ -506,14 +511,16 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
       setCrawlJob(result.job);
       setCrawlQueue(result.queue ?? null);
       setCrawlSummary(null);
+      setPendingAnalysisCrawlId(result.job.id);
+      window.sessionStorage.setItem(pendingAnalysisStorageKey(siteUrl), result.job.id);
       void loadEstimate().catch(() => {});
       setMessage(result.job.status === 'completed'
-        ? 'Fresh crawl is available. Run internal link analysis again.'
-        : 'Fresh crawl queued. This page will update while the crawler collects sentence-level context.');
+        ? 'Fresh crawl is ready. Internal link analysis will start automatically.'
+        : 'Fresh crawl queued. Internal link analysis will start automatically when sentence context is ready.');
       toast.success(result.job.status === 'completed' ? 'Fresh crawl ready' : 'Fresh crawl queued', {
         description: result.job.status === 'completed'
-          ? 'Run internal link analysis again to use the new sentence extraction.'
-          : 'The crawler is collecting sentence-level context for this site.',
+          ? 'Internal link analysis is starting automatically.'
+          : 'The crawler is collecting sentence-level context, then analysis will start automatically.',
       });
     } catch (err: any) {
       setError(err.message || 'Failed to start fresh crawl');
@@ -522,11 +529,11 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
       setCrawlStarting(false);
     }
   };
-  const handleStartAnalysis = async () => {
+  const handleStartAnalysis = async (automatic = false) => {
     setStarting(true);
     setError(null);
     try {
-      if (!(await ensureEmbeddingProviderReady())) return;
+      if (!(await ensureEmbeddingProviderReady())) return false;
       const result = await startInternalLinkAnalysis({
         embeddingModel,
         embeddingProvider,
@@ -542,12 +549,21 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
       });
       setActiveJob(result.job);
       setQueue(result.queue ?? null);
-      toast.success('Internal link analysis queued', { description: embeddingProvider === 'local-rules' ? 'The lexical fallback worker will process this site in the background.' : 'The BGE-M3 semantic worker will process this site in the background.' });
+      setMessage(null);
+      toast.success(automatic ? 'Fresh crawl complete' : 'Internal link analysis queued', {
+        description: automatic
+          ? 'Internal link analysis has started automatically.'
+          : embeddingProvider === 'local-rules'
+            ? 'The lexical fallback worker will process this site in the background.'
+            : 'The BGE-M3 semantic worker will process this site in the background.',
+      });
       await loadJobs();
       await loadRows();
+      return true;
     } catch (err: any) {
       setError(err.message || 'Failed to start analysis');
       toast.error('Analysis failed to start', { description: err.message || 'Unable to queue internal link analysis.' });
+      return false;
     } finally {
       setStarting(false);
     }
@@ -651,7 +667,11 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
   useEffect(() => {
     setActiveJob(null);
     setJobs([]);
+    setJobsLoaded(false);
     setRows([]);
+    const storedPendingCrawlId = window.sessionStorage.getItem(pendingAnalysisStorageKey(siteUrl));
+    setPendingAnalysisCrawlId(storedPendingCrawlId);
+    autoAnalysisStartedRef.current.clear();
     loadJobs().catch((err) => setError(err.message || 'Failed to load analysis jobs'));
     loadCrawlStatus().catch((err) => setError(err.message || 'Failed to load crawl status'));
     loadProviderSettings().catch((err) => setError(err.message || 'Failed to load internal link provider settings'));
@@ -713,6 +733,34 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crawlRunning, siteUrl, crawlJob?.id]);
+
+  useEffect(() => {
+    const bootstrapAnalysis = shouldBootstrapInternalLinkAnalysis({
+      analysisRunning: isRunning,
+      crawlJob,
+      jobCount: jobs.length,
+      jobsLoaded,
+      usableSentenceCount,
+    });
+    const targetCrawlId = shouldStartAnalysisAfterCrawl(pendingAnalysisCrawlId, crawlJob, isRunning)
+      ? pendingAnalysisCrawlId
+      : bootstrapAnalysis
+        ? crawlJob?.id || null
+        : null;
+    if (!targetCrawlId || autoAnalysisStartedRef.current.has(targetCrawlId)) return;
+
+    autoAnalysisStartedRef.current.add(targetCrawlId);
+    setEstimateError(null);
+    setMessage('Fresh crawl complete. Starting internal link analysis...');
+    void handleStartAnalysis(true).then((started) => {
+      window.sessionStorage.removeItem(pendingAnalysisStorageKey(siteUrl));
+      setPendingAnalysisCrawlId(null);
+      if (!started) {
+        setMessage('Fresh crawl complete, but analysis could not start automatically. Choose Analyze site to retry.');
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAnalysisCrawlId, crawlJob?.id, crawlJob?.status, isRunning, jobs.length, jobsLoaded, siteUrl, usableSentenceCount]);
 
   const hostedEstimate = estimate?.totalHostedCost ?? (activeJob ? (activeJob.estimatedHostedEmbeddingCost || 0) + (activeJob.estimatedHostedReviewCost || 0) : 0);
   const hostedSpendCapNumber = Number(hostedSpendCap || 0);
@@ -793,7 +841,7 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
                 value={hostedSpendCap}
               />
             )}
-            <Button className="h-10 rounded-xl" onClick={handleStartAnalysis} disabled={starting || batchStarting || isRunning || hostedSpendBlocked || analysisBlockedByCrawl}>
+            <Button className="h-10 rounded-xl" onClick={() => { void handleStartAnalysis(false); }} disabled={starting || batchStarting || isRunning || hostedSpendBlocked || analysisBlockedByCrawl}>
               {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
               Analyze site
             </Button>
