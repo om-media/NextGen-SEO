@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import crypto from 'crypto';
 import { canonicalPageKey, resolvedCanonicalPageKey } from '../reporting/url.js';
 import type { AppDatabase } from '../database.js';
+import { queueCompletedCrawlAnalysis } from './pageAnalysis.js';
 import type { Browser } from 'puppeteer';
 
 type CrawlRules = {
@@ -14,30 +15,86 @@ type CrawlUrlOptions = {
   includeQueryStrings: boolean;
 };
 
-const CRAWL_SENTENCE_EXTRACTION_VERSION = 2;
+const CRAWL_SENTENCE_EXTRACTION_VERSION = 3;
+
+type CrawlRegionRole =
+  | 'header'
+  | 'navigation'
+  | 'breadcrumb'
+  | 'hero'
+  | 'table_of_contents'
+  | 'main'
+  | 'section'
+  | 'sidebar'
+  | 'faq'
+  | 'comparison'
+  | 'product_grid'
+  | 'tool'
+  | 'form'
+  | 'related_content'
+  | 'cta'
+  | 'footer'
+  | 'unknown';
+
+type CrawlPageType =
+  | 'article'
+  | 'comparison'
+  | 'faq'
+  | 'product'
+  | 'tool'
+  | 'category'
+  | 'landing'
+  | 'unknown';
 
 type CrawlLinkSnapshot = {
   anchorText: string | null;
+  blockType: string;
   contextText: string | null;
+  regionRole: CrawlRegionRole;
   url: string;
+  visualProminence: number;
 };
 
 type CrawlTextBlockSnapshot = {
   blockIndex: number;
+  blockKey: string;
   blockType: string;
+  boilerplateScore: number;
+  domPath: string;
+  extractionVersion: number;
+  headingChainJson: string;
+  linkDensity: number;
+  regionIndex: number;
+  regionRole: CrawlRegionRole;
+  selector: string;
   text: string;
+  textDensity: number;
   textHash: string;
 };
 
 type CrawlSentenceSnapshot = {
+  blockIndex: number;
+  blockKey: string;
+  blockType: string;
   boilerplateScore: number;
   extractionVersion: number;
   headingText: string | null;
   linkDensity: number;
+  pageType: CrawlPageType;
   paragraphIndex: number;
+  regionIndex: number;
+  regionRole: CrawlRegionRole;
   sentenceIndex: number;
   sentenceText: string;
   textHash: string;
+  visualProminence: number;
+};
+
+type CrawlRegionSnapshot = {
+  regionIndex: number;
+  regionRole: CrawlRegionRole;
+  selector: string;
+  domPath: string;
 };
 
 export type CrawlJobRecord = {
@@ -250,6 +307,8 @@ async function withCrawlSqliteClaimLock<T>(callback: () => Promise<T>): Promise<
   }
 }
 let renderBrowserPromise: Promise<Browser> | null = null;
+let crawlTextBlocksSupportsBlockKey: boolean | null = null;
+let crawlSentencesSupportsBlockKey: boolean | null = null;
 
 class CrawlCancelledError extends Error {
   constructor() {
@@ -585,82 +644,468 @@ function clampScore(value: number) {
 }
 
 function splitSentences(text: string) {
-  return cleanText(text, 1200)
+  return cleanText(text, 2400)
     .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
     .map((sentence) => cleanText(sentence, 420))
     .filter((sentence) => sentence.length >= 55 && sentence.split(/\s+/).length >= 8);
 }
 
-function extractTextBlocks($: cheerio.CheerioAPI): CrawlTextBlockSnapshot[] {
-  const blocks: CrawlTextBlockSnapshot[] = [];
-  const seen = new Set<string>();
-  $('main h1, main h2, main h3, main p, main li, article h1, article h2, article h3, article p, article li, body h1, body h2, body h3, body p, body li').each((_, element) => {
-    if (blocks.length >= 120) return false;
-    const blockType = String(element.tagName || 'text').toLowerCase();
-    const text = cleanText($(element).text(), 420);
-    if (text.length < 45 && !/^h[1-3]$/.test(blockType)) return;
-    const textHash = hashText(text.toLowerCase());
-    if (seen.has(textHash)) return;
-    seen.add(textHash);
-    blocks.push({ blockIndex: blocks.length, blockType, text, textHash });
-  });
-  return blocks;
+function normalizedSemanticTokens($: cheerio.CheerioAPI, element: any) {
+  const tag = String((element as { tagName?: string } | undefined)?.tagName || 'div').toLowerCase();
+  const role = String($(element).attr('role') || '').toLowerCase();
+  const id = String($(element).attr('id') || '').toLowerCase();
+  const className = String($(element).attr('class') || '').toLowerCase();
+  const ariaLabel = String($(element).attr('aria-label') || '').toLowerCase();
+  const dataRegion = String($(element).attr('data-region') || '').toLowerCase();
+  const signal = [tag, role, id, className, ariaLabel, dataRegion].join(' ');
+  const tokens = new Set(signal.split(/[^a-z0-9]+/).filter(Boolean));
+  return { signal, tag, tokens, role };
 }
 
-function getNearestHeadingText($: cheerio.CheerioAPI, element: any) {
-  const heading = $(element).prevAll('h1,h2,h3').first().text()
-    || $(element).parent().prevAll('h1,h2,h3').first().text()
-    || $(element).closest('section,article,main').prevAll('h1,h2,h3').first().text()
-    || $('main h1, article h1, h1').first().text();
-  return cleanText(heading, 180) || null;
+function hasSemanticPhrase(tokens: Set<string>, ...phrase: string[]) {
+  return phrase.every((token) => tokens.has(token));
+}
+
+function hasSemanticHint(signal: string, tokens: Set<string>, hints: string[]) {
+  return hints.some((hint) => {
+    if (hint.includes(' ')) {
+      return hasSemanticPhrase(tokens, ...hint.split(' '));
+    }
+    return tokens.has(hint) || signal.includes(hint);
+  });
+}
+
+function inferRegionRole($: cheerio.CheerioAPI, element: any): CrawlRegionRole {
+  const { role, signal, tag, tokens } = normalizedSemanticTokens($, element);
+
+  if (tag === 'footer' || role === 'contentinfo' || hasSemanticHint(signal, tokens, ['footer', 'site footer'])) return 'footer';
+  if (hasSemanticHint(signal, tokens, ['breadcrumb', 'breadcrumbs'])) return 'breadcrumb';
+  if (tag === 'aside' || role === 'complementary' || hasSemanticHint(signal, tokens, ['sidebar', 'rail', 'aside'])) return 'sidebar';
+  if (hasSemanticHint(signal, tokens, ['table of contents', 'toc', 'contents', 'jump links'])) return 'table_of_contents';
+  if (hasSemanticHint(signal, tokens, ['faq', 'faqs', 'questions', 'accordion'])) return 'faq';
+  if (hasSemanticHint(signal, tokens, ['comparison', 'compare', 'versus', 'vs'])) return 'comparison';
+  if (hasSemanticHint(signal, tokens, ['product grid', 'product list', 'products', 'catalog', 'collection grid'])) return 'product_grid';
+  if (hasSemanticHint(signal, tokens, ['calculator', 'estimator', 'configurator', 'tool', 'widget'])) return 'tool';
+  if (tag === 'form' || hasSemanticHint(signal, tokens, ['form', 'contact form', 'newsletter', 'signup', 'sign up', 'quote form'])) return 'form';
+  if (hasSemanticHint(signal, tokens, ['related', 'recommended', 'similar', 'popular'])) return 'related_content';
+  if (hasSemanticHint(signal, tokens, ['cta', 'call to action', 'get started', 'book demo', 'request quote', 'contact sales'])) return 'cta';
+  if (tag === 'header' || role === 'banner' || hasSemanticHint(signal, tokens, ['header'])) return 'header';
+  if (hasSemanticHint(signal, tokens, ['hero', 'masthead', 'intro', 'eyebrow'])) return 'hero';
+  if (tag === 'nav' || role === 'navigation' || hasSemanticHint(signal, tokens, ['navigation', 'nav', 'menu'])) return 'navigation';
+  if (tag === 'main' || role === 'main') return 'main';
+  if (tag === 'section' || tag === 'article') return 'section';
+  if (tag === 'body') return 'main';
+  return 'unknown';
+}
+
+function inferPageType($: cheerio.CheerioAPI): CrawlPageType {
+  const title = cleanText($('title').first().text(), 220).toLowerCase();
+  const h1 = cleanText($('h1').first().text(), 220).toLowerCase();
+  const body = cleanText($('main, article, body').first().text(), 2400).toLowerCase();
+  const combined = [title, h1, body].join(' ');
+  if (/\bfaq\b|frequently asked|common questions/.test(combined)) return 'faq';
+  if (/\bcompare\b|\bcomparison\b|\bversus\b|\bvs\b/.test(combined)) return 'comparison';
+  if (/\bcalculator\b|\bestimator\b|\btool\b|\bconfigurator\b/.test(combined)) return 'tool';
+  if (/\bproducts\b|\bcollection\b|\bcatalog\b|shop all/.test(combined)) return 'category';
+  if (/\bpricing\b|\bbook demo\b|\bget started\b|\brequest quote\b/.test(combined)) return 'landing';
+  if ($('article').length > 0 || $('main h2, main h3, article h2, article h3').length >= 2) return 'article';
+  if (/\bproduct\b/.test(combined)) return 'product';
+  return 'unknown';
+}
+
+function buildSelectorToken(raw: string) {
+  return raw.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function buildSelector($: cheerio.CheerioAPI, element: any) {
+  const { tag } = normalizedSemanticTokens($, element);
+  const id = buildSelectorToken(String($(element).attr('id') || ''));
+  const classTokens = String($(element).attr('class') || '')
+    .split(/\s+/)
+    .map(buildSelectorToken)
+    .filter(Boolean)
+    .slice(0, 2);
+  return `${tag}${id ? `#${id}` : ''}${classTokens.map((token) => `.${token}`).join('')}`;
+}
+
+function buildBlockKey(regionRole: CrawlRegionRole, domPath: string, selector: string, headingChain: string[]) {
+  const normalizedHeadingChain = headingChain.map((entry) => cleanText(entry, 180).toLowerCase()).join(' > ');
+  return `blk_${hashText([regionRole, domPath.toLowerCase(), selector.toLowerCase(), normalizedHeadingChain].join('|')).slice(0, 20)}`;
+}
+
+function nthOfType($: cheerio.CheerioAPI, element: any) {
+  const tagName = String((element as { tagName?: string } | undefined)?.tagName || '').toLowerCase();
+  if (!tagName) return 1;
+  const siblings = $(element).parent().children(tagName).toArray();
+  const index = siblings.findIndex((candidate) => candidate === element);
+  return index >= 0 ? index + 1 : 1;
+}
+
+function buildDomPath($: cheerio.CheerioAPI, element: any) {
+  const nodes = $(element).parents().toArray().reverse().concat([element]);
+  return nodes
+    .filter((node) => ['html', 'body', 'main', 'header', 'nav', 'section', 'article', 'aside', 'footer', 'div', 'form', 'ul', 'ol', 'li'].includes(String((node as { tagName?: string } | undefined)?.tagName || '').toLowerCase()))
+    .map((node) => {
+      const tag = String((node as { tagName?: string } | undefined)?.tagName || 'div').toLowerCase();
+      const id = buildSelectorToken(String($(node).attr('id') || ''));
+      return `${tag}${id ? `#${id}` : `:nth-of-type(${nthOfType($, node)})`}`;
+    })
+    .join(' > ');
+}
+
+function computeTextDensity($: cheerio.CheerioAPI, element: any, text: string) {
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  const childCount = Math.max(1, $(element).children().length);
+  return clampScore(wordCount / Math.max(12, childCount * 10));
 }
 
 function linkDensityFor($: cheerio.CheerioAPI, element: any, text: string) {
-  const linkText = cleanText($(element).find('a').text(), 1600);
+  const linkText = cleanText($(element).find('a').text(), 2000);
   return text.length > 0 ? clampScore(linkText.length / text.length) : 0;
 }
 
-function boilerplateScoreFor($: cheerio.CheerioAPI, element: any, text: string, linkDensity: number) {
-  const container = $(element).closest('nav,footer,aside,header,[role="navigation"],[class*="nav"],[class*="footer"],[class*="sidebar"],[class*="menu"],[class*="toc"],[class*="breadcrumb"],[class*="related"],[class*="share"],[class*="cookie"],[class*="newsletter"],[class*="cta"],[id*="nav"],[id*="footer"],[id*="sidebar"],[id*="toc"]');
-  const lower = text.toLowerCase();
-  const words = text.split(/\s+/).filter(Boolean).length;
-  let score = 0;
-  if (container.length) score += 0.6;
-  if (linkDensity > 0.45) score += 0.3;
-  else if (linkDensity > 0.28) score += 0.18;
-  if (/\b(table of contents|subscribe|newsletter|related posts|share this|privacy policy|cookie|contact us|read more|click here)\b/.test(lower)) score += 0.25;
-  if (words < 12) score += 0.1;
+function computeVisualProminence(blockType: string, regionRole: CrawlRegionRole) {
+  let score = 0.5;
+  if (blockType === 'h1') score = 1;
+  else if (blockType === 'h2') score = 0.9;
+  else if (blockType === 'h3') score = 0.82;
+  else if (blockType === 'h4') score = 0.74;
+  else if (blockType === 'h5' || blockType === 'h6') score = 0.68;
+  else if (blockType === 'p') score = 0.56;
+  else if (blockType === 'li') score = 0.46;
+  else if (blockType === 'blockquote') score = 0.6;
+
+  if (regionRole === 'hero') score += 0.14;
+  if (regionRole === 'cta' || regionRole === 'header') score += 0.08;
+  if (regionRole === 'faq' || regionRole === 'comparison' || regionRole === 'tool') score += 0.04;
+  if (regionRole === 'footer' || regionRole === 'related_content') score -= 0.1;
+  if (regionRole === 'sidebar' || regionRole === 'navigation' || regionRole === 'table_of_contents') score -= 0.06;
   return clampScore(score);
 }
 
-function extractSentences($: cheerio.CheerioAPI): CrawlSentenceSnapshot[] {
-  const sentences: CrawlSentenceSnapshot[] = [];
+function shouldIncludeBlock(blockType: string, text: string) {
+  if (!text) return false;
+  if (/^h[1-6]$/.test(blockType)) return text.length >= 4;
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  return text.length >= 35 && wordCount >= 6;
+}
+
+function buildBoilerplateScore(regionRole: CrawlRegionRole, text: string, linkDensity: number, repeatCount: number) {
+  const lower = text.toLowerCase();
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  let score = 0;
+  if (['navigation', 'footer', 'sidebar', 'table_of_contents', 'related_content'].includes(regionRole)) score += 0.42;
+  if (['cta', 'header', 'breadcrumb'].includes(regionRole)) score += 0.18;
+  if (repeatCount > 1) score += Math.min(0.32, (repeatCount - 1) * 0.14);
+  if (linkDensity > 0.45) score += 0.26;
+  else if (linkDensity > 0.28) score += 0.16;
+  if (/\b(table of contents|subscribe|newsletter|privacy policy|cookie|related posts|read more|contact us|terms|share this)\b/.test(lower)) score += 0.22;
+  if (wordCount < 12) score += 0.08;
+  return clampScore(score);
+}
+
+function collectSemanticRegions($: cheerio.CheerioAPI) {
+  const selector = [
+    'body',
+    'header',
+    'nav',
+    'main',
+    'aside',
+    'footer',
+    'section',
+    'article',
+    'form',
+    '[role="navigation"]',
+    '[role="banner"]',
+    '[role="main"]',
+    '[role="contentinfo"]',
+    '[role="complementary"]',
+    '[class*="breadcrumb"]',
+    '[id*="breadcrumb"]',
+    '[class*="hero"]',
+    '[id*="hero"]',
+    '[class*="faq"]',
+    '[id*="faq"]',
+    '[class*="sidebar"]',
+    '[id*="sidebar"]',
+    '[class*="related"]',
+    '[id*="related"]',
+    '[class*="toc"]',
+    '[class*="table-of-contents"]',
+    '[class*="contents"]',
+    '[id*="toc"]',
+    '[id*="contents"]',
+    '[class*="comparison"]',
+    '[id*="comparison"]',
+    '[class*="product"]',
+    '[id*="product"]',
+    '[class*="cta"]',
+    '[id*="cta"]',
+    '[class*="tool"]',
+    '[id*="tool"]'
+  ].join(',');
+
+  const candidates: Array<CrawlRegionSnapshot & { element: any }> = [];
+  const regionMap = new Map<any, CrawlRegionSnapshot>();
   const seen = new Set<string>();
-  $('main p, main li, article p, article li, body p, body li').each((paragraphIndex, element) => {
-    if (sentences.length >= 250) return false;
-    const paragraphText = cleanText($(element).text(), 1600);
-    if (!paragraphText || $(element).find('a').length > 4) return;
-    const linkDensity = linkDensityFor($, element, paragraphText);
-    const boilerplateScore = boilerplateScoreFor($, element, paragraphText, linkDensity);
-    if (boilerplateScore >= 0.65) return;
-    const headingText = getNearestHeadingText($, element);
-    splitSentences(paragraphText).slice(0, 6).forEach((sentenceText, sentenceIndex) => {
-      const textHash = hashText(sentenceText.toLowerCase());
-      if (seen.has(textHash)) return;
-      seen.add(textHash);
-      sentences.push({
-        boilerplateScore,
+
+  $(selector).each((_, element) => {
+    const tag = String((element as { tagName?: string } | undefined)?.tagName || '').toLowerCase();
+    const regionRole = inferRegionRole($, element);
+    if (regionRole === 'unknown' && !['body', 'main', 'section', 'article'].includes(tag)) {
+      return;
+    }
+
+    const parentRegionElement = $(element).parents().toArray().find((ancestor) => regionMap.has(ancestor));
+    if (parentRegionElement) {
+      const parentRegion = regionMap.get(parentRegionElement)!;
+      if (parentRegion.regionRole === regionRole && !['section', 'main'].includes(regionRole)) {
+        return;
+      }
+    }
+
+    const domPath = buildDomPath($, element);
+    const selectorText = buildSelector($, element);
+    const key = `${regionRole}:${domPath}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    const region = {
+      domPath,
+      element,
+      regionIndex: candidates.length,
+      regionRole,
+      selector: selectorText,
+    };
+    seen.add(key);
+    candidates.push(region);
+    regionMap.set(element, region);
+  });
+
+  if (candidates.length === 0) {
+    const body = $('body').get(0);
+    if (body) {
+      const region = {
+        domPath: buildDomPath($, body),
+        element: body,
+        regionIndex: 0,
+        regionRole: 'main' as CrawlRegionRole,
+        selector: buildSelector($, body),
+      };
+      candidates.push(region);
+      regionMap.set(body, region);
+    }
+  }
+
+  return { regions: candidates, regionMap };
+}
+
+function findNearestRegion($: cheerio.CheerioAPI, element: any, regionMap: Map<any, CrawlRegionSnapshot>) {
+  const current = [element, ...$(element).parents().toArray()];
+  const matchedRegions: CrawlRegionSnapshot[] = [];
+
+  for (const node of current) {
+    const region = regionMap.get(node);
+    if (region) {
+      matchedRegions.push(region);
+    }
+  }
+
+  if (matchedRegions.length === 0) {
+    return null;
+  }
+
+  const genericRoles = new Set<CrawlRegionRole>(['main', 'section', 'unknown']);
+  const specificRegion = matchedRegions.find((region) => !genericRoles.has(region.regionRole));
+  return specificRegion || matchedRegions[0] || null;
+}
+
+function headingTextFromChain(headingChainJson: string) {
+  try {
+    const chain = JSON.parse(headingChainJson);
+    return Array.isArray(chain) && chain.length > 0 ? cleanText(String(chain[chain.length - 1] || ''), 180) || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractSemanticSnapshot($: cheerio.CheerioAPI, finalUrl: string, startUrl: string, options: CrawlUrlOptions) {
+  const pageType = inferPageType($);
+  const { regions, regionMap } = collectSemanticRegions($);
+  const pageHeading = cleanText($('main h1, article h1, h1').first().text(), 180) || null;
+  const rawBlocks: Array<CrawlTextBlockSnapshot & { pageType: CrawlPageType; visualProminence: number }> = [];
+  const semanticBlockSelector = 'h1,h2,h3,h4,h5,h6,p,li,dt,dd,blockquote,figcaption';
+
+  for (const region of regions) {
+    const headingStack: Array<string | null> = [
+      ['header', 'navigation', 'breadcrumb', 'footer'].includes(region.regionRole) ? null : pageHeading,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ];
+    $(region.element).find(semanticBlockSelector).addBack(semanticBlockSelector).each((_, element) => {
+      if (rawBlocks.length >= 180) {
+        return false;
+      }
+      const nearestRegion = findNearestRegion($, element, regionMap);
+      if (!nearestRegion || nearestRegion.regionIndex !== region.regionIndex) {
+        return;
+      }
+
+      const blockType = String((element as { tagName?: string } | undefined)?.tagName || 'text').toLowerCase();
+      const text = cleanText($(element).text(), 900);
+      if (!text) {
+        return;
+      }
+
+      if (/^h[1-6]$/.test(blockType)) {
+        const level = Math.max(1, Math.min(6, Number(blockType.slice(1)) || 1));
+        headingStack[level - 1] = text;
+        for (let index = level; index < headingStack.length; index += 1) {
+          headingStack[index] = null;
+        }
+      }
+
+      if (!shouldIncludeBlock(blockType, text)) {
+        return;
+      }
+
+      const headingChain = headingStack.filter((entry) => entry).map((entry) => cleanText(String(entry), 180));
+      const domPath = buildDomPath($, element);
+      const selector = buildSelector($, element);
+      const textHash = hashText(text.toLowerCase());
+      rawBlocks.push({
+        blockIndex: rawBlocks.length,
+        blockKey: buildBlockKey(region.regionRole, domPath, selector, headingChain),
+        blockType,
+        boilerplateScore: 0,
+        domPath,
         extractionVersion: CRAWL_SENTENCE_EXTRACTION_VERSION,
-        headingText,
-        linkDensity,
-        paragraphIndex,
+        headingChainJson: JSON.stringify(headingChain),
+        linkDensity: linkDensityFor($, element, text),
+        pageType,
+        regionIndex: region.regionIndex,
+        regionRole: region.regionRole,
+        selector,
+        text,
+        textDensity: computeTextDensity($, element, text),
+        textHash,
+        visualProminence: computeVisualProminence(blockType, region.regionRole),
+      });
+    });
+  }
+
+  const repeatCountByHash = new Map<string, number>();
+  for (const block of rawBlocks) {
+    repeatCountByHash.set(block.textHash, (repeatCountByHash.get(block.textHash) || 0) + 1);
+  }
+
+  const textBlocks: CrawlTextBlockSnapshot[] = rawBlocks.slice(0, 120).map((block, index) => ({
+    blockIndex: index,
+    blockKey: block.blockKey,
+    blockType: block.blockType,
+    boilerplateScore: buildBoilerplateScore(block.regionRole, block.text, block.linkDensity, repeatCountByHash.get(block.textHash) || 1),
+    domPath: block.domPath,
+    extractionVersion: CRAWL_SENTENCE_EXTRACTION_VERSION,
+    headingChainJson: block.headingChainJson,
+    linkDensity: block.linkDensity,
+    regionIndex: block.regionIndex,
+    regionRole: block.regionRole,
+    selector: block.selector,
+    text: block.text,
+    textDensity: block.textDensity,
+    textHash: block.textHash,
+  }));
+
+  const finalizedBlockMeta = new Map<number, { pageType: CrawlPageType; visualProminence: number }>();
+  textBlocks.forEach((block, index) => {
+    const raw = rawBlocks[index];
+    if (raw) {
+      finalizedBlockMeta.set(block.blockIndex, { pageType: raw.pageType, visualProminence: raw.visualProminence });
+    }
+  });
+
+  const sentences: CrawlSentenceSnapshot[] = [];
+  const seenSentenceHashes = new Set<string>();
+  const sentenceCountByBlock = new Map<number, number>();
+  for (const block of textBlocks) {
+    if (sentences.length >= 250) {
+      break;
+    }
+    if (block.boilerplateScore >= 0.78 || block.textDensity < 0.18) {
+      continue;
+    }
+    const sentenceCandidates = splitSentences(block.text).slice(0, 6);
+    for (const sentenceText of sentenceCandidates) {
+      if (sentences.length >= 250) {
+        break;
+      }
+      const textHash = hashText(sentenceText.toLowerCase());
+      if (seenSentenceHashes.has(textHash)) {
+        continue;
+      }
+      seenSentenceHashes.add(textHash);
+      const meta = finalizedBlockMeta.get(block.blockIndex);
+      const sentenceIndex = sentenceCountByBlock.get(block.blockIndex) || 0;
+      sentenceCountByBlock.set(block.blockIndex, sentenceIndex + 1);
+      sentences.push({
+        blockIndex: block.blockIndex,
+        blockKey: block.blockKey,
+        blockType: block.blockType,
+        boilerplateScore: block.boilerplateScore,
+        extractionVersion: CRAWL_SENTENCE_EXTRACTION_VERSION,
+        headingText: headingTextFromChain(block.headingChainJson),
+        linkDensity: block.linkDensity,
+        pageType: meta?.pageType || pageType,
+        paragraphIndex: block.blockIndex,
+        regionIndex: block.regionIndex,
+        regionRole: block.regionRole,
         sentenceIndex,
         sentenceText,
         textHash,
+        visualProminence: meta?.visualProminence || computeVisualProminence(block.blockType, block.regionRole),
       });
-    });
+    }
+  }
+
+  const internalLinks: CrawlLinkSnapshot[] = [];
+  $('a[href]').each((_, element) => {
+    const href = $(element).attr('href')?.trim() || '';
+    const normalized = normalizeAbsoluteUrl(href, finalUrl, options);
+    if (!normalized) return;
+    try {
+      const linkUrl = new URL(normalized);
+      const startHost = new URL(startUrl).hostname;
+      if (!isInternalHost(linkUrl.hostname, startHost)) {
+        return;
+      }
+      const blockElement = $(element).closest('p, li, dt, dd, blockquote, figcaption, h1, h2, h3, h4, h5, h6').get(0) || element;
+      const blockType = String((blockElement as { tagName?: string } | undefined)?.tagName || 'a').toLowerCase();
+      const region = findNearestRegion($, blockElement, regionMap) || regions.find((candidate) => candidate.regionRole === 'main') || regions[0] || {
+        domPath: 'body:nth-of-type(1)',
+        regionIndex: 0,
+        regionRole: 'main' as CrawlRegionRole,
+        selector: 'body',
+      };
+      const anchorText = cleanText($(element).text(), 180) || null;
+      const contextText = cleanText($(blockElement).text(), 360) || cleanText($(element).closest('section, article, div').text(), 360) || anchorText;
+      internalLinks.push({
+        anchorText,
+        blockType,
+        contextText,
+        regionRole: region.regionRole,
+        url: normalized,
+        visualProminence: computeVisualProminence(blockType, region.regionRole),
+      });
+    } catch {
+      // Ignore invalid links.
+    }
   });
-  return sentences;
+
+  return { internalLinks, pageType, regions, sentences, textBlocks };
 }
 
 function extractPageSnapshot(html: string, responseHeaders: Headers, finalUrl: string, startUrl: string, options: CrawlUrlOptions) {
@@ -680,24 +1125,7 @@ function extractPageSnapshot(html: string, responseHeaders: Headers, finalUrl: s
   const xRobots = responseHeaders.get('x-robots-tag')?.toLowerCase() || '';
   const noindex = robotsMeta.includes('noindex') || xRobots.includes('noindex') ? 1 : 0;
   const contentType = responseHeaders.get('content-type') || null;
-  const internalLinks: CrawlLinkSnapshot[] = [];
-
-  $('a[href]').each((_, element) => {
-    const href = $(element).attr('href')?.trim() || '';
-    const normalized = normalizeAbsoluteUrl(href, finalUrl, options);
-    if (!normalized) return;
-    try {
-      const linkUrl = new URL(normalized);
-      const startHost = new URL(startUrl).hostname;
-      if (isInternalHost(linkUrl.hostname, startHost)) {
-        const anchorText = cleanText($(element).text(), 180) || null;
-        const contextText = cleanText($(element).closest('p, li, section, article, div').text(), 360) || anchorText;
-        internalLinks.push({ anchorText, contextText, url: normalized });
-      }
-    } catch {
-      // Ignore invalid links.
-    }
-  });
+  const semantic = extractSemanticSnapshot($, finalUrl, startUrl, options);
 
   return {
     canonicalUrl,
@@ -705,12 +1133,14 @@ function extractPageSnapshot(html: string, responseHeaders: Headers, finalUrl: s
     h1Count: h1Items.length,
     h1Text: h1Items[0] || null,
     h2Count,
-    internalLinks,
+    internalLinks: semantic.internalLinks,
     metaDescription,
     noindex,
     outgoingLinkCount: $('a[href]').length,
-    sentences: extractSentences($),
-    textBlocks: extractTextBlocks($),
+    pageType: semantic.pageType,
+    regions: semantic.regions,
+    sentences: semantic.sentences,
+    textBlocks: semantic.textBlocks,
     title,
     wordCount,
   };
@@ -799,19 +1229,64 @@ async function upsertCrawlLinks(
     const toPageKey = buildPageKey(link.url, siteUrl);
     await db.run(
       `
-        INSERT INTO crawl_links (ownerId, siteUrl, jobId, fromUrl, toUrl, fromPageKey, toPageKey, anchorText, contextText, discoveredAt, depth)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO crawl_links (
+          ownerId, siteUrl, jobId, fromUrl, toUrl, fromPageKey, toPageKey,
+          anchorText, contextText, regionRole, blockType, visualProminence, discoveredAt, depth
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(ownerId, siteUrl, jobId, fromUrl, toUrl) DO UPDATE SET
           fromPageKey=excluded.fromPageKey,
           toPageKey=excluded.toPageKey,
           anchorText=excluded.anchorText,
           contextText=excluded.contextText,
+          regionRole=excluded.regionRole,
+          blockType=excluded.blockType,
+          visualProminence=excluded.visualProminence,
           discoveredAt=excluded.discoveredAt,
           depth=excluded.depth
       `,
-      [ownerId, siteUrl, jobId, fromUrl, link.url, fromPageKey, toPageKey, link.anchorText, link.contextText, discoveredAt, depth],
+      [
+        ownerId,
+        siteUrl,
+        jobId,
+        fromUrl,
+        link.url,
+        fromPageKey,
+        toPageKey,
+        link.anchorText,
+        link.contextText,
+        link.regionRole,
+        link.blockType,
+        link.visualProminence,
+        discoveredAt,
+        depth,
+      ],
     );
   }
+}
+
+async function crawlPageSentencesHasBlockKeyColumn(db: AppDatabase) {
+  if (crawlSentencesSupportsBlockKey !== null) {
+    return crawlSentencesSupportsBlockKey;
+  }
+
+  if (db.dialect === 'postgres') {
+    const row = await db.get<{ exists?: number }>(
+      `
+        SELECT 1 AS exists
+        FROM information_schema.columns
+        WHERE table_name = 'crawl_page_sentences'
+          AND LOWER(column_name) = 'blockkey'
+        LIMIT 1
+      `,
+    );
+    crawlSentencesSupportsBlockKey = Boolean(row?.exists);
+    return crawlSentencesSupportsBlockKey;
+  }
+
+  const columns = await db.all<{ name?: string }>(`PRAGMA table_info('crawl_page_sentences')`);
+  crawlSentencesSupportsBlockKey = columns.some((column) => String(column?.name || '').toLowerCase() === 'blockkey');
+  return crawlSentencesSupportsBlockKey;
 }
 
 async function replaceCrawlSentences(
@@ -828,20 +1303,108 @@ async function replaceCrawlSentences(
     [ownerId, siteUrl, jobId, pageUrl],
   );
 
+  const supportsBlockKey = await crawlPageSentencesHasBlockKeyColumn(db);
   const createdAt = nowIso();
   for (const sentence of sentences) {
+    if (supportsBlockKey) {
+      await db.run(
+        `
+          INSERT INTO crawl_page_sentences (
+            ownerId, siteUrl, jobId, pageUrl, pageKey, paragraphIndex, sentenceIndex,
+            blockIndex, blockKey, regionIndex, regionRole, blockType, pageType, visualProminence,
+            sentenceText, textHash, headingText, linkDensity, boilerplateScore, extractionVersion,
+            embeddingStatus, createdAt
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          ownerId,
+          siteUrl,
+          jobId,
+          pageUrl,
+          pageKey,
+          sentence.paragraphIndex,
+          sentence.sentenceIndex,
+          sentence.blockIndex,
+          sentence.blockKey,
+          sentence.regionIndex,
+          sentence.regionRole,
+          sentence.blockType,
+          sentence.pageType,
+          sentence.visualProminence,
+          sentence.sentenceText,
+          sentence.textHash,
+          sentence.headingText,
+          sentence.linkDensity,
+          sentence.boilerplateScore,
+          sentence.extractionVersion,
+          'local-ready',
+          createdAt,
+        ],
+      );
+      continue;
+    }
+
     await db.run(
       `
         INSERT INTO crawl_page_sentences (
-          ownerId, siteUrl, jobId, pageUrl, pageKey, paragraphIndex, sentenceIndex, sentenceText, textHash,
-          headingText, linkDensity, boilerplateScore, extractionVersion, embeddingStatus, createdAt
+          ownerId, siteUrl, jobId, pageUrl, pageKey, paragraphIndex, sentenceIndex,
+          blockIndex, regionIndex, regionRole, blockType, pageType, visualProminence,
+          sentenceText, textHash, headingText, linkDensity, boilerplateScore, extractionVersion,
+          embeddingStatus, createdAt
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [ownerId, siteUrl, jobId, pageUrl, pageKey, sentence.paragraphIndex, sentence.sentenceIndex, sentence.sentenceText, sentence.textHash, sentence.headingText, sentence.linkDensity, sentence.boilerplateScore, sentence.extractionVersion, 'local-ready', createdAt],
+      [
+        ownerId,
+        siteUrl,
+        jobId,
+        pageUrl,
+        pageKey,
+        sentence.paragraphIndex,
+        sentence.sentenceIndex,
+        sentence.blockIndex,
+        sentence.regionIndex,
+        sentence.regionRole,
+        sentence.blockType,
+        sentence.pageType,
+        sentence.visualProminence,
+        sentence.sentenceText,
+        sentence.textHash,
+        sentence.headingText,
+        sentence.linkDensity,
+        sentence.boilerplateScore,
+        sentence.extractionVersion,
+        'local-ready',
+        createdAt,
+      ],
     );
   }
 }
+async function crawlPageTextBlocksHasBlockKeyColumn(db: AppDatabase) {
+  if (crawlTextBlocksSupportsBlockKey !== null) {
+    return crawlTextBlocksSupportsBlockKey;
+  }
+
+  if (db.dialect === 'postgres') {
+    const row = await db.get<{ exists?: number }>(
+      `
+        SELECT 1 AS exists
+        FROM information_schema.columns
+        WHERE table_name = 'crawl_page_text_blocks'
+          AND LOWER(column_name) = 'blockkey'
+        LIMIT 1
+      `,
+    );
+    crawlTextBlocksSupportsBlockKey = Boolean(row?.exists);
+    return crawlTextBlocksSupportsBlockKey;
+  }
+
+  const columns = await db.all<{ name?: string }>(`PRAGMA table_info('crawl_page_text_blocks')`);
+  crawlTextBlocksSupportsBlockKey = columns.some((column) => String(column?.name || '').toLowerCase() === 'blockkey');
+  return crawlTextBlocksSupportsBlockKey;
+}
+
 async function replaceCrawlTextBlocks(
   db: AppDatabase,
   ownerId: string,
@@ -856,13 +1419,73 @@ async function replaceCrawlTextBlocks(
     [ownerId, siteUrl, jobId, pageUrl],
   );
 
+  const supportsBlockKey = await crawlPageTextBlocksHasBlockKeyColumn(db);
+
   for (const block of blocks) {
+    if (supportsBlockKey) {
+      await db.run(
+        `
+          INSERT INTO crawl_page_text_blocks (
+            ownerId, siteUrl, jobId, pageUrl, pageKey, blockIndex, blockKey, blockType,
+            regionIndex, regionRole, headingChainJson, domPath, selector,
+            text, textHash, textDensity, linkDensity, boilerplateScore, extractionVersion
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          ownerId,
+          siteUrl,
+          jobId,
+          pageUrl,
+          pageKey,
+          block.blockIndex,
+          block.blockKey,
+          block.blockType,
+          block.regionIndex,
+          block.regionRole,
+          block.headingChainJson,
+          block.domPath,
+          block.selector,
+          block.text,
+          block.textHash,
+          block.textDensity,
+          block.linkDensity,
+          block.boilerplateScore,
+          block.extractionVersion,
+        ],
+      );
+      continue;
+    }
+
     await db.run(
       `
-        INSERT INTO crawl_page_text_blocks (ownerId, siteUrl, jobId, pageUrl, pageKey, blockIndex, blockType, text, textHash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO crawl_page_text_blocks (
+          ownerId, siteUrl, jobId, pageUrl, pageKey, blockIndex, blockType,
+          regionIndex, regionRole, headingChainJson, domPath, selector,
+          text, textHash, textDensity, linkDensity, boilerplateScore, extractionVersion
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [ownerId, siteUrl, jobId, pageUrl, pageKey, block.blockIndex, block.blockType, block.text, block.textHash],
+      [
+        ownerId,
+        siteUrl,
+        jobId,
+        pageUrl,
+        pageKey,
+        block.blockIndex,
+        block.blockType,
+        block.regionIndex,
+        block.regionRole,
+        block.headingChainJson,
+        block.domPath,
+        block.selector,
+        block.text,
+        block.textHash,
+        block.textDensity,
+        block.linkDensity,
+        block.boilerplateScore,
+        block.extractionVersion,
+      ],
     );
   }
 }
@@ -1511,6 +2134,16 @@ async function executeCrawlJob(db: AppDatabase, job: ClaimedCrawlJobRecord) {
         status: 'completed',
       });
     });
+
+    try {
+      await queueCompletedCrawlAnalysis(db, {
+        crawlJobId: job.id,
+        ownerId: job.ownerId,
+        siteUrl: job.siteUrl,
+      });
+    } catch (enqueueError) {
+      console.error('[crawl] Completed crawl analysis enqueue failed:', enqueueError);
+    }
   } catch (error) {
     throw attachCrawlProgressSnapshot(error, getCrawlProgressSnapshot(seen, queue, nextIndex, counters));
   } finally {
@@ -2005,6 +2638,10 @@ async function listCrawlLinks(
     rows,
   };
 }
+
+export const __crawlExtractionTestUtils = {
+  extractPageSnapshot,
+};
 
 export const __crawlQueueTestUtils = {
   claimNextQueuedCrawlJob,

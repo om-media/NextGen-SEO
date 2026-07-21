@@ -165,9 +165,9 @@ async function installSchema(db: AppDatabase) {
     );
 
     CREATE TABLE gsc_site_metrics (ownerId TEXT, siteUrl TEXT, date TEXT);
-    CREATE TABLE gsc_query_metrics (ownerId TEXT, siteUrl TEXT, date TEXT);
-    CREATE TABLE gsc_page_query_metrics (ownerId TEXT, siteUrl TEXT, date TEXT);
-    CREATE TABLE gsc_country_metrics (ownerId TEXT, siteUrl TEXT, date TEXT);
+    CREATE TABLE gsc_query_metrics (ownerId TEXT, siteUrl TEXT, date TEXT, query TEXT);
+    CREATE TABLE gsc_page_query_metrics (ownerId TEXT, siteUrl TEXT, date TEXT, page TEXT, pageKey TEXT, query TEXT);
+    CREATE TABLE gsc_country_metrics (ownerId TEXT, siteUrl TEXT, date TEXT, country TEXT);
     CREATE TABLE ga4_page_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, pageKey TEXT, pagePath TEXT, sessions REAL, totalUsers REAL, pageViews REAL, bounceRate REAL, eventCount REAL);
     CREATE TABLE ga4_dimension_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, dimension TEXT, dimensionValue TEXT, sessions REAL, totalUsers REAL, pageViews REAL, bounceRate REAL, eventCount REAL);
     CREATE TABLE ga4_llm_referral_metrics (ownerId TEXT, propertyId TEXT, siteUrl TEXT, date TEXT, source TEXT, sourceClass TEXT, pageKey TEXT, pagePath TEXT, sessions REAL, engagedSessions REAL, keyEvents REAL, averageSessionDuration REAL);

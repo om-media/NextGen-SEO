@@ -15,6 +15,7 @@ const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 type TableMigration = {
   table: string;
   conflictColumns: string[];
+  transformRow?: (row: Record<string, unknown>) => Record<string, unknown>;
 };
 
 const POSTGRES_MAX_PARAMETERS = 60_000;
@@ -23,25 +24,96 @@ const DEFAULT_BATCH_SIZE = Number.isFinite(configuredBatchSize) && configuredBat
   ? Math.floor(configuredBatchSize)
   : 1000;
 
+function withLegacyJobId(row: Record<string, unknown>) {
+  if (row.jobId == null) {
+    return { ...row, jobId: 'legacy' };
+  }
+  return row;
+}
+
 const migrations: TableMigration[] = [
   { table: 'projects', conflictColumns: ['id'] },
   { table: 'filters', conflictColumns: ['id'] },
   { table: 'users', conflictColumns: ['id'] },
   { table: 'sessions', conflictColumns: ['tokenHash'] },
+  { table: 'workspace_ga4_mappings', conflictColumns: ['ownerId', 'siteUrl'] },
   { table: 'annotations', conflictColumns: ['id'] },
+  { table: 'site_scopes', conflictColumns: ['id'] },
+  { table: 'site_scope_sources', conflictColumns: ['siteScopeId', 'sourceType', 'sourceKey'] },
+  { table: 'warehouse_sync_status', conflictColumns: ['ownerId', 'siteUrl'] },
+  { table: 'warehouse_jobs', conflictColumns: ['id'] },
+  { table: 'warehouse_dataset_coverage', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'dataset'] },
   { table: 'gsc_site_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date'] },
   { table: 'gsc_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
-  { table: 'gsc_page_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'page', 'query'] },
+  { table: 'gsc_country_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'country'] },
   { table: 'gsc_page_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'pageKey'] },
+  { table: 'gsc_page_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'page', 'query'] },
+  { table: 'gsc_site_monthly_metrics', conflictColumns: ['ownerId', 'siteUrl', 'monthStart'] },
+  { table: 'gsc_query_monthly_metrics', conflictColumns: ['ownerId', 'siteUrl', 'monthStart', 'query'] },
+  { table: 'gsc_country_monthly_metrics', conflictColumns: ['ownerId', 'siteUrl', 'monthStart', 'country'] },
+  { table: 'gsc_page_monthly_metrics', conflictColumns: ['ownerId', 'siteUrl', 'monthStart', 'pageKey'] },
+  { table: 'gsc_page_query_monthly_metrics', conflictColumns: ['ownerId', 'siteUrl', 'monthStart', 'pageKey', 'query'] },
+  { table: 'ga4_page_metrics', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'pageKey'] },
+  { table: 'ga4_dimension_metrics', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'dimension', 'dimensionValue'] },
+  { table: 'ga4_llm_referral_metrics', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'source', 'pageKey'] },
   { table: 'bing_query_stats', conflictColumns: ['ownerId', 'siteUrl', 'query'] },
   { table: 'bing_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
-  { table: 'warehouse_sync_status', conflictColumns: ['ownerId', 'siteUrl'] },
-  { table: 'warehouse_dataset_coverage', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'dataset'] },
   { table: 'tracked_keywords', conflictColumns: ['id'] },
   { table: 'keyword_rankings', conflictColumns: ['keywordId', 'date'] },
   { table: 'url_inspection_cache', conflictColumns: ['ownerId', 'siteUrl', 'url'] },
+  { table: 'crawl_jobs', conflictColumns: ['id'] },
+  { table: 'page_analysis_jobs', conflictColumns: ['id'] },
+  { table: 'crawl_pages', conflictColumns: ['ownerId', 'siteUrl', 'jobId', 'normalizedUrl'], transformRow: withLegacyJobId },
+  { table: 'crawl_links', conflictColumns: ['ownerId', 'siteUrl', 'jobId', 'fromUrl', 'toUrl'], transformRow: withLegacyJobId },
+  { table: 'crawl_page_text_blocks', conflictColumns: ['ownerId', 'siteUrl', 'jobId', 'pageUrl', 'blockIndex'], transformRow: withLegacyJobId },
+  { table: 'crawl_page_sentences', conflictColumns: ['ownerId', 'siteUrl', 'jobId', 'pageKey', 'paragraphIndex', 'sentenceIndex'], transformRow: withLegacyJobId },
+  { table: 'crawl_page_regions', conflictColumns: ['ownerId', 'siteUrl', 'jobId', 'pageUrl', 'regionIndex'], transformRow: withLegacyJobId },
+  { table: 'page_template_clusters', conflictColumns: ['siteScopeId', 'crawlJobId', 'templateKey'] },
+  { table: 'page_template_members', conflictColumns: ['siteScopeId', 'crawlJobId', 'templateKey', 'pageKey'] },
+  { table: 'page_function_profiles', conflictColumns: ['crawlJobId', 'pageKey'] },
+  { table: 'internal_link_embedding_cache', conflictColumns: ['provider', 'model', 'inputType', 'textHash'] },
+  { table: 'internal_link_provider_settings', conflictColumns: ['ownerId', 'provider'] },
+  { table: 'internal_link_analysis_jobs', conflictColumns: ['id'] },
+  { table: 'internal_link_opportunities', conflictColumns: ['id'] },
   { table: 'server_logs', conflictColumns: ['id'] },
 ];
+
+const SQLITE_SCHEMA_MIGRATION_SKIP_TABLES = new Set([
+  // PostgreSQL-only pgvector storage has no SQLite source table.
+  'internal_link_embedding_vectors_1024',
+]);
+
+function listSqliteSchemaTables() {
+  const databaseSource = fs.readFileSync(new URL('../server/database.ts', import.meta.url), 'utf8');
+  const tables = new Set<string>();
+  for (const match of databaseSource.matchAll(/CREATE TABLE IF NOT EXISTS ([A-Za-z0-9_]+)/g)) {
+    const table = match[1];
+    if (!SQLITE_SCHEMA_MIGRATION_SKIP_TABLES.has(table)) {
+      tables.add(table);
+    }
+  }
+  return [...tables];
+}
+
+function assertMigrationCoverage() {
+  const configuredTables = migrations.map((migration) => migration.table);
+  const duplicateConfiguredTables = configuredTables.filter((table, index) => configuredTables.indexOf(table) !== index);
+  if (duplicateConfiguredTables.length > 0) {
+    throw new Error(`Duplicate SQLite->PostgreSQL migration table entries: ${[...new Set(duplicateConfiguredTables)].join(', ')}`);
+  }
+
+  const configuredTableSet = new Set(configuredTables);
+  const schemaTables = listSqliteSchemaTables();
+  const missingTables = schemaTables.filter((table) => !configuredTableSet.has(table));
+  if (missingTables.length > 0) {
+    throw new Error(`SQLite->PostgreSQL migration list is missing schema tables: ${missingTables.join(', ')}`);
+  }
+
+  const extraTables = configuredTables.filter((table) => !schemaTables.includes(table));
+  if (extraTables.length > 0) {
+    throw new Error(`SQLite->PostgreSQL migration list references unknown schema tables: ${extraTables.join(', ')}`);
+  }
+}
 
 function requireDatabaseUrl() {
   if (!databaseUrl) {
@@ -126,7 +198,7 @@ async function migrateTable(pool: pg.Pool, sqlite: Database.Database, migration:
   try {
     await client.query('BEGIN');
     for (const row of iterator) {
-      batch.push(row);
+      batch.push(migration.transformRow ? migration.transformRow(row) : row);
       if (batch.length >= batchSize) {
         await flush();
       }
@@ -143,35 +215,53 @@ async function migrateTable(pool: pg.Pool, sqlite: Database.Database, migration:
 }
 
 async function main() {
+  if (process.argv.includes('--check-coverage')) {
+    assertMigrationCoverage();
+    console.log('Migration coverage check passed.');
+    return;
+  }
+
+  assertMigrationCoverage();
   requireDatabaseUrl();
 
   if (!fs.existsSync(sqlitePath)) {
     throw new Error(`SQLite database not found at ${sqlitePath}`);
   }
 
-  const appDb = await initializeDatabase();
-  await appDb.close?.();
-
-  const sqlite = new Database(sqlitePath, { readonly: true });
-  const pool = new Pool({
-    connectionString: databaseUrl,
-    ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
-  });
+  const previousRunDatabaseBackfills = process.env.RUN_DATABASE_BACKFILLS;
+  process.env.RUN_DATABASE_BACKFILLS = 'false';
 
   try {
-    for (const migration of migrations) {
-      await migrateTable(pool, sqlite, migration);
+    const appDb = await initializeDatabase();
+    await appDb.close?.();
+
+    const sqlite = new Database(sqlitePath, { readonly: true });
+    const pool = new Pool({
+      connectionString: databaseUrl,
+      ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+    });
+
+    try {
+      for (const migration of migrations) {
+        await migrateTable(pool, sqlite, migration);
+      }
+    } finally {
+      sqlite.close();
+      await pool.end();
+    }
+
+    const migratedDb = await initializeDatabase();
+    try {
+      await backfillLegacyBingQueryMetrics(migratedDb);
+    } finally {
+      await migratedDb.close?.();
     }
   } finally {
-    sqlite.close();
-    await pool.end();
-  }
-
-  const migratedDb = await initializeDatabase();
-  try {
-    await backfillLegacyBingQueryMetrics(migratedDb);
-  } finally {
-    await migratedDb.close?.();
+    if (previousRunDatabaseBackfills === undefined) {
+      delete process.env.RUN_DATABASE_BACKFILLS;
+    } else {
+      process.env.RUN_DATABASE_BACKFILLS = previousRunDatabaseBackfills;
+    }
   }
 }
 

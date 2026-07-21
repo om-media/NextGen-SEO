@@ -15,6 +15,8 @@ import { googleApiFetchJson } from '../services/googleAuth.js';
 import {
   CORE_RANGE_JOB_DAYS,
   GA4_DIMENSION_RANGE_JOB_DAYS,
+  GSC_COVERAGE_DATASETS,
+  GSC_COVERAGE_PROPERTY_ID,
   LLM_RANGE_JOB_DAYS,
   SEARCH_CONSOLE_HISTORY_DAYS,
   USER_REQUESTED_JOB_PRIORITY,
@@ -58,6 +60,12 @@ const GA4_WAREHOUSE_DIMENSIONS = new Set([
 ]);
 const GA4_DIMENSION_DATASET_COUNT = GA4_DIMENSION_WAREHOUSE_DIMENSIONS.size;
 const LONG_GSC_DETAIL_COVERAGE_DAY_THRESHOLD = 45;
+const GSC_DATASET_KEYS = {
+  country: 'gsc-country',
+  pageQuery: 'gsc-page-query',
+  query: 'gsc-query',
+  site: 'gsc-site',
+} as const;
 const GA4_RAW_DIMENSIONS: Record<string, string> = {
   browser: 'browser',
   city: 'city',
@@ -204,6 +212,73 @@ type Ga4DatasetCoverageRow = {
   rowCount: number | null;
   status: 'complete' | 'error' | 'partial' | 'zero';
   truncated: number | null;
+};
+
+type GscDatasetCoverageRow = Ga4DatasetCoverageRow;
+
+export const gscCoverageFromLedger = (
+  expectedDates: string[],
+  ledgerRows: GscDatasetCoverageRow[],
+  dataset: typeof GSC_DATASET_KEYS[keyof typeof GSC_DATASET_KEYS],
+  fallbackRows: Array<{ date?: string | null; rowCount?: number | null }>,
+  fallbackMinimumRowCount = 1,
+) => {
+  const rowsByDate = new Map(ledgerRows.filter((row) => row.dataset === dataset).map((row) => [row.date, row]));
+  const fallbackCountByDate = new Map(fallbackRows.map((row) => [String(row.date || ''), toCoverageNumber(row.rowCount)]));
+  const statusByDate = new Map<string, 'complete' | 'error' | 'partial' | 'zero'>();
+  const coveredRowCountByDate = new Map<string, number>();
+  let lastError: string | null = null;
+
+  for (const date of expectedDates) {
+    const ledgerRow = rowsByDate.get(date);
+    const ledgerRowCount = toCoverageNumber(ledgerRow?.rowCount);
+    const hasFallback = (fallbackCountByDate.get(date) || 0) >= fallbackMinimumRowCount;
+    if (ledgerRow && ['complete', 'partial', 'zero'].includes(ledgerRow.status)) {
+      statusByDate.set(date, ledgerRow.status);
+      coveredRowCountByDate.set(date, ledgerRowCount);
+      continue;
+    }
+    if (hasFallback) {
+      statusByDate.set(date, 'complete');
+      coveredRowCountByDate.set(date, fallbackCountByDate.get(date) || 0);
+      continue;
+    }
+    if (ledgerRow?.status === 'error') {
+      statusByDate.set(date, 'error');
+      lastError ||= ledgerRow.lastError || null;
+    }
+  }
+
+  const coveredDates = expectedDates.filter((date) => {
+    const status = statusByDate.get(date);
+    return status === 'complete' || status === 'partial' || status === 'zero';
+  });
+  const missingDates = expectedDates.filter((date) => !coveredDates.includes(date));
+  const partialDates = expectedDates.filter((date) => statusByDate.get(date) === 'partial');
+  const truncatedDates = expectedDates.filter((date) => Number(rowsByDate.get(date)?.truncated || 0) > 0);
+  const countStatus = (status: 'complete' | 'error' | 'partial' | 'zero') => (
+    expectedDates.filter((date) => statusByDate.get(date) === status).length
+  );
+
+  return {
+    allMissingDates: missingDates,
+    completeDateCount: countStatus('complete'),
+    coveredDateCount: coveredDates.length,
+    coverageRatio: expectedDates.length > 0 ? coveredDates.length / expectedDates.length : 0,
+    errorDateCount: countStatus('error'),
+    expectedDateCount: expectedDates.length,
+    firstCoveredDate: coveredDates[0] || null,
+    lastCoveredDate: coveredDates[coveredDates.length - 1] || null,
+    lastError,
+    missingDateCount: missingDates.length,
+    missingDates: missingDates.slice(0, 31),
+    partialDateCount: partialDates.length,
+    partialDates: partialDates.slice(0, 31),
+    totalRows: Array.from(coveredRowCountByDate.values()).reduce((sum, rowCount) => sum + rowCount, 0),
+    truncatedDateCount: truncatedDates.length,
+    truncatedDates: truncatedDates.slice(0, 31),
+    zeroDateCount: countStatus('zero'),
+  };
 };
 
 export const ga4CoverageFromLedger = (
@@ -1519,7 +1594,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const unavailableDates = endDate > latestAvailableDate
         ? eachIsoDate(maxIsoDate(startDate, addIsoDays(latestAvailableDate, 1)), endDate)
         : [];
-      const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, ga4DimensionRows, ga4LlmRows, ga4DatasetCoverageRows, latestCrawl, warehouseJobRows, bingStatus, bingUser] = await Promise.all([
+      const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, gscDatasetCoverageRows, ga4PageRows, ga4DimensionRows, ga4LlmRows, ga4DatasetCoverageRows, latestCrawl, warehouseJobRows, bingStatus, bingUser] = await Promise.all([
         db.all<{ date: string; rowCount: number }>(`
           SELECT date, COUNT(*) AS rowCount
           FROM gsc_site_metrics
@@ -1530,7 +1605,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         useLightweightGscDetailCoverage
           ? Promise.resolve([])
           : db.all<{ date: string; rowCount: number }>(`
-            SELECT date, COUNT(*) AS rowCount
+            SELECT date, SUM(CASE WHEN query <> '' THEN 1 ELSE 0 END) AS rowCount
             FROM gsc_query_metrics
             WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
@@ -1539,7 +1614,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         useLightweightGscDetailCoverage
           ? Promise.resolve([])
           : db.all<{ date: string; rowCount: number }>(`
-            SELECT date, COUNT(*) AS rowCount
+            SELECT date, SUM(CASE WHEN COALESCE(NULLIF(pageKey, ''), page) <> '' AND query <> '' THEN 1 ELSE 0 END) AS rowCount
             FROM gsc_page_query_metrics
             WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
@@ -1548,12 +1623,19 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         useLightweightGscDetailCoverage
           ? Promise.resolve([])
           : db.all<{ date: string; rowCount: number }>(`
-            SELECT date, COUNT(*) AS rowCount
+            SELECT date, SUM(CASE WHEN country <> '' THEN 1 ELSE 0 END) AS rowCount
             FROM gsc_country_metrics
             WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
             GROUP BY date
             ORDER BY date ASC
           `, [ownerId, siteUrl, gscEffectiveStartDate, effectiveEndDate]),
+        db.all<GscDatasetCoverageRow>(`
+          SELECT dataset, date, lastError, rowCount, status, truncated
+          FROM warehouse_dataset_coverage
+          WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+            AND dataset IN (?, ?, ?, ?)
+          ORDER BY date ASC, dataset ASC
+        `, [ownerId, GSC_COVERAGE_PROPERTY_ID, siteUrl, gscEffectiveStartDate, effectiveEndDate, ...GSC_COVERAGE_DATASETS]),
         effectivePropertyId
           ? db.all<{ date: string; rowCount: number }>(`
             SELECT date, COUNT(*) AS rowCount
@@ -1608,13 +1690,29 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       ]);
       const activeJobs = warehouseJobRows.filter((row) => ['queued', 'retrying', 'running'].includes(row.status));
       const errorJobs = warehouseJobRows.filter((row) => row.status === 'error');
-      const gscQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscQueryRows;
-      const gscPageQueryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscPageQueryRows;
-      const gscCountryCoverageRows = useLightweightGscDetailCoverage ? gscSiteRows : gscCountryRows;
-      const gscSiteDates = new Set(gscSiteRows.map((row) => row.date));
-      const gscQueryDates = new Set(gscQueryCoverageRows.map((row) => row.date));
-      const gscPageQueryDates = new Set(gscPageQueryCoverageRows.map((row) => row.date));
-      const gscCountryDates = new Set(gscCountryCoverageRows.map((row) => row.date));
+      const gscSiteCoverageWithMissing = gscCoverageFromLedger(gscExpectedDates, gscDatasetCoverageRows, GSC_DATASET_KEYS.site, gscSiteRows);
+      const gscQueryCoverageWithMissing = gscCoverageFromLedger(
+        gscExpectedDates,
+        gscDatasetCoverageRows,
+        GSC_DATASET_KEYS.query,
+        useLightweightGscDetailCoverage ? [] : gscQueryRows,
+      );
+      const gscPageQueryCoverageWithMissing = gscCoverageFromLedger(
+        gscExpectedDates,
+        gscDatasetCoverageRows,
+        GSC_DATASET_KEYS.pageQuery,
+        useLightweightGscDetailCoverage ? [] : gscPageQueryRows,
+      );
+      const gscCountryCoverageWithMissing = gscCoverageFromLedger(
+        gscExpectedDates,
+        gscDatasetCoverageRows,
+        GSC_DATASET_KEYS.country,
+        useLightweightGscDetailCoverage ? [] : gscCountryRows,
+      );
+      const { allMissingDates: gscSiteMissingDateList, ...gscSiteCoverage } = gscSiteCoverageWithMissing;
+      const { allMissingDates: gscQueryMissingDateList, ...gscQueryCoverage } = gscQueryCoverageWithMissing;
+      const { allMissingDates: gscPageQueryMissingDateList, ...gscPageQueryCoverage } = gscPageQueryCoverageWithMissing;
+      const { allMissingDates: gscCountryMissingDateList, ...gscCountryCoverage } = gscCountryCoverageWithMissing;
       const pageLedgerRows = ga4DatasetCoverageRows.filter((row) => row.dataset === 'pages');
       const dimensionLedgerRows = ga4DatasetCoverageRows.filter((row) => GA4_DIMENSION_WAREHOUSE_DIMENSIONS.has(row.dataset));
       const llmLedgerRows = ga4DatasetCoverageRows.filter((row) => row.dataset === 'llm');
@@ -1631,7 +1729,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const { allMissingDates: ga4DimensionMissingDateList, ...ga4DimensionCoverage } = dimensionCoverageWithMissing;
       const { allMissingDates: ga4LlmMissingDateList, ...ga4LlmCoverage } = llmCoverageWithMissing;
       const missingGscDates = new Set(gscExpectedDates.filter((date) => (
-        !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date)
+        gscSiteMissingDateList.includes(date)
+        || gscQueryMissingDateList.includes(date)
+        || gscPageQueryMissingDateList.includes(date)
+        || gscCountryMissingDateList.includes(date)
       )));
       const missingGa4PageDates = new Set(effectivePropertyId ? ga4PageMissingDateList : []);
       const missingGa4DimensionDates = new Set(effectivePropertyId ? ga4DimensionMissingDateList : []);
@@ -1973,10 +2074,10 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           propertyId: effectivePropertyId || null,
         },
         gsc: {
-          country: coverageFromRows(gscExpectedDates, gscCountryCoverageRows),
-          pageQuery: coverageFromRows(gscExpectedDates, gscPageQueryCoverageRows),
-          query: coverageFromRows(gscExpectedDates, gscQueryCoverageRows),
-          site: coverageFromRows(gscExpectedDates, gscSiteRows),
+          country: gscCountryCoverage,
+          pageQuery: gscPageQueryCoverage,
+          query: gscQueryCoverage,
+          site: gscSiteCoverage,
         },
         bing: {
           enabled: Boolean(bingUser?.bingApiKey),
@@ -3063,7 +3164,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           LIMIT ? OFFSET ?
         `, [...params, limit, offset]);
       } else if (kind === 'query') {
-        const where = withSearch ? 'AND LOWER(query) LIKE ?' : '';
+        const where = withSearch ? "AND query <> '' AND LOWER(query) LIKE ?" : "AND query <> ''";
         const params = withSearch ? [...baseParams, searchTerm] : baseParams;
         total = await db.get<any>(`
           SELECT COUNT(*) AS total
@@ -3078,7 +3179,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           LIMIT ? OFFSET ?
         `, [...params, limit, offset]);
       } else if (kind === 'page') {
-        const where = withSearch ? 'AND (LOWER(page) LIKE ? OR LOWER(COALESCE(NULLIF(pageKey, \'\'), page)) LIKE ?)' : '';
+        const where = withSearch
+          ? "AND COALESCE(NULLIF(pageKey, ''), page) <> '' AND (LOWER(page) LIKE ? OR LOWER(COALESCE(NULLIF(pageKey, ''), page)) LIKE ?)"
+          : "AND COALESCE(NULLIF(pageKey, ''), page) <> ''";
         const params = withSearch ? [...baseParams, searchTerm, searchTerm] : baseParams;
         total = await db.get<any>(`
           SELECT COUNT(*) AS total
@@ -3105,7 +3208,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           LIMIT ? OFFSET ?
         `, [...params, limit, offset]);
       } else {
-        const where = withSearch ? 'AND (LOWER(page) LIKE ? OR LOWER(query) LIKE ?)' : '';
+        const where = withSearch
+          ? "AND COALESCE(NULLIF(pageKey, ''), page) <> '' AND query <> '' AND (LOWER(page) LIKE ? OR LOWER(query) LIKE ?)"
+          : "AND COALESCE(NULLIF(pageKey, ''), page) <> '' AND query <> ''";
         const params = withSearch ? [...baseParams, searchTerm, searchTerm] : baseParams;
         total = await db.get<any>(`
           SELECT COUNT(*) AS total

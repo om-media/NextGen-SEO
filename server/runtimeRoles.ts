@@ -3,6 +3,7 @@ import { startBingDailyScheduler } from './services/bingWarehouse.js';
 import { startCrawlQueueWorker } from './services/crawl.js';
 import { startGscMonthlySummaryBackfillWorker } from './services/gscMonthlySummaries.js';
 import { startInternalLinkAnalysisWorker } from './services/internalLinks.js';
+import { startPageAnalysisWorker } from './services/pageAnalysis.js';
 import { startRankTrackingScheduler } from './services/rankTracking.js';
 import { startWarehouseDailyScheduler, startWarehouseJobWorker } from './services/warehouseJobs.js';
 
@@ -26,6 +27,7 @@ export function startRuntimeServices(db: AppDatabase, role: RuntimeRole) {
 
   if (role === 'all' || role === 'crawl') {
     stops.push(startCrawlQueueWorker(db));
+    stops.push(startPageAnalysisWorker(db));
   }
   if (role === 'all' || role === 'internal-links') {
     stops.push(startInternalLinkAnalysisWorker(db));

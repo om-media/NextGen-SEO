@@ -134,6 +134,25 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, siteUrl)
   );
 
+  CREATE TABLE IF NOT EXISTS site_scopes (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT,
+    canonicalDomain TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS site_scope_sources (
+    siteScopeId TEXT,
+    sourceType TEXT,
+    sourceKey TEXT,
+    siteUrl TEXT,
+    propertyId TEXT,
+    createdAt TEXT,
+    updatedAt TEXT,
+    PRIMARY KEY (siteScopeId, sourceType, sourceKey)
+  );
+
   CREATE TABLE IF NOT EXISTS annotations (
     id TEXT PRIMARY KEY,
     userId TEXT,
@@ -449,6 +468,30 @@ const commonSchemaSql = `
     canonicalMetricsVersion INTEGER DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS page_analysis_jobs (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT,
+    siteScopeId TEXT,
+    siteUrl TEXT,
+    crawlJobId TEXT,
+    analysisType TEXT,
+    status TEXT,
+    progressTotal INTEGER,
+    progressCompleted INTEGER,
+    attemptCount INTEGER DEFAULT 0,
+    maxAttempts INTEGER DEFAULT 3,
+    lockedAt TEXT,
+    nextRunAt TEXT,
+    startedAt TEXT,
+    updatedAt TEXT,
+    completedAt TEXT,
+    lastError TEXT,
+    provider TEXT,
+    modelVersion TEXT,
+    extractionVersion INTEGER,
+    metricsJson TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS crawl_pages (
     ownerId TEXT,
     siteUrl TEXT,
@@ -491,6 +534,9 @@ const commonSchemaSql = `
     toPageKey TEXT,
     anchorText TEXT,
     contextText TEXT,
+    regionRole TEXT,
+    blockType TEXT,
+    visualProminence REAL,
     discoveredAt TEXT,
     depth INTEGER,
     PRIMARY KEY (ownerId, siteUrl, jobId, fromUrl, toUrl)
@@ -503,9 +549,19 @@ const commonSchemaSql = `
     pageUrl TEXT,
     pageKey TEXT,
     blockIndex INTEGER,
+    blockKey TEXT,
     blockType TEXT,
+    regionIndex INTEGER,
+    regionRole TEXT,
+    headingChainJson TEXT,
+    domPath TEXT,
+    selector TEXT,
     text TEXT,
     textHash TEXT,
+    textDensity REAL,
+    linkDensity REAL,
+    boilerplateScore REAL,
+    extractionVersion INTEGER,
     PRIMARY KEY (ownerId, siteUrl, jobId, pageUrl, blockIndex)
   );
   CREATE TABLE IF NOT EXISTS crawl_page_sentences (
@@ -516,11 +572,101 @@ const commonSchemaSql = `
     pageKey TEXT,
     paragraphIndex INTEGER,
     sentenceIndex INTEGER,
+    blockKey TEXT,
+    blockIndex INTEGER,
+    regionIndex INTEGER,
+    regionRole TEXT,
+    blockType TEXT,
+    pageType TEXT,
+    visualProminence REAL,
     sentenceText TEXT,
     textHash TEXT,
     embeddingStatus TEXT,
     createdAt TEXT,
     PRIMARY KEY (ownerId, siteUrl, jobId, pageKey, paragraphIndex, sentenceIndex)
+  );
+
+  CREATE TABLE IF NOT EXISTS crawl_page_regions (
+    ownerId TEXT,
+    siteUrl TEXT,
+    jobId TEXT,
+    pageUrl TEXT,
+    pageKey TEXT,
+    regionIndex INTEGER,
+    parentRegionIndex INTEGER,
+    regionRole TEXT,
+    componentType TEXT,
+    blockKey TEXT,
+    blockIndex INTEGER,
+    headingChainJson TEXT,
+    domPath TEXT,
+    selector TEXT,
+    text TEXT,
+    textHash TEXT,
+    textDensity REAL,
+    linkDensity REAL,
+    boilerplateScore REAL,
+    templateFrequency REAL,
+    bboxX REAL,
+    bboxY REAL,
+    bboxWidth REAL,
+    bboxHeight REAL,
+    viewportProminence REAL,
+    visible INTEGER,
+    confidence REAL,
+    featureBreakdownJson TEXT,
+    extractionVersion INTEGER,
+    PRIMARY KEY (ownerId, siteUrl, jobId, pageUrl, regionIndex)
+  );
+
+  CREATE TABLE IF NOT EXISTS page_template_clusters (
+    ownerId TEXT,
+    siteUrl TEXT,
+    siteScopeId TEXT,
+    crawlJobId TEXT,
+    templateKey TEXT,
+    exemplarPageKey TEXT,
+    urlSkeleton TEXT,
+    domSignature TEXT,
+    regionSequenceHash TEXT,
+    memberCount INTEGER DEFAULT 0,
+    confidence REAL,
+    createdAt TEXT,
+    updatedAt TEXT,
+    PRIMARY KEY (siteScopeId, crawlJobId, templateKey)
+  );
+
+  CREATE TABLE IF NOT EXISTS page_template_members (
+    ownerId TEXT,
+    siteUrl TEXT,
+    siteScopeId TEXT,
+    crawlJobId TEXT,
+    templateKey TEXT,
+    pageKey TEXT,
+    distance REAL,
+    isExemplar INTEGER DEFAULT 0,
+    createdAt TEXT,
+    updatedAt TEXT,
+    PRIMARY KEY (siteScopeId, crawlJobId, templateKey, pageKey)
+  );
+
+  CREATE TABLE IF NOT EXISTS page_function_profiles (
+    ownerId TEXT,
+    siteUrl TEXT,
+    siteScopeId TEXT,
+    crawlJobId TEXT,
+    pageKey TEXT,
+    templateKey TEXT,
+    pageType TEXT,
+    primaryTask TEXT,
+    secondaryTasksJson TEXT,
+    centerpieceRegionIndex INTEGER,
+    confidence REAL,
+    featureBreakdownJson TEXT,
+    manualOverrideJson TEXT,
+    createdAt TEXT,
+    updatedAt TEXT,
+    PRIMARY KEY (crawlJobId, pageKey)
   );
 
   CREATE TABLE IF NOT EXISTS internal_link_embedding_cache (
@@ -594,6 +740,9 @@ const commonSchemaSql = `
     sourcePageKey TEXT,
     sourceTitle TEXT,
     sourceSentence TEXT,
+    sourceRegionRole TEXT,
+    sourceBlockType TEXT,
+    sourceVisualProminence REAL,
     paragraphIndex INTEGER,
     sentenceIndex INTEGER,
     anchorText TEXT,
@@ -660,6 +809,9 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(userId);
   CREATE INDEX IF NOT EXISTS idx_workspace_ga4_mappings_owner_property ON workspace_ga4_mappings(ownerId, propertyId);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_site_scopes_owner_domain ON site_scopes(COALESCE(ownerId, ''), canonicalDomain);
+  CREATE INDEX IF NOT EXISTS idx_site_scope_sources_lookup ON site_scope_sources(sourceType, sourceKey);
+  CREATE INDEX IF NOT EXISTS idx_site_scope_sources_site_scope ON site_scope_sources(siteScopeId);
   CREATE INDEX IF NOT EXISTS idx_gsc_site_owner_site_date ON gsc_site_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_query_owner_site_date ON gsc_query_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_gsc_query_owner_site_date_query ON gsc_query_metrics(ownerId, siteUrl, date, query);
@@ -705,6 +857,10 @@ const indexSql = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouse_jobs_one_running_per_site ON warehouse_jobs(ownerId, siteUrl) WHERE status = 'running';
   CREATE INDEX IF NOT EXISTS idx_crawl_jobs_owner_site_status ON crawl_jobs(ownerId, siteUrl, status, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_crawl_jobs_queue ON crawl_jobs(status, nextRunAt, updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_page_analysis_jobs_owner_site_status ON page_analysis_jobs(ownerId, siteUrl, status, updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_page_analysis_jobs_queue ON page_analysis_jobs(status, nextRunAt, updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_page_analysis_jobs_scope_type ON page_analysis_jobs(siteScopeId, analysisType, updatedAt);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_page_analysis_jobs_active_unique ON page_analysis_jobs(ownerId, siteScopeId, analysisType) WHERE status IN ('queued', 'running');
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_job ON crawl_pages(ownerId, siteUrl, jobId);
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_job_crawled ON crawl_pages(ownerId, siteUrl, jobId, crawledAt, depth, url);
   CREATE INDEX IF NOT EXISTS idx_crawl_pages_owner_site_pagekey ON crawl_pages(ownerId, siteUrl, pageKey);
@@ -713,16 +869,32 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_tourl ON crawl_links(ownerId, siteUrl, jobId, toUrl);
   CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_keys ON crawl_links(ownerId, siteUrl, jobId, fromPageKey, toPageKey);
   CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_to_pagekey ON crawl_links(ownerId, siteUrl, jobId, toPageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_links_owner_site_job_source_region ON crawl_links(ownerId, siteUrl, jobId, fromPageKey, regionRole, blockType);
   CREATE INDEX IF NOT EXISTS idx_crawl_text_blocks_owner_site_job_key ON crawl_page_text_blocks(ownerId, siteUrl, jobId, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_text_blocks_owner_site_job_blockkey ON crawl_page_text_blocks(ownerId, siteUrl, jobId, pageKey, blockKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_text_blocks_owner_site_job_region ON crawl_page_text_blocks(ownerId, siteUrl, jobId, pageKey, regionIndex);
   CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_key ON crawl_page_sentences(ownerId, siteUrl, jobId, pageKey);
   CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_hash ON crawl_page_sentences(ownerId, siteUrl, jobId, textHash);
   CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_quality_hash ON crawl_page_sentences(ownerId, siteUrl, jobId, extractionVersion, linkDensity, boilerplateScore, textHash);
+  CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_region ON crawl_page_sentences(ownerId, siteUrl, jobId, pageKey, regionIndex, blockIndex);
+  CREATE INDEX IF NOT EXISTS idx_crawl_sentences_owner_site_job_blockkey ON crawl_page_sentences(ownerId, siteUrl, jobId, pageKey, blockKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_regions_owner_site_job_page ON crawl_page_regions(ownerId, siteUrl, jobId, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_crawl_regions_owner_site_job_role ON crawl_page_regions(ownerId, siteUrl, jobId, regionRole);
+  CREATE INDEX IF NOT EXISTS idx_crawl_regions_owner_site_job_hash ON crawl_page_regions(ownerId, siteUrl, jobId, textHash);
+  CREATE INDEX IF NOT EXISTS idx_crawl_regions_owner_site_job_blockkey ON crawl_page_regions(ownerId, siteUrl, jobId, pageKey, blockKey);
+  CREATE INDEX IF NOT EXISTS idx_page_template_clusters_scope_job_confidence ON page_template_clusters(siteScopeId, crawlJobId, confidence);
+  CREATE INDEX IF NOT EXISTS idx_page_template_clusters_scope_job_exemplar ON page_template_clusters(siteScopeId, crawlJobId, exemplarPageKey);
+  CREATE INDEX IF NOT EXISTS idx_page_template_members_scope_job_template ON page_template_members(siteScopeId, crawlJobId, templateKey);
+  CREATE INDEX IF NOT EXISTS idx_page_template_members_scope_job_page ON page_template_members(siteScopeId, crawlJobId, pageKey);
+  CREATE INDEX IF NOT EXISTS idx_page_function_profiles_scope_job_type ON page_function_profiles(siteScopeId, crawlJobId, pageType);
+  CREATE INDEX IF NOT EXISTS idx_page_function_profiles_scope_job_template ON page_function_profiles(siteScopeId, crawlJobId, templateKey);
   CREATE INDEX IF NOT EXISTS idx_internal_link_embedding_cache_model ON internal_link_embedding_cache(provider, model, inputType, lastUsedAt);
   CREATE INDEX IF NOT EXISTS idx_internal_link_provider_settings_owner_enabled ON internal_link_provider_settings(ownerId, enabled, provider);
   CREATE INDEX IF NOT EXISTS idx_internal_link_jobs_owner_site_status ON internal_link_analysis_jobs(ownerId, siteUrl, status, updatedAt);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_link_jobs_active_unique ON internal_link_analysis_jobs(ownerId, siteUrl) WHERE status IN ('queued', 'running');
   CREATE INDEX IF NOT EXISTS idx_internal_link_opps_owner_site_status ON internal_link_opportunities(ownerId, siteUrl, status, stale, priorityScore);
   CREATE INDEX IF NOT EXISTS idx_internal_link_opps_job ON internal_link_opportunities(jobId, priorityScore);
+  CREATE INDEX IF NOT EXISTS idx_internal_link_opps_source_layout ON internal_link_opportunities(ownerId, siteUrl, crawlJobId, sourcePageKey, sourceRegionRole, sourceBlockType);
 `;
 
 const requeueDuplicateRunningWarehouseJobsSql = `
@@ -750,11 +922,271 @@ const requeueDuplicateRunningWarehouseJobsSql = `
   );
 `;
 
+type SiteScopeRow = {
+  id: string;
+  ownerId: string | null;
+  canonicalDomain: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+type SiteScopeDuplicateGroup = {
+  ownerScopeKey: string;
+  canonicalDomain: string;
+};
+
+type SqlStatement = {
+  sql: string;
+  params?: unknown[];
+};
+
+function siteScopeSortValue(value: string | null) {
+  const parsed = Date.parse(value || '');
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function chooseCanonicalSiteScope(rows: SiteScopeRow[]) {
+  return [...rows].sort((left, right) => (
+    siteScopeSortValue(left.createdAt) - siteScopeSortValue(right.createdAt)
+    || siteScopeSortValue(left.updatedAt) - siteScopeSortValue(right.updatedAt)
+    || left.id.localeCompare(right.id)
+  ))[0];
+}
+
+function normalizedSiteScopeOwnerSql() {
+  return "COALESCE(ownerId, '')";
+}
+
+function normalizeSiteScopeOwnerKey(value: string | null) {
+  return value ?? '';
+}
+
+function duplicateSiteScopeWhereClause() {
+  return `${normalizedSiteScopeOwnerSql()} = ?`;
+}
+
+function siteScopeMergeStatements(keeperId: string, loserId: string): SqlStatement[] {
+  const mergeError = 'Merged into canonical site scope during schema repair.';
+  return [
+    {
+      sql: `
+        INSERT INTO site_scope_sources (siteScopeId, sourceType, sourceKey, siteUrl, propertyId, createdAt, updatedAt)
+        SELECT ?, sourceType, sourceKey, siteUrl, propertyId, createdAt, updatedAt
+        FROM site_scope_sources
+        WHERE siteScopeId = ?
+        ON CONFLICT (siteScopeId, sourceType, sourceKey) DO UPDATE SET
+          siteUrl = COALESCE(site_scope_sources.siteUrl, excluded.siteUrl),
+          propertyId = COALESCE(site_scope_sources.propertyId, excluded.propertyId),
+          createdAt = COALESCE(site_scope_sources.createdAt, excluded.createdAt),
+          updatedAt = COALESCE(excluded.updatedAt, site_scope_sources.updatedAt)
+      `,
+      params: [keeperId, loserId],
+    },
+    {
+      sql: `
+        INSERT INTO page_template_clusters (
+          ownerId, siteUrl, siteScopeId, crawlJobId, templateKey, exemplarPageKey, urlSkeleton,
+          domSignature, regionSequenceHash, memberCount, confidence, createdAt, updatedAt
+        )
+        SELECT
+          ownerId, siteUrl, ?, crawlJobId, templateKey, exemplarPageKey, urlSkeleton,
+          domSignature, regionSequenceHash, memberCount, confidence, createdAt, updatedAt
+        FROM page_template_clusters
+        WHERE siteScopeId = ?
+        ON CONFLICT (siteScopeId, crawlJobId, templateKey) DO UPDATE SET
+          ownerId = COALESCE(page_template_clusters.ownerId, excluded.ownerId),
+          siteUrl = COALESCE(page_template_clusters.siteUrl, excluded.siteUrl),
+          exemplarPageKey = COALESCE(page_template_clusters.exemplarPageKey, excluded.exemplarPageKey),
+          urlSkeleton = COALESCE(page_template_clusters.urlSkeleton, excluded.urlSkeleton),
+          domSignature = COALESCE(page_template_clusters.domSignature, excluded.domSignature),
+          regionSequenceHash = COALESCE(page_template_clusters.regionSequenceHash, excluded.regionSequenceHash),
+          memberCount = CASE
+            WHEN COALESCE(excluded.memberCount, 0) > COALESCE(page_template_clusters.memberCount, 0)
+              THEN excluded.memberCount
+            ELSE page_template_clusters.memberCount
+          END,
+          confidence = CASE
+            WHEN excluded.confidence IS NULL THEN page_template_clusters.confidence
+            WHEN page_template_clusters.confidence IS NULL THEN excluded.confidence
+            WHEN excluded.confidence > page_template_clusters.confidence THEN excluded.confidence
+            ELSE page_template_clusters.confidence
+          END,
+          createdAt = COALESCE(page_template_clusters.createdAt, excluded.createdAt),
+          updatedAt = COALESCE(excluded.updatedAt, page_template_clusters.updatedAt)
+      `,
+      params: [keeperId, loserId],
+    },
+    {
+      sql: `
+        INSERT INTO page_template_members (
+          ownerId, siteUrl, siteScopeId, crawlJobId, templateKey, pageKey,
+          distance, isExemplar, createdAt, updatedAt
+        )
+        SELECT
+          ownerId, siteUrl, ?, crawlJobId, templateKey, pageKey,
+          distance, isExemplar, createdAt, updatedAt
+        FROM page_template_members
+        WHERE siteScopeId = ?
+        ON CONFLICT (siteScopeId, crawlJobId, templateKey, pageKey) DO UPDATE SET
+          ownerId = COALESCE(page_template_members.ownerId, excluded.ownerId),
+          siteUrl = COALESCE(page_template_members.siteUrl, excluded.siteUrl),
+          distance = CASE
+            WHEN excluded.distance IS NULL THEN page_template_members.distance
+            WHEN page_template_members.distance IS NULL THEN excluded.distance
+            WHEN excluded.distance < page_template_members.distance THEN excluded.distance
+            ELSE page_template_members.distance
+          END,
+          isExemplar = CASE
+            WHEN COALESCE(excluded.isExemplar, 0) > COALESCE(page_template_members.isExemplar, 0)
+              THEN excluded.isExemplar
+            ELSE page_template_members.isExemplar
+          END,
+          createdAt = COALESCE(page_template_members.createdAt, excluded.createdAt),
+          updatedAt = COALESCE(excluded.updatedAt, page_template_members.updatedAt)
+      `,
+      params: [keeperId, loserId],
+    },
+    {
+      sql: `
+        UPDATE page_analysis_jobs
+        SET status = 'canceled',
+            lastError = COALESCE(lastError, ?)
+        WHERE siteScopeId = ?
+          AND status IN ('queued', 'running')
+          AND EXISTS (
+            SELECT 1
+            FROM page_analysis_jobs existing
+            WHERE existing.ownerId = page_analysis_jobs.ownerId
+              AND existing.siteScopeId = ?
+              AND existing.analysisType = page_analysis_jobs.analysisType
+              AND existing.status IN ('queued', 'running')
+              AND existing.id <> page_analysis_jobs.id
+          )
+      `,
+      params: [mergeError, loserId, keeperId],
+    },
+    {
+      sql: 'UPDATE page_analysis_jobs SET siteScopeId = ? WHERE siteScopeId = ?',
+      params: [keeperId, loserId],
+    },
+    {
+      sql: 'UPDATE page_function_profiles SET siteScopeId = ? WHERE siteScopeId = ?',
+      params: [keeperId, loserId],
+    },
+    {
+      sql: 'DELETE FROM page_template_members WHERE siteScopeId = ?',
+      params: [loserId],
+    },
+    {
+      sql: 'DELETE FROM page_template_clusters WHERE siteScopeId = ?',
+      params: [loserId],
+    },
+    {
+      sql: 'DELETE FROM site_scope_sources WHERE siteScopeId = ?',
+      params: [loserId],
+    },
+    {
+      sql: `
+        UPDATE page_template_clusters
+        SET memberCount = COALESCE((
+          SELECT COUNT(*)
+          FROM page_template_members members
+          WHERE members.siteScopeId = page_template_clusters.siteScopeId
+            AND members.crawlJobId = page_template_clusters.crawlJobId
+            AND members.templateKey = page_template_clusters.templateKey
+        ), 0)
+        WHERE siteScopeId = ?
+      `,
+      params: [keeperId],
+    },
+    {
+      sql: 'DELETE FROM site_scopes WHERE id = ?',
+      params: [loserId],
+    },
+  ];
+}
+
+function sqliteGet<T>(db: Database.Database, sql: string, params: unknown[] = []) {
+  return db.prepare(sql).get(...params) as T | undefined;
+}
+
+function sqliteAll<T>(db: Database.Database, sql: string, params: unknown[] = []) {
+  return db.prepare(sql).all(...params) as T[];
+}
+
+function sqliteRun(db: Database.Database, sql: string, params: unknown[] = []) {
+  db.prepare(sql).run(...params);
+}
+
+function consolidateDuplicateSiteScopesSqlite(db: Database.Database) {
+  const duplicateGroups = sqliteAll<SiteScopeDuplicateGroup>(db, `
+    SELECT ${normalizedSiteScopeOwnerSql()} AS ownerScopeKey, canonicalDomain
+    FROM site_scopes
+    WHERE canonicalDomain IS NOT NULL AND canonicalDomain != ''
+    GROUP BY ${normalizedSiteScopeOwnerSql()}, canonicalDomain
+    HAVING COUNT(*) > 1
+  `);
+  if (!duplicateGroups.length) return;
+
+  const mergeTransaction = db.transaction(() => {
+    for (const group of duplicateGroups) {
+      const scopes = sqliteAll<SiteScopeRow>(db, `
+        SELECT id, ownerId, canonicalDomain, createdAt, updatedAt
+        FROM site_scopes
+        WHERE canonicalDomain = ? AND ${duplicateSiteScopeWhereClause()}
+      `, [group.canonicalDomain, normalizeSiteScopeOwnerKey(group.ownerScopeKey)]);
+      if (scopes.length < 2) continue;
+
+      const keeper = chooseCanonicalSiteScope(scopes);
+      for (const scope of scopes) {
+        if (scope.id === keeper.id) continue;
+        for (const statement of siteScopeMergeStatements(keeper.id, scope.id)) {
+          sqliteRun(db, statement.sql, statement.params || []);
+        }
+      }
+    }
+  });
+
+  mergeTransaction();
+}
+
+async function consolidateDuplicateSiteScopesPostgres(db: AppDatabase) {
+  const duplicateGroups = await db.all<SiteScopeDuplicateGroup>(`
+    SELECT ${normalizedSiteScopeOwnerSql()} AS ownerScopeKey, canonicalDomain
+    FROM site_scopes
+    WHERE canonicalDomain IS NOT NULL AND canonicalDomain != ''
+    GROUP BY ${normalizedSiteScopeOwnerSql()}, canonicalDomain
+    HAVING COUNT(*) > 1
+  `);
+  if (!duplicateGroups.length) return;
+
+  const mergeTransaction = db.transaction(async () => {
+    for (const group of duplicateGroups) {
+      const scopes = await db.all<SiteScopeRow>(`
+        SELECT id, ownerId, canonicalDomain, createdAt, updatedAt
+        FROM site_scopes
+        WHERE canonicalDomain = ? AND ${duplicateSiteScopeWhereClause()}
+      `, [group.canonicalDomain, normalizeSiteScopeOwnerKey(group.ownerScopeKey)]);
+      if (scopes.length < 2) continue;
+
+      const keeper = chooseCanonicalSiteScope(scopes);
+      for (const scope of scopes) {
+        if (scope.id === keeper.id) continue;
+        for (const statement of siteScopeMergeStatements(keeper.id, scope.id)) {
+          await db.run(statement.sql, statement.params || []);
+        }
+      }
+    }
+  });
+
+  await mergeTransaction();
+}
 const camelCaseColumns: Record<string, string> = {
   ownerid: 'ownerId',
   createdat: 'createdAt',
   projectid: 'projectId',
   userid: 'userId',
+  blockkey: 'blockKey',
   siteurl: 'siteUrl',
   tokenhash: 'tokenHash',
   expiresat: 'expiresAt',
@@ -804,9 +1236,16 @@ const camelCaseColumns: Record<string, string> = {
   totalrowcount: 'totalRowCount',
   querycount: 'queryCount',
   propertyid: 'propertyId',
+  canonicaldomain: 'canonicalDomain',
+  sitescopeid: 'siteScopeId',
+  sourcetype: 'sourceType',
+  sourcekey: 'sourceKey',
   pagepath: 'pagePath',
   pagekey: 'pageKey',
+  templatekey: 'templateKey',
+  exemplarpagekey: 'exemplarPageKey',
   jobid: 'jobId',
+  analysistype: 'analysisType',
   starturl: 'startUrl',
   sitemapurl: 'sitemapUrl',
   discoveredcount: 'discoveredCount',
@@ -849,10 +1288,19 @@ const camelCaseColumns: Record<string, string> = {
   frompagekey: 'fromPageKey',
   topagekey: 'toPageKey',
   contexttext: 'contextText',
+  regionrole: 'regionRole',
   pageurl: 'pageUrl',
   blockindex: 'blockIndex',
+  parentregionindex: 'parentRegionIndex',
+  regionindex: 'regionIndex',
   blocktype: 'blockType',
+  componenttype: 'componentType',
+  headingchainjson: 'headingChainJson',
+  dompath: 'domPath',
+  selector: 'selector',
   texthash: 'textHash',
+  textdensity: 'textDensity',
+  templatefrequency: 'templateFrequency',
   embeddingstatus: 'embeddingStatus',
   apikeyencrypted: 'apiKeyEncrypted',
   baseurl: 'baseUrl',
@@ -868,6 +1316,15 @@ const camelCaseColumns: Record<string, string> = {
   linkdensity: 'linkDensity',
   boilerplatescore: 'boilerplateScore',
   extractionversion: 'extractionVersion',
+  visualprominence: 'visualProminence',
+  bboxx: 'bboxX',
+  bboxy: 'bboxY',
+  bboxwidth: 'bboxWidth',
+  bboxheight: 'bboxHeight',
+  viewportprominence: 'viewportProminence',
+  visible: 'visible',
+  confidence: 'confidence',
+  featurebreakdownjson: 'featureBreakdownJson',
   crawljobid: 'crawlJobId',
   progresscompleted: 'progressCompleted',
   progresstotal: 'progressTotal',
@@ -876,6 +1333,17 @@ const camelCaseColumns: Record<string, string> = {
   reviewprovider: 'reviewProvider',
   reviewmodel: 'reviewModel',
   maxpages: 'maxPages',
+  membercount: 'memberCount',
+  distance: 'distance',
+  isexemplar: 'isExemplar',
+  pagetype: 'pageType',
+  primarytask: 'primaryTask',
+  secondarytasksjson: 'secondaryTasksJson',
+  centerpieceregionindex: 'centerpieceRegionIndex',
+  manualoverridejson: 'manualOverrideJson',
+  urlskeleton: 'urlSkeleton',
+  domsignature: 'domSignature',
+  regionsequencehash: 'regionSequenceHash',
   maxsentencesperpage: 'maxSentencesPerPage',
   maxrecommendations: 'maxRecommendations',
   estimatedlocalunits: 'estimatedLocalUnits',
@@ -890,6 +1358,9 @@ const camelCaseColumns: Record<string, string> = {
   sourcepagekey: 'sourcePageKey',
   sourcetitle: 'sourceTitle',
   sourcesentence: 'sourceSentence',
+  sourceregionrole: 'sourceRegionRole',
+  sourceblocktype: 'sourceBlockType',
+  sourcevisualprominence: 'sourceVisualProminence',
   anchortext: 'anchorText',
   anchorstart: 'anchorStart',
   anchorend: 'anchorEnd',
@@ -1662,17 +2133,43 @@ function applySqliteMigrations(db: Database.Database) {
     'ALTER TABLE crawl_links ADD COLUMN ownerId TEXT',
     'ALTER TABLE crawl_links ADD COLUMN anchorText TEXT',
     'ALTER TABLE crawl_links ADD COLUMN contextText TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN regionRole TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN blockType TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN visualProminence REAL',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN blockKey TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN regionIndex INTEGER',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN regionRole TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN headingChainJson TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN domPath TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN selector TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN textDensity REAL',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN linkDensity REAL',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN boilerplateScore REAL',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN extractionVersion INTEGER',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN blockKey TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN blockIndex INTEGER',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN regionIndex INTEGER',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN regionRole TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN blockType TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN pageType TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN visualProminence REAL',
     'ALTER TABLE crawl_page_sentences ADD COLUMN headingText TEXT',
     'ALTER TABLE crawl_page_sentences ADD COLUMN linkDensity REAL',
     'ALTER TABLE crawl_page_sentences ADD COLUMN boilerplateScore REAL',
     'ALTER TABLE crawl_page_sentences ADD COLUMN extractionVersion INTEGER',
+    'ALTER TABLE crawl_page_regions ADD COLUMN blockKey TEXT',
     'ALTER TABLE internal_link_analysis_jobs ADD COLUMN lockedAt TEXT',
+    'ALTER TABLE internal_link_opportunities ADD COLUMN sourceRegionRole TEXT',
+    'ALTER TABLE internal_link_opportunities ADD COLUMN sourceBlockType TEXT',
+    'ALTER TABLE internal_link_opportunities ADD COLUMN sourceVisualProminence REAL',
     'ALTER TABLE internal_link_opportunities ADD COLUMN scoreBreakdown TEXT',
   ]) {
     runOptionalSqliteAlter(db, statement);
   }
 
   migrateSqliteGa4SiteScopedKeys(db);
+  consolidateDuplicateSiteScopesSqlite(db);
+  db.exec('DROP INDEX IF EXISTS idx_site_scopes_owner_domain');
   db.exec(requeueDuplicateRunningWarehouseJobsSql);
   db.exec(indexSql);
 }
@@ -1763,11 +2260,35 @@ async function applyPostgresMigrations(db: AppDatabase) {
     'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS ownerId TEXT',
     'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS anchorText TEXT',
     'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS contextText TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS regionRole TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS blockType TEXT',
+    'ALTER TABLE crawl_links ADD COLUMN IF NOT EXISTS visualProminence REAL',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS blockKey TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS regionIndex INTEGER',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS regionRole TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS headingChainJson TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS domPath TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS selector TEXT',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS textDensity REAL',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS linkDensity REAL',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS boilerplateScore REAL',
+    'ALTER TABLE crawl_page_text_blocks ADD COLUMN IF NOT EXISTS extractionVersion INTEGER',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS blockKey TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS blockIndex INTEGER',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS regionIndex INTEGER',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS regionRole TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS blockType TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS pageType TEXT',
+    'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS visualProminence REAL',
     'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS headingText TEXT',
     'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS linkDensity REAL',
     'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS boilerplateScore REAL',
     'ALTER TABLE crawl_page_sentences ADD COLUMN IF NOT EXISTS extractionVersion INTEGER',
+    'ALTER TABLE crawl_page_regions ADD COLUMN IF NOT EXISTS blockKey TEXT',
     'ALTER TABLE internal_link_analysis_jobs ADD COLUMN IF NOT EXISTS lockedAt TEXT',
+    'ALTER TABLE internal_link_opportunities ADD COLUMN IF NOT EXISTS sourceRegionRole TEXT',
+    'ALTER TABLE internal_link_opportunities ADD COLUMN IF NOT EXISTS sourceBlockType TEXT',
+    'ALTER TABLE internal_link_opportunities ADD COLUMN IF NOT EXISTS sourceVisualProminence REAL',
     'ALTER TABLE internal_link_opportunities ADD COLUMN IF NOT EXISTS scoreBreakdown TEXT',
   ]) {
     await db.exec(statement);
@@ -1808,6 +2329,8 @@ async function applyPostgresMigrations(db: AppDatabase) {
     ALTER TABLE ga4_llm_referral_metrics ADD PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey);
   `);
 
+  await consolidateDuplicateSiteScopesPostgres(db);
+  await db.exec('DROP INDEX IF EXISTS idx_site_scopes_owner_domain');
   await db.exec(requeueDuplicateRunningWarehouseJobsSql);
   await db.exec(indexSql);
 }

@@ -6,6 +6,7 @@ import { registerAiRoutes } from './routes/ai.js';
 import { registerLocalAuthRoutes } from './routes/auth.js';
 import { registerCrawlRoutes } from './routes/crawl.js';
 import { registerBlendedRoutes } from './routes/blended.js';
+import { registerContentAuthorityRoutes } from './routes/contentAuthority.js';
 import { registerIndexingRoutes } from './routes/indexing.js';
 import { registerInternalLinkRoutes } from './routes/internalLinks.js';
 import { registerLogRoutes } from './routes/logs.js';
@@ -97,6 +98,7 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
   registerLogRoutes(app, db, upload);
   registerWarehouseRoutes(app, db);
   registerBlendedRoutes(app, db);
+  registerContentAuthorityRoutes(app, db);
   registerReconciliationRoutes(app, db);
   registerRankTrackingRoutes(app, db);
   registerIndexingRoutes(app, db, syncJobs, getSyncJobKey);

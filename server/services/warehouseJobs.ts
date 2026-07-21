@@ -180,6 +180,22 @@ const groupRowsByDate = (rows: any[]) => {
   return grouped;
 };
 
+export const GSC_COVERAGE_PROPERTY_ID = '__gsc__';
+export const GSC_COVERAGE_DATASETS = ['gsc-site', 'gsc-query', 'gsc-page-query', 'gsc-country'] as const;
+type GscCoverageDataset = typeof GSC_COVERAGE_DATASETS[number];
+type GscDatasetCoverageStatus = 'complete' | 'error' | 'partial' | 'zero';
+type GscFetchResult = {
+  rows: any[];
+  truncated: boolean;
+};
+
+const GSC_DATASET_DIMENSIONS: Record<GscCoverageDataset, string[]> = {
+  'gsc-country': ['date', 'country'],
+  'gsc-page-query': ['date', 'page', 'query'],
+  'gsc-query': ['date', 'query'],
+  'gsc-site': ['date'],
+};
+
 export function recentStableWarehouseDates(days = INITIAL_BACKFILL_DAYS) {
   const end = addDays(new Date(), -2);
   const dates: string[] = [];
@@ -301,9 +317,104 @@ async function markGa4DatasetCoverageError(db: AppDatabase, job: WarehouseJob, s
   }
 }
 
-async function fetchGscRowsForRange(db: AppDatabase, ownerId: string, siteUrl: string, startDate: string, endDate: string, dimensions: string[]) {
+export async function upsertGscDatasetCoverage(db: AppDatabase, input: {
+  dataset: GscCoverageDataset;
+  date: string;
+  job: Pick<WarehouseJob, 'id' | 'ownerId' | 'siteUrl'>;
+  rowCount: number;
+  status: GscDatasetCoverageStatus;
+  truncated?: boolean;
+}) {
+  const timestamp = nowIso();
+  await db.run(
+    `INSERT INTO warehouse_dataset_coverage
+       (ownerId, propertyId, siteUrl, date, dataset, status, rowCount, truncated, jobId, lastError, completedAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+     ON CONFLICT(ownerId, propertyId, siteUrl, date, dataset) DO UPDATE SET
+       status=excluded.status,
+       rowCount=excluded.rowCount,
+       truncated=excluded.truncated,
+       jobId=excluded.jobId,
+       lastError=NULL,
+       completedAt=excluded.completedAt,
+       updatedAt=excluded.updatedAt`,
+    [
+      input.job.ownerId,
+      GSC_COVERAGE_PROPERTY_ID,
+      input.job.siteUrl,
+      input.date,
+      input.dataset,
+      input.status,
+      input.rowCount,
+      input.truncated ? 1 : 0,
+      input.job.id,
+      timestamp,
+      timestamp,
+    ],
+  );
+}
+
+export async function persistGscRangeCoverage(db: AppDatabase, input: {
+  endDate: string;
+  job: Pick<WarehouseJob, 'id' | 'ownerId' | 'siteUrl'>;
+  rangeCoverage: Record<GscCoverageDataset, { rowCountsByDate: Map<string, number>; truncated: boolean }>;
+  startDate: string;
+}) {
+  for (const date of eachIsoDate(input.startDate, input.endDate)) {
+    for (const dataset of GSC_COVERAGE_DATASETS) {
+      const coverage = input.rangeCoverage[dataset];
+      const rowCount = coverage?.rowCountsByDate.get(date) || 0;
+      await upsertGscDatasetCoverage(db, {
+        dataset,
+        date,
+        job: input.job,
+        rowCount,
+        status: coverage?.truncated ? 'partial' : rowCount > 0 ? 'complete' : 'zero',
+        truncated: Boolean(coverage?.truncated),
+      });
+    }
+  }
+}
+
+export async function markGscDatasetCoverageError(
+  db: AppDatabase,
+  job: Pick<WarehouseJob, 'id' | 'ownerId' | 'siteUrl' | 'targetDate' | 'targetStartDate'>,
+  error: unknown,
+) {
+  const timestamp = nowIso();
+  const message = error instanceof Error ? error.message : 'Warehouse sync failed';
+  for (const date of eachIsoDate(job.targetStartDate || job.targetDate, job.targetDate)) {
+    for (const dataset of GSC_COVERAGE_DATASETS) {
+      await db.run(
+        `INSERT INTO warehouse_dataset_coverage
+           (ownerId, propertyId, siteUrl, date, dataset, status, rowCount, truncated, jobId, lastError, completedAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, 'error', 0, 0, ?, ?, NULL, ?)
+         ON CONFLICT(ownerId, propertyId, siteUrl, date, dataset) DO UPDATE SET
+           status=excluded.status,
+           rowCount=excluded.rowCount,
+           truncated=excluded.truncated,
+           jobId=excluded.jobId,
+           lastError=excluded.lastError,
+           completedAt=NULL,
+           updatedAt=excluded.updatedAt
+         WHERE warehouse_dataset_coverage.status NOT IN ('complete', 'zero', 'partial')`,
+        [job.ownerId, GSC_COVERAGE_PROPERTY_ID, job.siteUrl, date, dataset, job.id, message, timestamp],
+      );
+    }
+  }
+}
+
+async function fetchGscRowsForRange(
+  db: AppDatabase,
+  ownerId: string,
+  siteUrl: string,
+  startDate: string,
+  endDate: string,
+  dimensions: string[],
+): Promise<GscFetchResult> {
   const rows = [];
   let startRow = 0;
+  let truncated = false;
 
   for (let page = 0; page < GSC_MAX_PAGES_PER_DATASET; page += 1) {
     const data = await googleApiFetchJson(
@@ -327,10 +438,11 @@ async function fetchGscRowsForRange(db: AppDatabase, ownerId: string, siteUrl: s
     if (batch.length < GSC_ROW_LIMIT) {
       break;
     }
+    if (page === GSC_MAX_PAGES_PER_DATASET - 1) truncated = true;
     startRow += GSC_ROW_LIMIT;
   }
 
-  return rows;
+  return { rows, truncated };
 }
 
 async function fetchGscRows(db: AppDatabase, ownerId: string, siteUrl: string, date: string, dimensions: string[]) {
@@ -349,13 +461,17 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
   const insertPage = prepareWarehouseStatement(db, insertPageSql);
   const insertCountry = prepareWarehouseStatement(db, insertCountrySql);
   const apiStartedAt = Date.now();
-  const [siteRows, queryRows, pageQueryRows, countryRows] = await Promise.all([
-    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date']),
-    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date', 'query']),
-    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date', 'page', 'query']),
-    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, ['date', 'country']),
+  const [siteResult, queryResult, pageQueryResult, countryResult] = await Promise.all([
+    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, GSC_DATASET_DIMENSIONS['gsc-site']),
+    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, GSC_DATASET_DIMENSIONS['gsc-query']),
+    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, GSC_DATASET_DIMENSIONS['gsc-page-query']),
+    fetchGscRowsForRange(db, job.ownerId, job.siteUrl, startDate, endDate, GSC_DATASET_DIMENSIONS['gsc-country']),
   ]);
   const apiMs = elapsedMs(apiStartedAt);
+  const siteRows = siteResult.rows;
+  const queryRows = queryResult.rows;
+  const pageQueryRows = pageQueryResult.rows;
+  const countryRows = countryResult.rows;
   const siteRowsByDate = groupRowsByDate(siteRows);
   const queryRowsByDate = groupRowsByDate(queryRows);
   const pageQueryRowsByDate = groupRowsByDate(pageQueryRows);
@@ -466,6 +582,29 @@ async function syncGscRange(db: AppDatabase, job: WarehouseJob, startDate: strin
     })();
   }
   const writeMs = elapsedMs(writeStartedAt);
+  await persistGscRangeCoverage(db, {
+    endDate,
+    job,
+    rangeCoverage: {
+      'gsc-country': {
+        rowCountsByDate: new Map(Array.from(countryRowsByDate.entries()).map(([date, rows]) => [date, rows.length])),
+        truncated: countryResult.truncated,
+      },
+      'gsc-page-query': {
+        rowCountsByDate: new Map(Array.from(pageQueryRowsByDate.entries()).map(([date, rows]) => [date, rows.length])),
+        truncated: pageQueryResult.truncated,
+      },
+      'gsc-query': {
+        rowCountsByDate: new Map(Array.from(queryRowsByDate.entries()).map(([date, rows]) => [date, rows.length])),
+        truncated: queryResult.truncated,
+      },
+      'gsc-site': {
+        rowCountsByDate: new Map(Array.from(siteRowsByDate.entries()).map(([date, rows]) => [date, rows.length])),
+        truncated: siteResult.truncated,
+      },
+    },
+    startDate,
+  });
   await refreshGscMonthlySummariesForRange(db, {
     endDate,
     ownerId: job.ownerId,
@@ -985,7 +1124,13 @@ async function hasRequiredCoreWarehouseRows(
   if (expectedDays === 0) return false;
   const propertyId = effectivePropertyId || job.propertyId || '';
 
-  const [siteRows, queryRows, pageQueryRows, pageRows, ga4Rows] = await Promise.all([
+  const [gscCoverageRows, siteRows, queryRows, pageQueryRows, pageSummaryRows, ga4Rows] = await Promise.all([
+    db.all<{ dataset: GscCoverageDataset; date: string; status: GscDatasetCoverageStatus }>(`
+      SELECT dataset, date, status
+      FROM warehouse_dataset_coverage
+      WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+        AND dataset IN (?, ?, ?, ?)
+    `, [job.ownerId, GSC_COVERAGE_PROPERTY_ID, job.siteUrl, startDate, endDate, ...GSC_COVERAGE_DATASETS]),
     db.get<{ count: number }>(`
       SELECT COUNT(DISTINCT date) AS count
       FROM gsc_site_metrics
@@ -994,12 +1139,14 @@ async function hasRequiredCoreWarehouseRows(
     db.get<{ count: number }>(`
       SELECT COUNT(DISTINCT date) AS count
       FROM gsc_query_metrics
-      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+      WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND query <> ''
     `, [job.ownerId, job.siteUrl, startDate, endDate]),
     db.get<{ count: number }>(`
       SELECT COUNT(DISTINCT date) AS count
       FROM gsc_page_query_metrics
       WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
+        AND COALESCE(NULLIF(pageKey, ''), page) <> ''
+        AND query <> ''
     `, [job.ownerId, job.siteUrl, startDate, endDate]),
     db.get<{ count: number }>(`
       SELECT COUNT(DISTINCT date) AS count
@@ -1015,10 +1162,25 @@ async function hasRequiredCoreWarehouseRows(
       : Promise.resolve({ count: expectedDays }),
   ]);
 
-  return Number(siteRows?.count || 0) >= expectedDays
+  const gscCoverageByDate = new Map();
+  for (const row of gscCoverageRows) {
+    if (!['complete', 'partial', 'zero'].includes(row.status)) continue;
+    const datasets = gscCoverageByDate.get(row.date) || new Set();
+    datasets.add(row.dataset);
+    gscCoverageByDate.set(row.date, datasets);
+  }
+  const allDatesHaveLedgerCoverage = eachIsoDate(startDate, endDate).every((date) => {
+    const datasets = gscCoverageByDate.get(date);
+    return Boolean(datasets && GSC_COVERAGE_DATASETS.every((dataset) => datasets.has(dataset)));
+  });
+  const legacyGscRowsStored = Number(siteRows?.count || 0) >= expectedDays
     && Number(queryRows?.count || 0) >= expectedDays
-    && Number(pageQueryRows?.count || 0) >= expectedDays
-    && Number(pageRows?.count || 0) >= expectedDays
+    && Number(pageQueryRows?.count || 0) >= expectedDays;
+  const hasPageSummaryCoverage = Number(pageSummaryRows?.count || 0) >= expectedDays;
+  const hasStoredGscCoverage = hasPageSummaryCoverage
+    && (allDatesHaveLedgerCoverage || (gscCoverageRows.length === 0 && legacyGscRowsStored));
+
+  return hasStoredGscCoverage
     && Number(ga4Rows?.count || 0) >= expectedDays;
 }
 
@@ -1215,9 +1377,12 @@ async function failOrRetry(db: AppDatabase, job: WarehouseJob, lease: ReturnType
     status: shouldRetry ? 'retrying' : 'error',
   });
   try {
+    if (failedSource === 'gsc') {
+      await markGscDatasetCoverageError(db, job, error);
+    }
     await markGa4DatasetCoverageError(db, job, failedSource, error);
   } catch (coverageError) {
-    console.error('[warehouse] Failed to persist GA4 dataset coverage error:', coverageError);
+    console.error('[warehouse] Failed to persist dataset coverage error:', coverageError);
   }
 }
 
