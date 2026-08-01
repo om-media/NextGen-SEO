@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertCircle, Bell, Loader2, LogOut, Settings2 } from "lucide-react";
+import { AlertCircle, Loader2, LogOut, Settings2 } from "lucide-react";
 import type { AppUser, UserProfile } from "../../contexts/AuthContext";
 import type { SiteLike } from "../../lib/siteSelection";
 import { ThemeToggle } from "./ThemeToggle";
@@ -106,12 +106,8 @@ export function AppHeader({
 
       <div className="ml-auto flex items-center gap-2 md:order-3">
         <ThemeToggle />
-        <Button variant="outline" size="icon" className="relative h-9 w-9 rounded-2xl border-border bg-card shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
-          <Bell className="h-4 w-4" />
-          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#16A34A]" />
-        </Button>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<button className="interactive-lift inline-flex h-10 w-10 items-center justify-center rounded-full bg-transparent p-0 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />}>
+          <DropdownMenuTrigger render={<button aria-label={`Open account menu for ${displayName}`} className="interactive-lift inline-flex h-10 w-10 items-center justify-center rounded-full bg-transparent p-0 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />}>
             <Avatar className="h-9 w-9 rounded-full">
               <AvatarImage src={avatarUrl} alt={displayName} />
               <AvatarFallback>{avatarFallback}</AvatarFallback>
@@ -139,10 +135,10 @@ export function AppHeader({
         </DropdownMenu>
       </div>
 
-      <div className="order-3 flex w-full min-w-0 flex-col gap-2 md:order-2 md:w-auto md:flex-1 md:flex-row md:items-center">
+      <div className="order-3 flex w-full min-w-0 flex-col gap-2 xl:order-2 xl:w-auto xl:flex-1 xl:flex-row xl:items-center">
         {activeMenu === "Dashboard" && (
           <>
-            <div className="flex min-w-0 flex-col gap-1 md:hidden">
+            <div className="flex min-w-0 flex-col gap-1 xl:hidden">
               <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Data source</span>
               <Select value={dataSource} onValueChange={(value) => onSwitchDataSource(value as DataSource)}>
                 <SelectTrigger className="h-9 w-full rounded-2xl border border-border bg-card shadow-[0_8px_20px_rgba(15,61,46,0.06)]">
@@ -158,7 +154,7 @@ export function AppHeader({
               </Select>
             </div>
 
-            <div className="hidden shrink-0 items-center gap-1 whitespace-nowrap rounded-2xl border border-border bg-card p-1 shadow-[0_8px_20px_rgba(15,61,46,0.06)] md:flex">
+            <div className="hidden shrink-0 items-center gap-1 whitespace-nowrap rounded-2xl border border-border bg-card p-1 shadow-[0_8px_20px_rgba(15,61,46,0.06)] xl:flex">
               <Button aria-label="Show Google Search Console dashboard" variant={dataSource === "gsc" ? "secondary" : "ghost"} size="sm" className="interactive-lift h-8 rounded-xl px-3 data-[state=open]:bg-secondary" onClick={() => onSwitchDataSource("gsc")}>
                 Google Search Console
               </Button>
@@ -179,7 +175,7 @@ export function AppHeader({
           <div className="flex min-w-0 flex-col gap-1">
             <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{selectorLabel}</span>
             <Select value={selectedSite} onValueChange={onSelectSite}>
-              <SelectTrigger className={`h-9 w-full min-w-0 rounded-2xl border border-border bg-card shadow-[0_8px_20px_rgba(15,61,46,0.06)] md:w-[260px] ${dataSource === "ga4" ? "lg:w-[340px]" : "lg:w-[280px]"}`}>
+              <SelectTrigger className={`h-9 w-full min-w-0 rounded-2xl border border-border bg-card shadow-[0_8px_20px_rgba(15,61,46,0.06)] xl:w-[260px] ${dataSource === "ga4" ? "2xl:w-[340px]" : "2xl:w-[280px]"}`}>
                 <SelectValue placeholder={`Select ${selectorLabel.toLowerCase()}`}>
                   {selectedSiteOption ? getSiteDisplayName(selectedSiteOption) : `Select ${selectorLabel.toLowerCase()}`}
                 </SelectValue>

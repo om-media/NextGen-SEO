@@ -124,7 +124,7 @@ export function AuthScreen() {
   )
 
   return (
-    <div className="relative flex min-h-dvh w-full items-center justify-center overflow-hidden bg-[#F8FAF9] p-4 sm:p-6">
+    <main className="relative flex min-h-dvh w-full items-center justify-center overflow-hidden bg-[#F8FAF9] p-4 sm:p-6">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(15,61,46,0.12),transparent_28%),radial-gradient(circle_at_82%_72%,rgba(47,125,246,0.10),transparent_34%),linear-gradient(180deg,#FBFCFB_0%,#F8FAF9_52%,#F4F8F7_100%)]" />
       <div className="pointer-events-none absolute -bottom-24 right-[-8%] h-[520px] w-[720px] rounded-full bg-[#EAF4EC]/70 blur-3xl" />
       <div className="relative grid w-full max-w-6xl overflow-hidden rounded-[28px] border border-[#E6ECE8] bg-white/80 shadow-[0_30px_90px_rgba(15,61,46,0.14)] backdrop-blur-xl lg:grid-cols-[0.95fr_1fr]">
@@ -188,7 +188,7 @@ export function AuthScreen() {
             </div>
 
         {signedOutMessage && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
+          <div aria-live="polite" role="status" className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
             <div className="flex items-start gap-2">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <p>{signedOutMessage}</p>
@@ -218,7 +218,7 @@ export function AuthScreen() {
                     <Label htmlFor="password">Password</Label>
                     <Input id="password" type="password" required value={password} onChange={e => setPassword(e.target.value)} />
                   </div>
-                  {error && <p className="text-sm text-destructive">{error}</p>}
+                  {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
                 </CardContent>
                 <CardFooter className="flex flex-col space-y-4">
                   <Button type="submit" className="w-full" disabled={loading}>
@@ -247,7 +247,7 @@ export function AuthScreen() {
                     <Label htmlFor="reg-password">Password</Label>
                     <Input id="reg-password" type="password" required minLength={10} value={password} onChange={e => setPassword(e.target.value)} />
                   </div>
-                  {error && <p className="text-sm text-destructive">{error}</p>}
+                  {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
                 </CardContent>
                 <CardFooter className="flex flex-col space-y-4">
                   <Button type="submit" className="w-full" disabled={loading}>
@@ -263,6 +263,6 @@ export function AuthScreen() {
           </div>
         </section>
       </div>
-    </div>
+    </main>
   )
 }

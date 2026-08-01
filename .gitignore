@@ -3,6 +3,10 @@ build/
 dist/
 .server-dist/
 coverage/
+uploads/
+playwright-report/
+test-results/
+blob-report/
 .DS_Store
 *.log
 *.log.*
@@ -30,10 +34,24 @@ qa-*
 qa-results/
 
 # Internal planning/release notes
+PRODUCT.md
 PRODUCTION_CHECKLIST.md
 docs/*todo*.md
 docs/*competitor*.md
+docs/*plan*.md
+docs/*roadmap*.md
+docs/*evaluation*.md
+docs/*spec*.md
+docs/stabilization-freeze.md
 droid-wiki/
+
+# Private keys and service credentials
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
 
 # Local database exports and scratch files
 *.db.bak

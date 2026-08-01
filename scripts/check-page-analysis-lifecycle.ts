@@ -328,6 +328,30 @@ async function main() {
         slug: '/alpha/',
         title: 'Alpha service',
       });
+      await db.run(
+        `INSERT INTO crawl_pages (
+           ownerId, siteUrl, jobId, url, normalizedUrl, pageKey, resolvedCanonicalPageKey, finalUrl,
+           statusCode, contentType, title, metaDescription, canonicalUrl, h1Text, h1Count, h2Count,
+           wordCount, depth, discoveredFrom, discoveredFromUrl, discoveredAt, crawledAt, responseTimeMs,
+           noindex, inboundLinkCount, internalLinkCount, outgoingLinkCount, errorMessage
+         )
+         SELECT ownerId, siteUrl, jobId, ?, ?, pageKey, resolvedCanonicalPageKey, ?,
+                statusCode, contentType, title, metaDescription, canonicalUrl, h1Text, h1Count, h2Count,
+                wordCount, depth + 1, 'alias', discoveredFromUrl, discoveredAt, crawledAt, responseTimeMs,
+                noindex, inboundLinkCount, internalLinkCount, outgoingLinkCount, errorMessage
+         FROM crawl_pages
+         WHERE ownerId = ? AND siteUrl = ? AND jobId = ? AND pageKey = ?
+         LIMIT 1`,
+        [
+          new URL('/alpha/?ref=alias', SITE_URL).toString(),
+          new URL('/alpha/?ref=alias', SITE_URL).toString(),
+          new URL('/alpha/?ref=alias', SITE_URL).toString(),
+          OWNER_A,
+          SITE_URL,
+          'crawl-a-2',
+          'a2-alpha',
+        ],
+      );
       await insertPageFixture(db, {
         bodyHeading: 'Product details',
         crawlJobId: 'crawl-a-2',

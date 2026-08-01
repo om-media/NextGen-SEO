@@ -2209,6 +2209,38 @@ async function applyOptionalPostgresVectorMigrations(db: AppDatabase) {
 }
 const POSTGRES_SCHEMA_MIGRATION_LOCK_ID = 864203197;
 
+type PostgresPrimaryKeyDefinition = {
+  columns?: string | null;
+};
+
+async function ensurePostgresPrimaryKey(
+  db: AppDatabase,
+  tableName: string,
+  constraintName: string,
+  columns: string[],
+  prepareSql: string,
+) {
+  const current = await db.get<PostgresPrimaryKeyDefinition>(`
+    SELECT string_agg(attribute.attname, ',' ORDER BY key_column.ordinality) AS columns
+    FROM pg_constraint constraint_definition
+    JOIN LATERAL unnest(constraint_definition.conkey) WITH ORDINALITY AS key_column(attnum, ordinality) ON TRUE
+    JOIN pg_attribute attribute
+      ON attribute.attrelid = constraint_definition.conrelid
+     AND attribute.attnum = key_column.attnum
+    WHERE constraint_definition.contype = 'p'
+      AND constraint_definition.conrelid = ?::regclass
+    GROUP BY constraint_definition.oid
+  `, [tableName]);
+  const expectedColumns = columns.map((column) => column.toLowerCase()).join(',');
+  if (String(current?.columns || '').toLowerCase() === expectedColumns) {
+    return;
+  }
+
+  await db.exec(prepareSql);
+  await db.exec(`ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS ${constraintName}`);
+  await db.exec(`ALTER TABLE ${tableName} ADD PRIMARY KEY (${columns.join(', ')})`);
+}
+
 async function applyPostgresMigrations(db: AppDatabase) {
   await db.exec(postgresSchemaSql);
   await applyOptionalPostgresVectorMigrations(db);
@@ -2294,40 +2326,56 @@ async function applyPostgresMigrations(db: AppDatabase) {
     await db.exec(statement);
   }
 
-  await db.exec("UPDATE crawl_pages SET jobId = 'legacy' WHERE jobId IS NULL");
-  await db.exec("UPDATE crawl_links SET jobId = 'legacy' WHERE jobId IS NULL");
-  await db.exec('ALTER TABLE crawl_pages DROP CONSTRAINT IF EXISTS crawl_pages_pkey');
-  await db.exec('ALTER TABLE crawl_pages ADD PRIMARY KEY (ownerId, siteUrl, jobId, normalizedUrl)');
-  await db.exec('ALTER TABLE crawl_links DROP CONSTRAINT IF EXISTS crawl_links_pkey');
-  await db.exec('ALTER TABLE crawl_links ADD PRIMARY KEY (ownerId, siteUrl, jobId, fromUrl, toUrl)');
-  await db.exec(`
-    UPDATE ga4_page_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
+  await ensurePostgresPrimaryKey(
+    db,
+    'crawl_pages',
+    'crawl_pages_pkey',
+    ['ownerId', 'siteUrl', 'jobId', 'normalizedUrl'],
+    "UPDATE crawl_pages SET jobId = 'legacy' WHERE jobId IS NULL",
+  );
+  await ensurePostgresPrimaryKey(
+    db,
+    'crawl_links',
+    'crawl_links_pkey',
+    ['ownerId', 'siteUrl', 'jobId', 'fromUrl', 'toUrl'],
+    "UPDATE crawl_links SET jobId = 'legacy' WHERE jobId IS NULL",
+  );
+  await ensurePostgresPrimaryKey(
+    db,
+    'ga4_page_metrics',
+    'ga4_page_metrics_pkey',
+    ['ownerId', 'propertyId', 'siteUrl', 'date', 'pageKey'],
+    `UPDATE ga4_page_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
     WITH ranked AS (
       SELECT ctid, ROW_NUMBER() OVER (PARTITION BY ownerId, propertyId, siteUrl, date, pageKey ORDER BY ctid) AS row_number
       FROM ga4_page_metrics
     )
-    DELETE FROM ga4_page_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1);
-    ALTER TABLE ga4_page_metrics DROP CONSTRAINT IF EXISTS ga4_page_metrics_pkey;
-    ALTER TABLE ga4_page_metrics ADD PRIMARY KEY (ownerId, propertyId, siteUrl, date, pageKey);
-
-    UPDATE ga4_dimension_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
+    DELETE FROM ga4_page_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1)`,
+  );
+  await ensurePostgresPrimaryKey(
+    db,
+    'ga4_dimension_metrics',
+    'ga4_dimension_metrics_pkey',
+    ['ownerId', 'propertyId', 'siteUrl', 'date', 'dimension', 'dimensionValue'],
+    `UPDATE ga4_dimension_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
     WITH ranked AS (
       SELECT ctid, ROW_NUMBER() OVER (PARTITION BY ownerId, propertyId, siteUrl, date, dimension, dimensionValue ORDER BY ctid) AS row_number
       FROM ga4_dimension_metrics
     )
-    DELETE FROM ga4_dimension_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1);
-    ALTER TABLE ga4_dimension_metrics DROP CONSTRAINT IF EXISTS ga4_dimension_metrics_pkey;
-    ALTER TABLE ga4_dimension_metrics ADD PRIMARY KEY (ownerId, propertyId, siteUrl, date, dimension, dimensionValue);
-
-    UPDATE ga4_llm_referral_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
+    DELETE FROM ga4_dimension_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1)`,
+  );
+  await ensurePostgresPrimaryKey(
+    db,
+    'ga4_llm_referral_metrics',
+    'ga4_llm_referral_metrics_pkey',
+    ['ownerId', 'propertyId', 'siteUrl', 'date', 'source', 'pageKey'],
+    `UPDATE ga4_llm_referral_metrics SET siteUrl = '' WHERE siteUrl IS NULL;
     WITH ranked AS (
       SELECT ctid, ROW_NUMBER() OVER (PARTITION BY ownerId, propertyId, siteUrl, date, source, pageKey ORDER BY ctid) AS row_number
       FROM ga4_llm_referral_metrics
     )
-    DELETE FROM ga4_llm_referral_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1);
-    ALTER TABLE ga4_llm_referral_metrics DROP CONSTRAINT IF EXISTS ga4_llm_referral_metrics_pkey;
-    ALTER TABLE ga4_llm_referral_metrics ADD PRIMARY KEY (ownerId, propertyId, siteUrl, date, source, pageKey);
-  `);
+    DELETE FROM ga4_llm_referral_metrics WHERE ctid IN (SELECT ctid FROM ranked WHERE row_number > 1)`,
+  );
 
   await consolidateDuplicateSiteScopesPostgres(db);
   await db.exec('DROP INDEX IF EXISTS idx_site_scopes_owner_domain');

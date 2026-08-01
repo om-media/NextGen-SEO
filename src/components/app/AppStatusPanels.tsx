@@ -134,7 +134,7 @@ export function AppStatusPanels({
       )}
 
       {apiError && (
-        <div className="flex flex-col items-start space-y-4 rounded-2xl border border-red-200 bg-red-50/90 p-6 shadow-[0_16px_44px_rgba(127,29,29,0.06)] dark:border-red-900/50 dark:bg-red-950/35">
+        <div role="alert" className="flex flex-col items-start space-y-4 rounded-2xl border border-red-200 bg-red-50/90 p-6 shadow-[0_16px_44px_rgba(127,29,29,0.06)] dark:border-red-900/50 dark:bg-red-950/35">
           <div className="flex items-center gap-2 font-semibold text-red-600">
             <AlertCircle className="h-5 w-5" />
             <h3>API Access Required</h3>

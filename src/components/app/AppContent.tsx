@@ -26,6 +26,8 @@ const Ga4LlmTraffic = lazy(() => import("@/components/dashboard/Ga4LlmTraffic").
 const Ga4Demographics = lazy(() => import("@/components/dashboard/Ga4Demographics").then((module) => ({ default: module.Ga4Demographics })));
 const BingDataGrid = lazy(() => import("@/components/dashboard/BingDataGrid").then((module) => ({ default: module.BingDataGrid })));
 const CrawlInventoryView = lazy(() => import("@/components/dashboard/CrawlInventoryView").then((module) => ({ default: module.CrawlInventoryView })));
+const TopicalAuthorityView = lazy(() => import("@/components/dashboard/TopicalAuthorityView").then((module) => ({ default: module.TopicalAuthorityView })));
+const VisualSemanticsView = lazy(() => import("@/components/dashboard/VisualSemanticsView").then((module) => ({ default: module.VisualSemanticsView })));
 const InternalLinksView = lazy(() => import("@/components/dashboard/InternalLinksView").then((module) => ({ default: module.InternalLinksView })));
 const LogAnalyzerView = lazy(() => import("@/components/dashboard/LogAnalyzerView").then((module) => ({ default: module.LogAnalyzerView })));
 const PageIndexingView = lazy(() => import("@/components/dashboard/PageIndexingView").then((module) => ({ default: module.PageIndexingView })));
@@ -180,7 +182,7 @@ export function AppContent({
   const visibleAnnotations = getVisibleAnnotations(annotations, showSystemAnnotations, showUserAnnotations);
   const selectedGa4PropertyId = dataSource === "ga4" ? selectedSite : "";
   const rawWorkspaceSite = getRawWorkspaceSite(selectedSite, workspaceSiteUrl, userProfile?.activatedSiteUrl);
-  const dashboardTabListClass = "w-full justify-start gap-10 rounded-none border-b border-border bg-transparent p-0";
+  const dashboardTabListClass = "w-full max-w-full justify-start gap-6 overflow-x-auto rounded-none border-b border-border bg-transparent p-0 [scrollbar-width:thin] sm:gap-8 lg:gap-10";
   const dashboardTabTriggerClass = "flex-none rounded-none border-0 bg-transparent px-0 py-3 text-sm font-medium text-muted-foreground shadow-none transition-colors after:inset-x-0 after:bottom-[-1px] after:bg-primary data-active:bg-transparent data-active:text-primary data-active:shadow-none";
   const [isGscOverviewLoading, setIsGscOverviewLoading] = useState(false);
   const showGscOverviewLoading = gscDashboardTab === "overview" && isGscOverviewLoading;
@@ -389,6 +391,22 @@ export function AppContent({
             siteUrl={selectedSite}
             defaultStartUrl={getCrawlDefaultStartUrl(selectedSite)}
           />
+        </div>
+      )}
+
+      {selectedSite && !apiError && activeMenu === "Visual Semantics" && (
+        <div className="space-y-4">
+          <VisualSemanticsView
+            key={selectedSite}
+            siteUrl={selectedSite}
+            onOpenCrawlInventory={() => onOpenSiteWorkspace(selectedSite, "Crawl Inventory")}
+          />
+        </div>
+      )}
+
+      {selectedSite && !apiError && activeMenu === "Topical Authority" && (
+        <div className="space-y-4">
+          <TopicalAuthorityView siteUrl={selectedSite} />
         </div>
       )}
 

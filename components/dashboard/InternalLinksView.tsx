@@ -529,7 +529,7 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
       setCrawlStarting(false);
     }
   };
-  const handleStartAnalysis = async (automatic = false) => {
+  const handleStartAnalysis = async (automaticSource: 'fresh-crawl' | 'existing-crawl' | false = false) => {
     setStarting(true);
     setError(null);
     try {
@@ -550,9 +550,11 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
       setActiveJob(result.job);
       setQueue(result.queue ?? null);
       setMessage(null);
-      toast.success(automatic ? 'Fresh crawl complete' : 'Internal link analysis queued', {
-        description: automatic
-          ? 'Internal link analysis has started automatically.'
+      toast.success(automaticSource === 'fresh-crawl' ? 'Fresh crawl complete' : automaticSource === 'existing-crawl' ? 'Analysis started' : 'Internal link analysis queued', {
+        description: automaticSource
+          ? automaticSource === 'fresh-crawl'
+            ? 'Internal link analysis has started automatically.'
+            : 'The latest completed crawl is being analyzed automatically.'
           : embeddingProvider === 'local-rules'
             ? 'The lexical fallback worker will process this site in the background.'
             : 'The BGE-M3 semantic worker will process this site in the background.',
@@ -749,14 +751,19 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
         : null;
     if (!targetCrawlId || autoAnalysisStartedRef.current.has(targetCrawlId)) return;
 
+    const automaticSource = targetCrawlId === pendingAnalysisCrawlId ? 'fresh-crawl' : 'existing-crawl';
     autoAnalysisStartedRef.current.add(targetCrawlId);
     setEstimateError(null);
-    setMessage('Fresh crawl complete. Starting internal link analysis...');
-    void handleStartAnalysis(true).then((started) => {
+    setMessage(automaticSource === 'fresh-crawl'
+      ? 'Fresh crawl complete. Starting internal link analysis...'
+      : 'Latest crawl is ready. Starting internal link analysis...');
+    void handleStartAnalysis(automaticSource).then((started) => {
       window.sessionStorage.removeItem(pendingAnalysisStorageKey(siteUrl));
       setPendingAnalysisCrawlId(null);
       if (!started) {
-        setMessage('Fresh crawl complete, but analysis could not start automatically. Choose Analyze site to retry.');
+        setMessage(automaticSource === 'fresh-crawl'
+          ? 'Fresh crawl complete, but analysis could not start automatically. Choose Analyze site to retry.'
+          : 'The latest crawl is ready, but analysis could not start automatically. Choose Analyze site to retry.');
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -814,22 +821,22 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
               value={embeddingProvider}
               onValueChange={selectEmbeddingProvider}
             >
-              <SelectTrigger className="h-10 w-[160px] rounded-xl border-border bg-card"><SelectValue /></SelectTrigger>
+              <SelectTrigger aria-label="Embedding provider" className="h-10 w-[160px] rounded-xl border-border bg-card"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {embeddingProviderOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Input className="h-10 w-[190px] rounded-xl border-border bg-card" onChange={(event) => setEmbeddingModel(event.target.value)} value={embeddingModel} />
+            <Input aria-label="Embedding model" className="h-10 w-[190px] rounded-xl border-border bg-card" onChange={(event) => setEmbeddingModel(event.target.value)} value={embeddingModel} />
             <Select
               value={reviewProvider}
               onValueChange={selectReviewProvider}
             >
-              <SelectTrigger className="h-10 w-[150px] rounded-xl border-border bg-card"><SelectValue /></SelectTrigger>
+              <SelectTrigger aria-label="Review provider" className="h-10 w-[150px] rounded-xl border-border bg-card"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {reviewProviderOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Input className="h-10 w-[170px] rounded-xl border-border bg-card" onChange={(event) => setReviewModel(event.target.value)} value={reviewModel} />
+            <Input aria-label="Review model" className="h-10 w-[170px] rounded-xl border-border bg-card" onChange={(event) => setReviewModel(event.target.value)} value={reviewModel} />
             {(isHostedEmbeddingProvider(embeddingProvider) || isHostedReviewProvider(reviewProvider)) && (
               <Input
                 aria-label="Max hosted spend"
@@ -864,16 +871,10 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
           </div>
         </CardHeader>
         <CardContent className="space-y-5 pt-5">
-          {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AlertCircle className="mr-2 inline-block h-4 w-4" />{error}</div>}
+          {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert"><AlertCircle className="mr-2 inline-block h-4 w-4" />{error}</div>}
           {message && (
-            <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 md:flex-row md:items-center md:justify-between">
-              <span>{message}</span>
-              {needsFreshCrawl && (
-                <Button className="h-9 rounded-xl border-amber-300 bg-white text-amber-900 hover:bg-amber-100" size="sm" variant="outline" onClick={handleStartFreshCrawl} disabled={crawlStarting || crawlRunning}>
-                  {crawlStarting || crawlRunning ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
-                  Start fresh crawl
-                </Button>
-              )}
+            <div aria-live="polite" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="status">
+              {message}
             </div>
           )}
 
@@ -890,7 +891,7 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
               <span className="text-muted-foreground">Usable sentences</span>
               <div className="font-semibold text-foreground">{estimateLoading ? 'Estimating...' : `${formatNumber(usableSentenceCount)} sentences`}</div>
             </div>
-            <Button className="h-9 rounded-xl" size="sm" variant={needsFreshCrawl ? 'default' : 'outline'} onClick={handleStartFreshCrawl} disabled={crawlStarting || crawlRunning}>
+            <Button className="h-9 rounded-xl" size="sm" variant={needsFreshCrawl ? 'default' : 'outline'} onClick={handleStartFreshCrawl} disabled={crawlStarting || crawlRunning || isRunning}>
               {crawlStarting || crawlRunning ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
               {crawlRunning ? 'Crawling...' : 'Start fresh crawl'}
             </Button>
@@ -930,7 +931,7 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
             </div>
           )}
 
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {metrics.map(([label, value]) => (
               <div key={label} className="rounded-2xl border border-border bg-background p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
@@ -939,7 +940,7 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
             ))}
           </div>
 
-          <div className="grid gap-3 rounded-2xl border border-border bg-background p-4 text-sm md:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 rounded-2xl border border-border bg-background p-4 text-sm md:grid-cols-5">
             <div>
               <span className="text-muted-foreground">Provider</span>
               <div className="font-semibold text-foreground">{embeddingProvider} · {embeddingModel || 'default'}</div>
@@ -956,9 +957,9 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
             <div><span className="text-muted-foreground">Vector DB</span><div className="font-semibold text-foreground" title={estimate?.vectorStore?.reason}>{vectorStoreLabel(estimate)}</div></div>
             <div><span className="text-muted-foreground">Hosted estimate</span><div className="font-semibold text-foreground">{formatMoney(hostedEstimate)}</div></div>
             <div><span className="text-muted-foreground">Actual spend</span><div className="font-semibold text-foreground">{formatMoney(activeJob?.actualCost)}</div></div>
-            <div className="text-xs text-muted-foreground md:col-span-5">Review: {reviewProvider} · {reviewModel || 'default'} · {providerSettingsLoading ? 'checking settings' : reviewConfigured ? 'saved defaults active' : 'run defaults'}</div>
+            <div className="col-span-2 text-xs text-muted-foreground md:col-span-5">Review: {reviewProvider} · {reviewModel || 'default'} · {providerSettingsLoading ? 'checking settings' : reviewConfigured ? 'saved defaults active' : 'run defaults'}</div>
             {usesLocalSemanticEmbedding && embeddingStatus && !embeddingStatus.available && (
-              <div className="flex flex-col gap-2 text-xs text-amber-700 md:col-span-5 md:flex-row md:items-center md:justify-between">
+              <div className="col-span-2 flex flex-col gap-2 text-xs text-amber-700 md:col-span-5 md:flex-row md:items-center md:justify-between">
                 <span>{embeddingStatus.message}</span>
                 <Button className="h-8 shrink-0 rounded-xl" size="sm" variant="outline" onClick={() => loadEmbeddingStatus()} disabled={embeddingStatusLoading}>
                   {embeddingStatusLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
@@ -966,8 +967,8 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
                 </Button>
               </div>
             )}
-            {estimateError && <div className="text-xs text-amber-700 md:col-span-5">{estimateError}</div>}
-            {hostedSpendBlocked && <div className="text-xs text-red-700 md:col-span-5">Estimated hosted cost exceeds the max spend cap. Increase the cap or choose Built-in BGE-M3.</div>}
+            {estimateError && <div className="col-span-2 text-xs text-amber-700 md:col-span-5">{estimateError}</div>}
+            {hostedSpendBlocked && <div className="col-span-2 text-xs text-red-700 md:col-span-5">Estimated hosted cost exceeds the max spend cap. Increase the cap or choose Built-in BGE-M3.</div>}
           </div>
 
           {jobs.length > 0 && (
@@ -1062,7 +1063,15 @@ export function InternalLinksView({ dateRange, siteUrl }: InternalLinksViewProps
       {loading ? (
         <div className="rounded-2xl border border-border bg-card p-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline-block h-4 w-4 animate-spin" />Loading recommendations...</div>
       ) : groups.length === 0 ? (
-        <div className="rounded-2xl border border-border bg-card p-10 text-center text-sm text-muted-foreground">Run analysis after a fresh crawl to generate screenshot-style internal link recommendations.</div>
+        <div aria-live="polite" className="rounded-2xl border border-border bg-card p-10 text-center text-sm text-muted-foreground" role="status">
+          {crawlRunning
+            ? 'Crawling the site now. Analysis will start automatically when sentence context is ready.'
+            : isRunning
+              ? 'Analyzing the completed crawl. Recommendations will appear here as they are prepared.'
+              : needsFreshCrawl
+                ? 'Start a fresh crawl to collect the sentence context needed for recommendations.'
+                : 'No recommendations are available yet. Choose Analyze site to generate them from the latest crawl.'}
+        </div>
       ) : groups.map((group) => (
         <Card key={group.sourceUrl} className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_32px_rgba(15,61,46,0.045)]">
           <div className="flex flex-col gap-3 border-b border-border bg-background px-4 py-3 md:flex-row md:items-center md:justify-between">

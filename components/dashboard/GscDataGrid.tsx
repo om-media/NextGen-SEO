@@ -457,13 +457,13 @@ export function GscDataGrid({
   return (
     <div className="space-y-6">
       {!isConnectionIssue && error && !isWarehousePreparationMessage && (
-        <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-sm text-red-600 shadow-[0_10px_24px_rgba(127,29,29,0.05)] dark:border-red-900/50 dark:bg-red-950/35 dark:text-red-200">
+        <div role="alert" className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-sm text-red-600 shadow-[0_10px_24px_rgba(127,29,29,0.05)] dark:border-red-900/50 dark:bg-red-950/35 dark:text-red-200">
           {error}
         </div>
       )}
 
       {!isConnectionIssue && (shouldShowCoverageStatus || isWarehousePreparationMessage) && (
-        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
+        <div aria-live="polite" role="status" className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             {hasActiveWarehouseWork ? (
               <Loader2 className="h-4 w-4 animate-spin text-primary" />

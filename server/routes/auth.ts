@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { clearSessionCookie, createUserSession, destroySession, hashPassword, readAuthedUser, requireAuth, setSessionCookie, verifyPassword } from '../auth.js';
+import { withNormalizedEmailLock } from '../services/normalizedEmailLock.js';
 import { getInitialRegistrationTier } from '../services/registrationTier.js';
 
 export type UserRow = {
@@ -69,6 +70,30 @@ function isAcceptableRegistrationPassword(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 10;
 }
 
+function isNormalizedEmailConflict(error: any) {
+  const code = String(error?.code || '');
+  const constraint = String(error?.constraint || '');
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    (code === '23505' && constraint === 'idx_users_email_normalized_unique') ||
+    (code.includes('SQLITE_CONSTRAINT') && message.includes('idx_users_email_normalized_unique'))
+  );
+}
+
+function emailAlreadyInUse(res: any) {
+  return res.status(409).json({
+    error: 'This email already belongs to an existing account.',
+    code: 'EMAIL_ALREADY_IN_USE',
+  });
+}
+
+function ambiguousAccount(res: any) {
+  return res.status(409).json({
+    error: 'Multiple accounts use this email address. Contact support before continuing.',
+    code: 'AMBIGUOUS_ACCOUNT',
+  });
+}
+
 export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
   app.get('/api/auth/session', async (req, res) => {
     try {
@@ -102,26 +127,40 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      const existingUser = await db.get<UserRow>('SELECT * FROM users WHERE lower(email) = lower(?)', [normalizedEmail]);
-      let sessionUser: UserRow;
-
-      if (existingUser) {
-        if (existingUser.passwordHash) {
-          return res.status(409).json({
-            error: 'This email already belongs to an existing account.',
-            code: 'EMAIL_ALREADY_IN_USE',
-          });
+      const registration = await withNormalizedEmailLock(db, normalizedEmail, async () => {
+        const existingUsers = await db.all<UserRow>(
+          'SELECT * FROM users WHERE lower(trim(email)) = lower(trim(?)) LIMIT 2',
+          [normalizedEmail],
+        );
+        if (existingUsers.length > 1) {
+          return { kind: 'ambiguous' as const };
         }
 
-        const passwordHash = hashPassword(password);
-        await db.run('UPDATE users SET email = ?, passwordHash = ?, authProvider = ? WHERE id = ?', [normalizedEmail, passwordHash, 'local', existingUser.id]);
-        sessionUser = {
-          ...existingUser,
-          email: normalizedEmail,
-          passwordHash,
-          authProvider: 'local',
-        };
-      } else {
+        const existingUser = existingUsers[0];
+        if (existingUser) {
+          if (existingUser.passwordHash) {
+            return { kind: 'conflict' as const };
+          }
+
+          const passwordHash = hashPassword(password);
+          const claimed = await db.run(
+            'UPDATE users SET email = ?, passwordHash = ?, authProvider = ? WHERE id = ? AND passwordHash IS NULL',
+            [normalizedEmail, passwordHash, 'local', existingUser.id],
+          );
+          if (claimed.changes !== 1) {
+            return { kind: 'conflict' as const };
+          }
+          return {
+            kind: 'created' as const,
+            user: {
+              ...existingUser,
+              email: normalizedEmail,
+              passwordHash,
+              authProvider: 'local',
+            },
+          };
+        }
+
         const id = crypto.randomUUID();
         const passwordHash = hashPassword(password);
         const createdAt = new Date().toISOString();
@@ -148,13 +187,26 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
           null,
         ]);
 
-        sessionUser = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]))!;
+        return {
+          kind: 'created' as const,
+          user: (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]))!,
+        };
+      });
+
+      if (registration.kind === 'ambiguous') {
+        return ambiguousAccount(res);
+      }
+      if (registration.kind === 'conflict') {
+        return emailAlreadyInUse(res);
       }
 
-      const sessionToken = await createUserSession(db, sessionUser.id);
+      const sessionToken = await createUserSession(db, registration.user.id);
       setSessionCookie(res, sessionToken);
-      res.status(201).json(buildSessionPayload(sessionUser));
+      res.status(201).json(buildSessionPayload(registration.user));
     } catch (error: any) {
+      if (isNormalizedEmailConflict(error)) {
+        return emailAlreadyInUse(res);
+      }
       res.status(500).json({ error: error.message || 'Failed to create account', code: 'REGISTER_FAILED' });
     }
   });
@@ -170,7 +222,14 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      const user = await db.get<UserRow>('SELECT * FROM users WHERE lower(email) = lower(?)', [normalizedEmail]);
+      const users = await db.all<UserRow>(
+        'SELECT * FROM users WHERE lower(trim(email)) = lower(trim(?)) LIMIT 2',
+        [normalizedEmail],
+      );
+      if (users.length > 1) {
+        return ambiguousAccount(res);
+      }
+      const user = users[0];
 
       if (!user) {
         return res.status(401).json({ error: 'We could not find an account for that email.', code: 'INVALID_LOGIN' });

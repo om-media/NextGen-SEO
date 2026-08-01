@@ -3,7 +3,7 @@ import type { Express, Request, Response } from 'express';
 import type { AppDatabase } from '../database.js';
 import { createUserSession, requireAuth, setSessionCookie } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
-import { asTrimmedString, isIsoDateString, isNonEmptyString } from '../validation.js';
+import { asTrimmedString, isNonEmptyString, isPlainObject, validateDimensionFilterGroups } from '../validation.js';
 import {
   buildGoogleAppAuthUrl,
   buildGoogleOauthUrl,
@@ -22,6 +22,8 @@ import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { resolveWorkspaceGa4Property } from '../services/ga4Mappings.js';
 import { getInitialRegistrationTier } from '../services/registrationTier.js';
 import { syncBingSites } from '../services/bingWarehouse.js';
+import { withNormalizedEmailLock } from '../services/normalizedEmailLock.js';
+import { isValidIsoDateRange, parseBoundedInteger } from '../routeValidation.js';
 
 function sendOauthPopupResponse(res: Response, success: boolean, message: string) {
   const escapedMessage = message
@@ -54,11 +56,6 @@ function sendOauthPopupResponse(res: Response, success: boolean, message: string
     <p>${escapedMessage}</p>
   </body>
 </html>`);
-}
-
-function positiveIntegerOrUndefined(value: unknown) {
-  const number = Number(value);
-  return Number.isInteger(number) && number >= 0 ? number : undefined;
 }
 
 function parseStringArray(value: unknown) {
@@ -229,45 +226,63 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
         }
 
         const normalizedEmail = googleUser.email!.trim().toLowerCase();
-        let user = await db.get<UserRow>('SELECT * FROM users WHERE lower(email) = lower(?)', [normalizedEmail]);
-
-        if (user) {
-          await db.run(
-            `UPDATE users
-             SET name = COALESCE(NULLIF(name, ''), ?),
-                 avatarUrl = COALESCE(NULLIF(avatarUrl, ''), ?)
-             WHERE id = ?`,
-            [googleUser.name || null, googleUser.picture || null, user.id],
+        const account = await withNormalizedEmailLock(db, normalizedEmail, async () => {
+          const existingUsers = await db.all<UserRow>(
+            'SELECT * FROM users WHERE lower(trim(email)) = lower(trim(?)) LIMIT 2',
+            [normalizedEmail],
           );
-          user = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [user.id]))!;
-        } else {
-          const id = crypto.randomUUID();
-          const createdAt = new Date().toISOString();
-          const initialTier = await getInitialRegistrationTier(db);
-          await db.run(`
-            INSERT INTO users (
-              id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `, [
-            id,
-            normalizedEmail,
-            null,
-            'google',
-            googleUser.name || null,
-            null,
-            googleUser.picture || null,
-            null,
-            initialTier,
-            JSON.stringify([]),
-            createdAt,
-            null,
-            0,
-            null,
-          ]);
-          user = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]))!;
+          if (existingUsers.length > 1) {
+            return { kind: 'ambiguous' as const };
+          }
+
+          let user = existingUsers[0];
+          if (user) {
+            await db.run(
+              `UPDATE users
+               SET name = COALESCE(NULLIF(name, ''), ?),
+                   avatarUrl = COALESCE(NULLIF(avatarUrl, ''), ?)
+               WHERE id = ?`,
+              [googleUser.name || null, googleUser.picture || null, user.id],
+            );
+            user = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [user.id]))!;
+          } else {
+            const id = crypto.randomUUID();
+            const createdAt = new Date().toISOString();
+            const initialTier = await getInitialRegistrationTier(db);
+            await db.run(`
+              INSERT INTO users (
+                id, email, passwordHash, authProvider, name, company, avatarUrl, bio, tier, unlockedSites, createdAt, bingApiKey, onboardingCompleted, activatedSiteUrl
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+              id,
+              normalizedEmail,
+              null,
+              'google',
+              googleUser.name || null,
+              null,
+              googleUser.picture || null,
+              null,
+              initialTier,
+              JSON.stringify([]),
+              createdAt,
+              null,
+              0,
+              null,
+            ]);
+            user = (await db.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]))!;
+          }
+
+          return { kind: 'ready' as const, user };
+        });
+        if (account.kind === 'ambiguous') {
+          return sendOauthPopupResponse(
+            res,
+            false,
+            'Multiple accounts use this email address. Contact support before continuing.',
+          );
         }
 
-        const sessionToken = await createUserSession(db, user.id);
+        const sessionToken = await createUserSession(db, account.user.id);
         setSessionCookie(res, sessionToken);
         return sendOauthPopupResponse(res, true, 'Google sign-in successful. You can close this window.');
       }
@@ -310,9 +325,17 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   app.post('/api/google/gsc/search-analytics', authRequired, async (req: AuthedRequest, res) => {
     const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups, rowLimit, startRow } = req.body;
     if (!isNonEmptyString(siteUrl)) return res.status(400).json({ error: 'Invalid siteUrl' });
-    if (!isIsoDateString(startDate) || !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid date range' });
+    if (!isValidIsoDateRange(startDate, endDate)) return res.status(400).json({ error: 'Invalid date range' });
     if (!Array.isArray(dimensions) || dimensions.some((dimension) => typeof dimension !== 'string')) {
       return res.status(400).json({ error: 'Invalid dimensions' });
+    }
+    if (!validateDimensionFilterGroups(dimensionFilterGroups)) {
+      return res.status(400).json({ error: 'Invalid dimensionFilterGroups' });
+    }
+    const parsedRowLimit = parseBoundedInteger(rowLimit, { defaultValue: 25000, max: 25000, min: 1 });
+    const parsedStartRow = parseBoundedInteger(startRow, { defaultValue: 0, max: 1_000_000, min: 0 });
+    if (!parsedRowLimit.ok || !parsedStartRow.ok) {
+      return res.status(400).json({ error: 'Invalid pagination' });
     }
 
     try {
@@ -331,8 +354,8 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
             endDate,
             dimensions,
             dimensionFilterGroups,
-            rowLimit,
-            startRow,
+            rowLimit: parsedRowLimit.value,
+            startRow: parsedStartRow.value,
           }),
         },
       );
@@ -377,12 +400,20 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   app.post('/api/google/ga4/run-report', authRequired, async (req: AuthedRequest, res) => {
     const { propertyId, startDate, endDate, dimensions, metrics, dimensionFilter, limit, offset } = req.body;
     if (!isNonEmptyString(propertyId)) return res.status(400).json({ error: 'Invalid propertyId' });
-    if (!isIsoDateString(startDate) || !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid date range' });
+    if (!isValidIsoDateRange(startDate, endDate)) return res.status(400).json({ error: 'Invalid date range' });
     if (!Array.isArray(dimensions) || dimensions.some((dimension) => typeof dimension !== 'string')) {
       return res.status(400).json({ error: 'Invalid dimensions' });
     }
     if (!Array.isArray(metrics) || metrics.some((metric) => typeof metric !== 'string')) {
       return res.status(400).json({ error: 'Invalid metrics' });
+    }
+    if (dimensionFilter !== undefined && !isPlainObject(dimensionFilter)) {
+      return res.status(400).json({ error: 'Invalid dimensionFilter' });
+    }
+    const parsedLimit = parseBoundedInteger(limit, { defaultValue: 10000, max: 250000, min: 1 });
+    const parsedOffset = parseBoundedInteger(offset, { defaultValue: 0, max: 1_000_000, min: 0 });
+    if (!parsedLimit.ok || !parsedOffset.ok) {
+      return res.status(400).json({ error: 'Invalid pagination' });
     }
 
     try {
@@ -399,9 +430,9 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
           body: JSON.stringify({
             dateRanges: [{ startDate, endDate }],
             dimensions: dimensions.map((name: string) => ({ name })),
-            ...(positiveIntegerOrUndefined(limit) !== undefined ? { limit: positiveIntegerOrUndefined(limit) } : {}),
+            limit: parsedLimit.value,
             metrics: metrics.map((name: string) => ({ name })),
-            ...(positiveIntegerOrUndefined(offset) !== undefined ? { offset: positiveIntegerOrUndefined(offset) } : {}),
+            offset: parsedOffset.value,
             ...(dimensionFilter ? { dimensionFilter } : {}),
           }),
         },

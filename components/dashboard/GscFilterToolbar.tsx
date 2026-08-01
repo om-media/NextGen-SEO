@@ -79,6 +79,7 @@ export function GscFilterToolbar({
         <div className="relative w-full sm:flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
+            aria-label={getGridSearchPlaceholder(dimension)}
             placeholder={getGridSearchPlaceholder(dimension)}
             className="h-9 rounded-lg border-[#E6ECE8] bg-white pl-8"
             value={filters.searchTerm}

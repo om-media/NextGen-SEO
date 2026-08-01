@@ -10,7 +10,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { BarChart3, LayoutDashboard, Settings, Sparkles, Bot, Target, Server, FileSearch, Globe2, PanelsTopLeft, Link2 } from "lucide-react"
+import { BarChart3, LayoutDashboard, Settings, Sparkles, Bot, Target, Server, FileSearch, Globe2, PanelsTopLeft, Link2, Network } from "lucide-react"
 
 const baseItems = [
   { title: "Dashboard", icon: LayoutDashboard },
@@ -19,6 +19,8 @@ const baseItems = [
   { title: "Server Logs", icon: Server },
   { title: "Page Indexing", icon: FileSearch },
   { title: "Crawl Inventory", icon: Globe2 },
+  { title: "Topical Authority", icon: Network },
+  { title: "Visual Semantics", icon: PanelsTopLeft },
   { title: "Internal Links", icon: Link2 },
   { title: "LLM Traffic", icon: Bot },
   { title: "AI Content Auditor", icon: Sparkles },
@@ -41,6 +43,7 @@ export function AppSidebar({ activeMenu = "Dashboard", onMenuSelect }: { selecte
           </div>
         </div>
       </SidebarHeader>
+      <nav aria-label="Primary navigation" className="flex min-h-0 flex-1 flex-col">
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="px-3 text-[12px] font-semibold normal-case tracking-normal text-muted-foreground">Analytics</SidebarGroupLabel>
@@ -49,6 +52,7 @@ export function AppSidebar({ activeMenu = "Dashboard", onMenuSelect }: { selecte
               {baseItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
+                    aria-current={activeMenu === item.title ? "page" : undefined}
                     isActive={activeMenu === item.title}
                     onClick={() => onMenuSelect && onMenuSelect(item.title)}
                     className="interactive-lift h-10 rounded-2xl px-3 data-[active=true]:bg-secondary data-[active=true]:text-secondary-foreground"
@@ -62,6 +66,7 @@ export function AppSidebar({ activeMenu = "Dashboard", onMenuSelect }: { selecte
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      </nav>
       <SidebarFooter className="p-4">
         <div className="text-xs text-muted-foreground">
           &copy; 2026 NextGen SEO

@@ -2,9 +2,10 @@ import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
-import { asTrimmedString, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
+import { asTrimmedString, isNonEmptyString, isStringArray } from '../validation.js';
 import { googleApiFetchJson } from '../services/googleAuth.js';
 import { canAccessSite } from '../accessControl.js';
+import { isNonEmptyStringArray, isValidOptionalIsoDateRange } from '../routeValidation.js';
 
 type SyncJob = {
   current: number;
@@ -28,8 +29,7 @@ export function registerIndexingRoutes(
     const endDate = req.query.endDate;
     const isLive = req.query.isLive;
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
-    if (startDate !== undefined && !isIsoDateString(startDate)) return res.status(400).json({ error: 'Invalid startDate' });
-    if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
+    if (!isValidOptionalIsoDateRange(startDate, endDate)) return res.status(400).json({ error: 'Invalid date range' });
     if (isLive !== undefined && isLive !== 'true' && isLive !== 'false') return res.status(400).json({ error: 'Invalid isLive flag' });
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
@@ -175,7 +175,7 @@ export function registerIndexingRoutes(
   app.post('/api/indexing/seed-urls', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, urls } = req.body;
-    if (!isNonEmptyString(siteUrl) || !isStringArray(urls)) return res.status(400).json({ error: 'Invalid payload' });
+    if (!isNonEmptyString(siteUrl) || !isNonEmptyStringArray(urls)) return res.status(400).json({ error: 'Invalid payload' });
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {

@@ -13,6 +13,7 @@ dotenv.config();
 process.env.START_BACKGROUND_WORKERS = 'false';
 
 const screenshotPath = path.resolve('.tmp/internal-links-browser-smoke.png');
+const mobileScreenshotPath = path.resolve('.tmp/internal-links-browser-smoke-mobile.png');
 
 function assertBuiltArtifacts() {
   const missing = [];
@@ -30,11 +31,35 @@ async function main() {
   const db = await initializeDatabase();
   let server;
   let browser;
+  const suffix = Date.now();
+  const ownerId = `internal-link-browser-${suffix}`;
+  const siteUrl = `https://internal-link-browser-${suffix}.example/`;
+  const crawlJobId = `crawl-browser-${suffix}`;
+  const now = new Date().toISOString();
 
   try {
-    const user = await db.get(
-      `SELECT id, activatedSiteUrl FROM users WHERE activatedSiteUrl IS NOT NULL AND activatedSiteUrl <> '' ORDER BY createdAt DESC LIMIT 1`,
+    await db.run(
+      `INSERT INTO users (id, email, passwordHash, tier, onboardingCompleted, activatedSiteUrl, knownSites, unlockedSites, createdAt)
+       VALUES (?, ?, 'test', 'enterprise', 1, ?, ?, ?, ?)`,
+      [ownerId, `${ownerId}@example.com`, siteUrl, JSON.stringify([siteUrl]), JSON.stringify([siteUrl]), now],
     );
+    await db.run(
+      `INSERT INTO crawl_jobs (
+         id, ownerId, siteUrl, startUrl, status, maxPages, maxDepth,
+         discoveredCount, crawledCount, errorCount, skippedCount, queuedCount,
+         startedAt, updatedAt, completedAt
+       ) VALUES (?, ?, ?, ?, 'completed', 1000, 2, 1, 1, 0, 0, 0, ?, ?, ?)`,
+      [crawlJobId, ownerId, siteUrl, siteUrl, now, now, now],
+    );
+    await db.run(
+      `INSERT INTO crawl_page_sentences (
+         ownerId, siteUrl, jobId, pageUrl, pageKey, paragraphIndex, sentenceIndex,
+         sentenceText, textHash, embeddingStatus, createdAt, headingText,
+         linkDensity, boilerplateScore, extractionVersion
+       ) VALUES (?, ?, ?, ?, '/source', 0, 0, ?, ?, 'pending', ?, 'Internal links', 0.05, 0.1, 2)`,
+      [ownerId, siteUrl, crawlJobId, `${siteUrl}source/`, 'Contextual internal links help readers find supporting material.', `hash-${suffix}`, now],
+    );
+    const user = { id: ownerId, activatedSiteUrl: siteUrl };
     if (!user?.id || !user?.activatedSiteUrl) {
       throw new Error('No user with an activated site was found for the Internal Links browser smoke test.');
     }
@@ -78,8 +103,9 @@ async function main() {
       if (message.type() === 'error') console.log(`browser-console-error: ${message.text()}`);
     });
 
-    await page.goto(baseUrl, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.getByRole('button', { name: /Crawl Inventory/i }).click({ timeout: 10000 });
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.getByRole('button', { name: /Crawl Inventory/i }).waitFor({ state: 'visible', timeout: 30000 });
+    await page.getByRole('button', { name: /Crawl Inventory/i }).click();
     const crawlAction = page.getByRole('button', { name: /Start fresh crawl|Cancel crawl/i }).first();
     await crawlAction.waitFor({ state: 'visible', timeout: 15000 });
     const crawlStartControlCount = await page.getByRole('button', { name: /Start fresh crawl|Cancel crawl/i }).count();
@@ -90,6 +116,21 @@ async function main() {
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => null);
     await page.waitForSelector('text=Internal links', { timeout: 15000 });
     await page.screenshot({ path: screenshotPath, fullPage: true });
+    const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    const desktopClippedControlCount = await page.locator('button:visible, input:visible, [role="combobox"]:visible').evaluateAll((elements) => elements.filter((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.left < -1 || rect.right > window.innerWidth + 1;
+    }).length);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(250);
+    const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    const mobileClippedControlCount = await page.locator('button:visible, input:visible, [role="combobox"]:visible').evaluateAll((elements) => elements.filter((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.left < -1 || rect.right > window.innerWidth + 1;
+    }).length);
+    const mobileFreshCrawlActionCount = await page.getByRole('button', { name: /Start fresh crawl|Crawling/i }).count();
+    await page.screenshot({ path: mobileScreenshotPath, fullPage: true });
 
     const bodyText = await page.locator('body').innerText({ timeout: 5000 });
     const cardCount = await page.locator('text=/In “/').count();
@@ -101,12 +142,19 @@ async function main() {
       crawlInventoryStartControlVisible: crawlStartControlCount > 0,
       noImplicitCrawlStarted: crawlStartRequests.length === 0,
       internalLinksViewRendered: /Internal links/i.test(bodyText),
+      contextualSectionTitleVisible: /Find contextual internal link opportunities/i.test(bodyText),
+      existingCrawlDoesNotClaimFreshCrawl: !/Fresh crawl complete/i.test(bodyText),
       providerVisible: /local\s*·\s*BAAI\/bge-m3/i.test(bodyText) || /Built-in BGE-M3/i.test(bodyText),
       builtInProviderReady: /BGE-M3 ready/i.test(bodyText),
       reviewProviderVisible: /review\s+local|review\s+ollama|Ollama judge|Local rules/i.test(bodyText),
       groupedCardsOrEmptyStateRendered: cardCount > 0 || /Run analysis after a fresh crawl|recommendations/i.test(bodyText),
       noRenderedAssetTargets: assetTextCount === 0,
       internalLinkApisNoErrors: failedApiEvents.length === 0,
+      noDesktopHorizontalOverflow: desktopOverflow <= 1,
+      noDesktopClippedControls: desktopClippedControlCount === 0,
+      noMobileHorizontalOverflow: mobileOverflow <= 1,
+      noMobileClippedControls: mobileClippedControlCount === 0,
+      singleMobileFreshCrawlAction: mobileFreshCrawlActionCount <= 1,
     };
     const failed = Object.entries(checks).filter(([, ok]) => !ok).map(([name]) => name);
 
@@ -118,15 +166,28 @@ async function main() {
       crawlStartControlCount,
       crawlStartRequests,
       apiEvents,
+      desktopOverflow,
+      desktopClippedControlCount,
+      mobileOverflow,
+      mobileClippedControlCount,
+      mobileFreshCrawlActionCount,
       checks,
       failed,
       screenshot: screenshotPath,
+      mobileScreenshot: mobileScreenshotPath,
     }, null, 2));
 
     if (failed.length) process.exitCode = 1;
   } finally {
     if (browser) await browser.close();
     if (server) await new Promise((resolve) => server.close(resolve));
+    await db.run('DELETE FROM internal_link_opportunities WHERE ownerId = ?', [ownerId]).catch(() => {});
+    await db.run('DELETE FROM internal_link_analysis_jobs WHERE ownerId = ?', [ownerId]).catch(() => {});
+    await db.run('DELETE FROM crawl_page_sentences WHERE ownerId = ?', [ownerId]).catch(() => {});
+    await db.run('DELETE FROM crawl_pages WHERE ownerId = ?', [ownerId]).catch(() => {});
+    await db.run('DELETE FROM crawl_jobs WHERE ownerId = ?', [ownerId]).catch(() => {});
+    await db.run('DELETE FROM sessions WHERE userId = ?', [ownerId]).catch(() => {});
+    await db.run('DELETE FROM users WHERE id = ?', [ownerId]).catch(() => {});
     await db.close?.();
   }
 }

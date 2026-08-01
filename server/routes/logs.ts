@@ -7,8 +7,9 @@ import zlib from 'zlib';
 import { requireAuth } from '../auth.js';
 import { getBotType, NGINX_LOG_REGEX, parseLogDate } from '../logs.js';
 import type { AuthedRequest } from '../types.js';
-import { asTrimmedString, isIsoDateString, isNonEmptyString, isStringArray } from '../validation.js';
+import { asTrimmedString, isNonEmptyString, isStringArray } from '../validation.js';
 import { canAccessSite } from '../accessControl.js';
+import { isValidOptionalIsoDateRange } from '../routeValidation.js';
 
 export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.Multer) {
   const authRequired = requireAuth(db);
@@ -147,8 +148,7 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
-    if (startDate !== undefined && !isIsoDateString(startDate)) return res.status(400).json({ error: 'Invalid startDate' });
-    if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
+    if (!isValidOptionalIsoDateRange(startDate, endDate)) return res.status(400).json({ error: 'Invalid date range' });
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
@@ -177,8 +177,7 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
-    if (startDate !== undefined && !isIsoDateString(startDate)) return res.status(400).json({ error: 'Invalid startDate' });
-    if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
+    if (!isValidOptionalIsoDateRange(startDate, endDate)) return res.status(400).json({ error: 'Invalid date range' });
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
@@ -205,8 +204,7 @@ export function registerLogRoutes(app: Express, db: AppDatabase, upload: multer.
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
-    if (startDate !== undefined && !isIsoDateString(startDate)) return res.status(400).json({ error: 'Invalid startDate' });
-    if (endDate !== undefined && !isIsoDateString(endDate)) return res.status(400).json({ error: 'Invalid endDate' });
+    if (!isValidOptionalIsoDateRange(startDate, endDate)) return res.status(400).json({ error: 'Invalid date range' });
 
     const start = startDate ? String(startDate) + 'T00:00:00' : '2000-01-01';
     const end = endDate ? String(endDate) + 'T23:59:59' : '2099-12-31';

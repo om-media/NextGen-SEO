@@ -10,16 +10,7 @@ import {
 } from '../services/contentAuthority.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString } from '../validation.js';
-
-const parseLimit = (value: unknown) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.min(Math.max(Math.trunc(parsed), 1), 500) : 50;
-};
-
-const parseOffset = (value: unknown) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(Math.trunc(parsed), 0) : 0;
-};
+import { parseBoundedInteger } from '../routeValidation.js';
 
 async function ensureSiteAccess(db: AppDatabase, ownerId: string, siteUrl: string) {
   return canAccessSite(db, ownerId, siteUrl);
@@ -47,6 +38,9 @@ export function registerContentAuthorityRoutes(app: Express, db: AppDatabase) {
     const ownerId = req.authUser!.uid;
     const siteUrl = asTrimmedString(req.query.siteUrl);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
+    const limit = parseBoundedInteger(req.query.limit, { defaultValue: 50, max: 500, min: 1 });
+    const offset = parseBoundedInteger(req.query.offset, { defaultValue: 0, max: 1_000_000, min: 0 });
+    if (!limit.ok || !offset.ok) return res.status(400).json({ error: 'Invalid pagination' });
 
     try {
       if (!(await ensureSiteAccess(db, ownerId, siteUrl))) {
@@ -54,8 +48,8 @@ export function registerContentAuthorityRoutes(app: Express, db: AppDatabase) {
       }
       res.json(await listContentAuthorityPages(db, ownerId, {
         crawlJobId: asTrimmedString(req.query.crawlJobId),
-        limit: parseLimit(req.query.limit),
-        offset: parseOffset(req.query.offset),
+        limit: limit.value,
+        offset: offset.value,
         search: asTrimmedString(req.query.search),
         siteUrl,
       }));

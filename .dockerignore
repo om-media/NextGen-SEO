@@ -2,9 +2,17 @@ node_modules
 dist
 .server-dist
 .cache
+.npm-cache
+.tmp
+coverage
+uploads
+playwright-report
+test-results
+blob-report
 .git
 .factory
 droid-wiki
+.aider*
 
 .env
 .env.*
@@ -21,6 +29,8 @@ droid-wiki
 qa-*.png
 qa-*.md
 qa-state.json
+qa-artifacts
+qa-results
 
 database.sqlite
 seo_database.sqlite
@@ -29,9 +39,15 @@ server-startup.log.err
 -w
 
 AGENTS.md
+PRODUCT.md
 PRODUCTION_CHECKLIST.md
 docs/*todo*.md
 docs/*competitor*.md
+docs/*plan*.md
+docs/*roadmap*.md
+docs/*evaluation*.md
+docs/*spec*.md
+docs/stabilization-freeze.md
 test-api.js
 test-api.mjs
 test-regex.js

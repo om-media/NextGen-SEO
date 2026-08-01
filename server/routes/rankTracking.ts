@@ -8,10 +8,10 @@ import {
   isAllowedDevice,
   isNonEmptyString,
   isPlainObject,
-  isStringArray,
   isStringRecord,
 } from '../validation.js';
 import { canAccessSite } from '../accessControl.js';
+import { isNonEmptyStringArray } from '../routeValidation.js';
 
 export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
@@ -84,7 +84,7 @@ export function registerRankTrackingRoutes(app: Express, db: AppDatabase) {
 
   app.post('/api/rank-tracking/keywords', authRequired, async (req: AuthedRequest, res) => {
     const { siteUrl, keywords, location, device, tags, targetDomain, initialPositions } = req.body;
-    if (!isNonEmptyString(siteUrl) || !isStringArray(keywords)) return res.status(400).json({ error: 'Invalid payload' });
+    if (!isNonEmptyString(siteUrl) || !isNonEmptyStringArray(keywords)) return res.status(400).json({ error: 'Invalid payload' });
     if (location !== undefined && location !== null && !isNonEmptyString(location)) return res.status(400).json({ error: 'Invalid location' });
     if (device !== undefined && device !== null && !isAllowedDevice(device)) return res.status(400).json({ error: 'Invalid device' });
     if (tags !== undefined && tags !== null && typeof tags !== 'string') return res.status(400).json({ error: 'Invalid tags' });

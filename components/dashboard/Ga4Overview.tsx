@@ -16,7 +16,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { Check, Download, Info, Loader2, MoreVertical } from "lucide-react"
+import { Check, Download, Info, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Annotation } from "@/src/services/annotationsService"
 
@@ -701,9 +701,6 @@ export function Ga4Overview({
               >
                 <Download className="mr-2 h-4 w-4" />
                 Export
-              </Button>
-              <Button variant="outline" size="icon" className="h-9 w-9 rounded-lg border-border bg-card" disabled>
-                <MoreVertical className="h-4 w-4" />
               </Button>
             </div>
           </div>

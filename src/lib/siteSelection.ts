@@ -146,6 +146,7 @@ export function getPreferredGa4PropertyId(
     allowUnscopedPreference?: boolean;
     currentPreference?: string;
     currentPreferenceSite?: string;
+    preferCurrentPreference?: boolean;
     workspaceSite: string;
   },
 ) {
@@ -155,14 +156,16 @@ export function getPreferredGa4PropertyId(
     allowUnscopedPreference = false,
     currentPreference = "",
     currentPreferenceSite = "",
+    preferCurrentPreference = false,
     workspaceSite,
   } = options;
 
-  if (
-    currentPreference &&
-    (allowUnscopedPreference || currentPreferenceSite === workspaceSite) &&
-    availableSites.some((site) => site.siteUrl === currentPreference)
-  ) {
+  const currentPreferenceIsAvailable = Boolean(
+    currentPreference
+    && (allowUnscopedPreference || currentPreferenceSite === workspaceSite)
+    && availableSites.some((site) => site.siteUrl === currentPreference),
+  );
+  if (preferCurrentPreference && currentPreferenceIsAvailable) {
     return currentPreference;
   }
 
@@ -172,10 +175,15 @@ export function getPreferredGa4PropertyId(
   if (
     workspaceSite &&
     workspaceSite === activatedSiteUrl &&
-    savedDefaultSite &&
-    isGa4PropertyForWorkspaceSite(savedDefaultSite, workspaceSite)
+    savedDefaultSite
   ) {
     return activatedGa4PropertyId || "";
+  }
+
+  if (
+    currentPreferenceIsAvailable
+  ) {
+    return currentPreference;
   }
 
   return getGa4PropertyForWorkspaceSite(availableSites, workspaceSite);

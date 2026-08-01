@@ -65,6 +65,7 @@ export function AppToolbar({
   const sectionCopy = getSectionCopy(activeMenu, dataSource);
   const reportingGa4PropertyId = dataSource === "blended" || dataSource === "ga4" ? ga4PropertyId : null;
   const isDashboard = activeMenu === "Dashboard";
+  const isEvidenceWorkspace = activeMenu === "Topical Authority" || activeMenu === "Visual Semantics";
   const [syncRefreshKey, setSyncRefreshKey] = useState(0);
   const [syncActionState, setSyncActionState] = useState<"idle" | "queueing">("idle");
   const [toolbarCoverage, setToolbarCoverage] = useState<ToolbarCoverageSnapshot | null>(null);
@@ -117,7 +118,7 @@ export function AppToolbar({
         <div className="absolute inset-0 hidden dark:block bg-[linear-gradient(135deg,rgba(255,255,255,0.06)_0%,rgba(255,255,255,0.025)_38%,rgba(255,255,255,0)_72%)] opacity-80" />
         <div className="absolute inset-x-0 bottom-0 hidden h-1/2 dark:block bg-[linear-gradient(180deg,transparent_0%,rgba(255,255,255,0.02)_100%)]" />
       </div>
-      <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+      <div className="relative flex flex-col gap-5 2xl:flex-row 2xl:items-center 2xl:justify-between">
       <div className="max-w-[460px] shrink-0">
         <p className="text-sm font-medium text-foreground">Good afternoon, {firstName || "there"}!</p>
         <h2 className="mt-2 max-w-md text-[30px] font-semibold leading-[1.08] tracking-[-0.02em] text-foreground text-balance sm:text-[32px]">
@@ -127,8 +128,8 @@ export function AppToolbar({
           {sectionCopy.description}
         </p>
       </div>
-      <div className="flex w-full flex-col items-start gap-2 xl:min-w-[760px] xl:items-end">
-        <div className="flex w-full flex-wrap items-center gap-2 xl:justify-end">
+      {!isEvidenceWorkspace && <div className="flex w-full flex-col items-start gap-2 2xl:min-w-[760px] 2xl:items-end">
+        <div className="flex w-full flex-wrap items-center gap-2 2xl:justify-end">
           {isDashboard && (dataSource === "gsc" || dataSource === "blended" || dataSource === "ga4") && (
             <>
               <GscSyncStatusBadge
@@ -185,7 +186,7 @@ export function AppToolbar({
           </div>
         </div>
         {dataSource !== "bing" && isCompareMode && (
-          <div className="grid w-full grid-cols-2 gap-2 self-start rounded-xl border border-dashed border-border bg-card/70 p-1 shadow-[0_8px_20px_rgba(15,61,46,0.04)] xl:self-end sm:w-auto sm:grid-cols-[auto_auto_auto_auto] sm:items-center">
+          <div className="grid w-full grid-cols-2 gap-2 self-start rounded-xl border border-dashed border-border bg-card/70 p-1 shadow-[0_8px_20px_rgba(15,61,46,0.04)] 2xl:self-end sm:w-auto sm:grid-cols-[auto_auto_auto_auto] sm:items-center">
             <span className="col-span-2 text-sm font-medium px-2 text-muted-foreground sm:col-span-1">vs</span>
             <div className="min-w-0 [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 sm:[&>button]:w-auto sm:[&>button]:min-w-[160px]">
               <DatePicker date={compareDateRange.from} setDate={onCompareFromDateChange} label="Compare From" />
@@ -196,7 +197,7 @@ export function AppToolbar({
             </div>
           </div>
         )}
-      </div>
+      </div>}
       </div>
     </div>
   );
@@ -459,6 +460,27 @@ function getSectionCopy(activeMenu: string, dataSource: DataSource) {
     return {
       title: "Understand what Google can index",
       description: "Combine Search Console, URL inspection, and crawl signals to find indexing risks faster.",
+    };
+  }
+
+  if (activeMenu === "Internal Links") {
+    return {
+      title: "Find contextual internal link opportunities",
+      description: "Turn crawl context and search performance into precise anchor and destination recommendations.",
+    };
+  }
+
+  if (activeMenu === "Topical Authority") {
+    return {
+      title: "Measure topical authority from search evidence",
+      description: "Review the topics your site owns, where coverage is thin, and which clusters need stronger pages or internal support.",
+    };
+  }
+
+  if (activeMenu === "Visual Semantics") {
+    return {
+      title: "Inspect how pages communicate meaning",
+      description: "Review page purpose, centerpiece regions, functional components, and repeated templates from stored crawl evidence.",
     };
   }
 

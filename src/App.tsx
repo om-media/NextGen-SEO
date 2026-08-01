@@ -3,7 +3,7 @@ import { AppSidebar } from "@/components/layout/AppSidebar"
 import { Button } from "@/components/ui/button"
 import { AuthProvider, useAuth } from "./contexts/AuthContext"
 import { BarChart3 } from "lucide-react"
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { GscApiService, GscSite } from "./services/gscService"
 import { subDays, differenceInDays } from "date-fns"
 import { DateRange } from "react-day-picker"
@@ -60,6 +60,10 @@ function DashboardContentFallback() {
 function MainApp() {
   const { user, userProfile, loading, signOut, connectGoogleServices, disconnectGoogleServices, unlockSite, setBingApiKey, completeOnboarding, updateDefaultSite, updateDefaultGa4Property, updateUserProfile } = useAuth()
   const isOnboarding = Boolean(userProfile && !userProfile.onboardingCompleted)
+  const mappedProfileGa4Sites = useMemo(() => userProfile?.activatedGa4PropertyId ? [{
+    siteUrl: userProfile.activatedGa4PropertyId,
+    displayName: userProfile.activatedGa4DisplayName || userProfile.activatedGa4PropertyId,
+  }] : [], [userProfile?.activatedGa4DisplayName, userProfile?.activatedGa4PropertyId])
   const [settingsInitialTab, setSettingsInitialTab] = useState<"profile" | "workspace" | "integrations">("profile")
   const [sites, setSites] = useState<GscSite[]>([])
   const [bingSites, setBingSites] = useState<BingSite[]>([])
@@ -114,7 +118,7 @@ function MainApp() {
     setActiveMenu(menu)
     if (menu === "LLM Traffic") {
       setDataSource('ga4')
-    } else if (menu === "Sites" || menu === "Rank Tracker" || menu === "Server Logs" || menu === "Page Indexing" || menu === "Crawl Inventory" || menu === "Internal Links" || menu === "Raw Data" || menu === "Reconciliation") {
+    } else if (menu === "Sites" || menu === "Rank Tracker" || menu === "Server Logs" || menu === "Page Indexing" || menu === "Crawl Inventory" || menu === "Topical Authority" || menu === "Visual Semantics" || menu === "Internal Links" || menu === "Raw Data" || menu === "Reconciliation") {
       setDataSource('gsc')
     }
   }
@@ -268,7 +272,10 @@ function MainApp() {
 
     setSites(readCachedList<GscSite>(gscSitesCacheKey(userKey)));
     setBingSites([]);
-    setGa4Sites(readCachedList<{siteUrl: string, displayName: string}>(ga4SitesCacheKey(userKey)));
+    setGa4Sites(mergeUniqueSites(
+      readCachedList<{siteUrl: string, displayName: string}>(ga4SitesCacheKey(userKey)),
+      mappedProfileGa4Sites,
+    ));
     localStorage.removeItem('gsc_sites_cache');
     localStorage.removeItem('ga4_sites_cache');
     const profileWorkspaceSites = getProfileWorkspaceSites(
@@ -298,6 +305,7 @@ function MainApp() {
     initializedSelectionsForUser,
     user?.uid,
     userProfile?.activatedGa4PropertyId,
+    userProfile?.activatedGa4DisplayName,
     userProfile?.activatedSiteUrl,
     userProfile?.knownSites,
     userProfile?.unlockedSites,
@@ -383,12 +391,12 @@ function MainApp() {
       ga4Service.getProperties()
         .then((fetchedSites) => {
           if (cancelled || !selectorRequestGate.isCurrent("onboarding-ga4", onboardingGa4RequestId)) return;
-          setGa4Sites(fetchedSites)
+          setGa4Sites(mergeUniqueSites(fetchedSites, mappedProfileGa4Sites))
         })
         .catch((err) => {
           if (cancelled || !selectorRequestGate.isCurrent("onboarding-ga4", onboardingGa4RequestId)) return;
           console.warn("Failed to fetch GA4 properties during onboarding:", err)
-          setGa4Sites([])
+          setGa4Sites(mappedProfileGa4Sites)
         })
     }
 
@@ -502,7 +510,7 @@ function MainApp() {
         .then(fetchedSites => {
           if (cancelled || !selectorRequestGate.isCurrent("ga4", ga4RequestId)) return;
           setSessionExpired(false)
-          setGa4Sites(fetchedSites)
+          setGa4Sites(mergeUniqueSites(fetchedSites, mappedProfileGa4Sites))
         })
         .catch(err => {
           if (cancelled || !selectorRequestGate.isCurrent("ga4", ga4RequestId)) return;
@@ -524,14 +532,14 @@ function MainApp() {
           if (!cancelled && selectorRequestGate.isCurrent("ga4", ga4RequestId)) setFetchingSites(false);
         })
     } else if (dataSource === 'ga4' && !googleConnected) {
-      setGa4Sites([])
+      setGa4Sites(mappedProfileGa4Sites)
     }
 
     return () => {
       cancelled = true;
       startedScopes.forEach((scope) => selectorRequestGate.cancel(scope));
     };
-  }, [backgroundEffectsReady, dataSource, isOnboarding, user, userProfile])
+  }, [backgroundEffectsReady, dataSource, isOnboarding, mappedProfileGa4Sites, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
     explicitSiteSelectionRef.current = true;
@@ -559,17 +567,23 @@ function MainApp() {
   };
 
   const handleSaveSettings = async () => {
-    await updateUserProfile({
-      avatarUrl: settingsDraft.avatarUrl,
-      bio: settingsDraft.bio,
-      company: settingsDraft.company,
-      name: settingsDraft.name,
-    });
-    if (settingsDraft.bingApiKey.trim()) {
-      await setBingApiKey(settingsDraft.bingApiKey.trim());
+    try {
+      await updateUserProfile({
+        avatarUrl: settingsDraft.avatarUrl,
+        bio: settingsDraft.bio,
+        company: settingsDraft.company,
+        name: settingsDraft.name,
+      });
+      if (settingsDraft.bingApiKey.trim()) {
+        await setBingApiKey(settingsDraft.bingApiKey.trim());
+      }
+      setSettingsDraft((prev) => ({ ...prev, bingApiKey: "" }));
+      setShowSettingsModal(false);
+    } catch (error) {
+      toast.error('Failed to save settings', {
+        description: error instanceof Error ? error.message : "We couldn't save your settings.",
+      });
     }
-    setSettingsDraft((prev) => ({ ...prev, bingApiKey: "" }));
-    setShowSettingsModal(false);
   };
 
   const handleGa4PropertySelect = (propertyId: string) => {
@@ -723,9 +737,14 @@ function MainApp() {
   const workspaceMatchedGa4Sites = selectedSite
     ? accessibleGa4Sites.filter((site) => isGa4PropertyForWorkspaceSite(site, selectedSite))
     : accessibleGa4Sites;
-  const selectedGa4PropertyForDashboard = selectedGa4PropertySite === selectedSite && accessibleGa4Sites.some((site) => site.siteUrl === selectedGa4Property)
-    ? selectedGa4Property
-    : "";
+  const selectedGa4PropertyForDashboard = getPreferredGa4PropertyId(accessibleGa4Sites, {
+    activatedGa4PropertyId: userProfile?.activatedGa4PropertyId,
+    activatedSiteUrl: userProfile?.activatedSiteUrl,
+    currentPreference: selectedGa4Property,
+    currentPreferenceSite: selectedGa4PropertySite,
+    preferCurrentPreference: explicitGa4SelectionRef.current,
+    workspaceSite: selectedSite,
+  });
   const activeGa4PropertyId = selectedGa4PropertyForDashboard || null;
   const activeGa4Selection = activeGa4PropertyId || "";
   const visibleGa4Sites = dataSource === 'ga4' ? accessibleGa4Sites : workspaceMatchedGa4Sites;
@@ -746,6 +765,8 @@ function MainApp() {
     "Dashboard",
     "LLM Traffic",
     "Internal Links",
+    "Topical Authority",
+    "Visual Semantics",
     "Page Indexing",
     "Raw Data",
     "Reconciliation",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  getPreferredGa4PropertyId,
   getProfileWorkspaceSites,
   getWorkspaceSiteForGa4Property,
   readCachedSiteSelection,
@@ -44,6 +45,49 @@ export function runSiteSelectionTests() {
     { siteUrl: "properties/222", displayName: "Beta Example Main Property" },
   ];
   const knownWorkspaceSites = getProfileWorkspaceSites(alpha, [alpha, beta], []);
+
+  const sameWorkspaceGa4Sites: SiteLike[] = [
+    { siteUrl: "properties/default", displayName: "Alpha Example Default" },
+    { siteUrl: "properties/alternate", displayName: "Alpha Example Alternate" },
+  ];
+  assert.equal(
+    getPreferredGa4PropertyId(sameWorkspaceGa4Sites, {
+      activatedGa4PropertyId: "properties/default",
+      activatedSiteUrl: alpha,
+      currentPreference: "properties/alternate",
+      currentPreferenceSite: alpha,
+      preferCurrentPreference: true,
+      workspaceSite: alpha,
+    }),
+    "properties/alternate",
+  );
+  assert.equal(
+    getPreferredGa4PropertyId(sameWorkspaceGa4Sites, {
+      activatedGa4PropertyId: "properties/default",
+      activatedSiteUrl: alpha,
+      currentPreference: "properties/alternate",
+      currentPreferenceSite: alpha,
+      workspaceSite: alpha,
+    }),
+    "properties/default",
+  );
+
+  assert.equal(
+    getPreferredGa4PropertyId(
+      [
+        { siteUrl: "properties/305933802", displayName: "Decibel International" },
+        { siteUrl: "properties/369183775", displayName: "Stale cached property" },
+      ],
+      {
+        activatedGa4PropertyId: "properties/305933802",
+        activatedSiteUrl: "https://decibelinternational.com/",
+        currentPreference: "properties/369183775",
+        currentPreferenceSite: "https://decibelinternational.com/",
+        workspaceSite: "https://decibelinternational.com/",
+      },
+    ),
+    "properties/305933802",
+  );
 
   assert.equal(
     getWorkspaceSiteForGa4Property("properties/222", alpha, ga4Sites, workspaceSites),

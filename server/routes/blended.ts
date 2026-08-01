@@ -2,9 +2,10 @@ import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
-import { isIsoDateString, isNonEmptyString } from '../validation.js';
+import { isNonEmptyString } from '../validation.js';
 import { canonicalPageKey } from '../reporting/url.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
+import { isValidIsoDateRange, parseBoundedInteger } from '../routeValidation.js';
 
 const toFiniteNumber = (value: unknown) => {
   const number = Number(value);
@@ -38,15 +39,18 @@ export function registerBlendedRoutes(app: Express, db: AppDatabase) {
       trafficFilter,
     } = req.body;
 
-    if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!isNonEmptyString(siteUrl) || !isValidIsoDateRange(startDate, endDate)) {
       return res.status(400).json({ error: 'Missing or invalid parameters' });
     }
     if (ga4PropertyId !== undefined && ga4PropertyId !== null && !isNonEmptyString(ga4PropertyId)) {
       return res.status(400).json({ error: 'Invalid ga4PropertyId' });
     }
 
-    const rowLimit = Number.isFinite(Number(limit)) ? Math.min(Math.max(Number(limit), 1), 5000) : 500;
-    const rowOffset = Number.isFinite(Number(offset)) ? Math.max(Number(offset), 0) : 0;
+    const parsedLimit = parseBoundedInteger(limit, { defaultValue: 500, max: 5000, min: 1 });
+    const parsedOffset = parseBoundedInteger(offset, { defaultValue: 0, max: 1_000_000, min: 0 });
+    if (!parsedLimit.ok || !parsedOffset.ok) return res.status(400).json({ error: 'Invalid pagination' });
+    const rowLimit = parsedLimit.value;
+    const rowOffset = parsedOffset.value;
     const normalizedSearch = isNonEmptyString(search) ? search.trim().toLowerCase() : '';
     const normalizedAnalyticsFilter = [
       'all',

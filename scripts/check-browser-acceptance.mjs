@@ -254,6 +254,72 @@ async function getHeaderText(page) {
   return page.locator('header').innerText().catch(() => '');
 }
 
+async function installSecondaryWorkflowMocks(page, user) {
+  const emptyQueue = queuePayload();
+  const json = (route, body) => fulfillRoute(route, {
+    contentType: 'application/json',
+    body: JSON.stringify(body),
+  });
+
+  await page.route('**/api/rank-tracking/keywords**', (route) => json(route, []));
+  await page.route('**/api/rank-tracking/status**', (route) => json(route, {
+    autoCollectionEnabled: true,
+    collectionCadence: 'daily',
+    freshCount: 0,
+    latestUpdated: null,
+    neverCollectedCount: 0,
+    staleCount: 0,
+    today: '2026-08-01',
+    totalKeywords: 0,
+  }));
+  await page.route('**/api/logs/stats**', (route) => json(route, []));
+  await page.route('**/api/logs/errors**', (route) => json(route, []));
+  await page.route('**/api/logs/insights**', (route) => json(route, {
+    efficiency: [],
+    llmTraffic: [],
+    mostCrawled: [],
+  }));
+  await page.route('**/api/indexing/auto-sync/status**', (route) => json(route, { status: 'idle' }));
+  await page.route('**/api/indexing/grid**', (route) => json(route, []));
+  await page.route('**/api/workspace/sites/status', (route) => json(route, {
+    ga4PropertyId: user.activatedGa4PropertyId || null,
+    sites: [{
+      crawl: null,
+      isDefault: true,
+      isUnlocked: true,
+      siteUrl: user.activatedSiteUrl,
+      warehouse: {
+        earliestMetricDate: null,
+        jobs: { completed: 0, error: 0, latest: null, latestUpdatedAt: null, queued: 0, retrying: 0, running: 0, total: 0 },
+        lastMetricDate: null,
+        metricDayCount: 0,
+        rowCount: 0,
+        status: 'empty',
+        updatedAt: null,
+      },
+    }],
+  }));
+  await page.route('**/api/warehouse/raw/gsc**', (route) => json(route, { page: { limit: 100, offset: 0, total: 0 }, rows: [] }));
+  await page.route('**/api/reconciliation/pages**', (route) => json(route, {
+    meta: {
+      crawlJobId: null,
+      ga4Coverage: null,
+      totals: { crawlErrors: 0, issues: 0, matched: 0, missingCrawl: 0, missingGa4: 0, missingGsc: 0, total: 0 },
+    },
+    page: { limit: 100, offset: 0, total: 0 },
+    rows: [],
+  }));
+  await page.route('**/api/crawl/jobs**', (route) => json(route, { jobs: [], queue: emptyQueue }));
+  await page.route('**/api/crawl/pages**', (route) => json(route, {
+    job: null,
+    page: { limit: 5000, offset: 0, total: 0 },
+    queue: emptyQueue,
+    rows: [],
+    summary: null,
+  }));
+  await page.route('**/api/warehouse/query', (route) => json(route, []));
+}
+
 async function clickTab(page, name) {
   const tab = page.locator('[data-slot="tabs-trigger"]').filter({ hasText: new RegExp(`^${escapeRegExp(name)}$`, 'i') }).first();
   await tab.waitFor({ state: 'visible', timeout: 30000 });
@@ -366,6 +432,191 @@ async function run() {
         await context.close();
       }
     });
+
+    await runScenario(report, 'onboarding-desktop-mobile', async (scenario) => {
+      const context = await createAuthedContext(browser, baseUrl, token);
+      const page = await context.newPage();
+      const monitor = installPageMonitor(page);
+      const onboardingSite = 'https://onboarding.example/';
+
+      await page.route('**/api/auth/session', async (route) => {
+        const response = await route.fetch();
+        const payload = await response.json();
+        payload.profile = {
+          ...payload.profile,
+          activatedGa4DisplayName: null,
+          activatedGa4PropertyId: null,
+          activatedSiteUrl: null,
+          googleConnected: true,
+          knownSites: [],
+          onboardingCompleted: false,
+          unlockedSites: [],
+        };
+        await fulfillRoute(route, { contentType: 'application/json', body: JSON.stringify(payload) });
+      });
+      await page.route('**/api/warehouse/status', (route) => fulfillRoute(route, {
+        contentType: 'application/json',
+        body: JSON.stringify([{ siteUrl: onboardingSite }]),
+      }));
+      await page.route('**/api/google/gsc/sites', (route) => fulfillRoute(route, {
+        contentType: 'application/json',
+        body: JSON.stringify([{ permissionLevel: 'siteOwner', siteUrl: onboardingSite }]),
+      }));
+      await page.route('**/api/google/ga4/properties', (route) => fulfillRoute(route, {
+        contentType: 'application/json',
+        body: JSON.stringify([{
+          account: 'accounts/onboarding',
+          displayName: 'Onboarding account',
+          name: 'accountSummaries/onboarding',
+          propertySummaries: [{ displayName: 'onboarding.example', property: 'properties/123', propertyType: 'PROPERTY_TYPE_ORDINARY' }],
+        }]),
+      }));
+
+      try {
+        await waitForAppShell(page);
+        await waitForCondition(async () => /Choose your default property/i.test(await page.locator('body').innerText()), { description: 'onboarding site selection' });
+        await page.getByRole('button', { name: new RegExp(escapeRegExp(onboardingSite), 'i') }).click();
+        await page.getByRole('button', { name: 'Continue', exact: true }).click();
+        await waitForCondition(async () => /Optional Bing setup/i.test(await page.locator('body').innerText()), { description: 'onboarding Bing step' });
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'onboarding-desktop'));
+        await page.setViewportSize({ width: 390, height: 844 });
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'Onboarding overflowed the mobile viewport.');
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'onboarding-mobile'));
+        if (monitor.hasUnexpectedFailures()) scenario.failures.push(...summarizeFailures(monitor.events));
+      } finally {
+        await context.close();
+      }
+    });
+
+    await runScenario(report, 'settings-save-success', async (scenario) => {
+      const context = await createAuthedContext(browser, baseUrl, token);
+      const page = await context.newPage();
+      const monitor = installPageMonitor(page);
+      let savedBody = null;
+      await page.route('**/api/users/*/profile', async (route) => {
+        if (route.request().method() !== 'PUT') return route.continue();
+        savedBody = route.request().postDataJSON();
+        await fulfillRoute(route, { contentType: 'application/json', body: JSON.stringify({ success: true }) });
+      });
+
+      try {
+        await waitForAppShell(page);
+        await clickSidebarItem(page, 'Settings');
+        await page.getByRole('button', { name: 'Edit profile', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'Settings' });
+        await dialog.waitFor({ state: 'visible' });
+        await dialog.locator('#profile-name').fill('Acceptance Profile');
+        await dialog.getByRole('button', { name: 'Save Changes', exact: true }).click();
+        await dialog.waitFor({ state: 'hidden' });
+        assert(savedBody?.name === 'Acceptance Profile', 'Settings save did not send the edited profile name.');
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'settings-save-success'));
+        if (monitor.hasUnexpectedFailures()) scenario.failures.push(...summarizeFailures(monitor.events));
+      } finally {
+        await context.close();
+      }
+    });
+
+    await runScenario(report, 'settings-save-error', async (scenario) => {
+      const context = await createAuthedContext(browser, baseUrl, token);
+      const page = await context.newPage();
+      const monitor = installPageMonitor(page, {
+        ignoreConsole: ['Failed to load resource: the server responded with a status of 500'],
+        ignoreResponseFailures: ['/api/users/'],
+      });
+      await page.route('**/api/users/*/profile', async (route) => {
+        if (route.request().method() !== 'PUT') return route.continue();
+        await fulfillRoute(route, {
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Forced profile save failure' }),
+        });
+      });
+
+      try {
+        await waitForAppShell(page);
+        await clickSidebarItem(page, 'Settings');
+        await page.getByRole('button', { name: 'Edit profile', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'Settings' });
+        await dialog.waitFor({ state: 'visible' });
+        await dialog.locator('#profile-name').fill('Acceptance Failure');
+        await dialog.getByRole('button', { name: 'Save Changes', exact: true }).click();
+        await waitForCondition(async () => /Forced profile save failure/i.test(await page.locator('body').innerText()), { description: 'settings save error' });
+        assert(await dialog.isVisible(), 'Settings dialog closed after a failed save.');
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'settings-save-error'));
+        if (monitor.hasUnexpectedFailures()) scenario.failures.push(...summarizeFailures(monitor.events));
+      } finally {
+        await context.close();
+      }
+    });
+
+    await runScenario(report, 'secondary-workflows-desktop', async (scenario) => {
+      const context = await createAuthedContext(browser, baseUrl, token);
+      const page = await context.newPage();
+      const monitor = installPageMonitor(page, { ignoreResponseFailures: ['/api/warehouse/coverage'] });
+      await installSecondaryWorkflowMocks(page, user);
+
+      try {
+        await waitForAppShell(page);
+        for (const [menu, expected, shot] of [
+          ['Rank Tracker', /No keywords tracked yet|Tracked Keywords/i, 'rank-tracker'],
+          ['Server Logs', /Server Log Analysis/i, 'server-logs'],
+          ['Page Indexing', /Hybrid Page Indexing/i, 'page-indexing'],
+        ]) {
+          await clickSidebarItem(page, menu);
+          await waitForCondition(async () => expected.test(await getMainText(page)), { description: menu });
+          scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, `secondary-${shot}`));
+        }
+
+        await clickSidebarItem(page, 'Sites');
+        await waitForCondition(async () => /Workspace sites/i.test(await getMainText(page)), { description: 'workspace sites' });
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'secondary-sites'));
+        await page.getByRole('button', { name: 'Match', exact: true }).click();
+        await waitForCondition(async () => /Page reconciliation/i.test(await getMainText(page)), { description: 'reconciliation' });
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'secondary-reconciliation'));
+
+        await clickSidebarItem(page, 'Dashboard');
+        await page.getByRole('button', { name: 'Source data', exact: true }).click();
+        await waitForCondition(async () => /Source data/i.test(await getMainText(page)), { description: 'source data' });
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'secondary-source-data'));
+
+        await clickSidebarItem(page, 'AI Content Auditor');
+        await waitForCondition(async () => /AI content auditor/i.test(await getMainText(page)), { description: 'AI content auditor' });
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'secondary-ai-auditor'));
+        if (monitor.hasUnexpectedFailures()) scenario.failures.push(...summarizeFailures(monitor.events));
+      } finally {
+        await context.close();
+      }
+    });
+
+    await runScenario(report, 'secondary-workflows-mobile', async (scenario) => {
+      const context = await browser.newContext({ baseURL: baseUrl, viewport: { width: 390, height: 844 } });
+      await context.addCookies([{ name: SESSION_COOKIE_NAME, value: token, url: baseUrl }]);
+      const page = await context.newPage();
+      const monitor = installPageMonitor(page, { ignoreResponseFailures: ['/api/warehouse/coverage'] });
+      await installSecondaryWorkflowMocks(page, user);
+
+      try {
+        await waitForAppShell(page);
+        await page.getByRole('button', { name: 'Toggle Sidebar', exact: true }).click();
+        await page.getByRole('button', { name: 'Rank Tracker', exact: true }).click();
+        await waitForCondition(async () => /No keywords tracked yet|Tracked Keywords/i.test(await getMainText(page)), { description: 'mobile rank tracker' });
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'Rank Tracker overflowed the mobile viewport.');
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'secondary-mobile-rank-tracker'));
+
+        const mobilePageIndexing = page.getByRole('button', { name: 'Page Indexing', exact: true });
+        if (!(await mobilePageIndexing.isVisible().catch(() => false))) {
+          await page.getByRole('button', { name: 'Toggle Sidebar', exact: true }).click();
+        }
+        await mobilePageIndexing.click();
+        await waitForCondition(async () => /Hybrid Page Indexing/i.test(await getMainText(page)), { description: 'mobile page indexing' });
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'Page Indexing overflowed the mobile viewport.');
+        scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'secondary-mobile-page-indexing'));
+        if (monitor.hasUnexpectedFailures()) scenario.failures.push(...summarizeFailures(monitor.events));
+      } finally {
+        await context.close();
+      }
+    });
+
     await runScenario(report, 'gsc-dashboard-live', async (scenario) => {
       const context = await createAuthedContext(browser, baseUrl, token);
       context.setDefaultNavigationTimeout(30000);
@@ -511,6 +762,32 @@ async function run() {
       const siteB = 'https://www.avancenatur.es/';
       const propertyA = 'properties/529759264';
       const propertyB = 'properties/mock-avancenatur';
+
+      await page.route('**/api/auth/session', async (route) => {
+        const response = await route.fetch();
+        const payload = await response.json();
+        payload.profile = {
+          ...payload.profile,
+          activatedGa4DisplayName: 'avanterrapark.com',
+          activatedGa4PropertyId: propertyA,
+          activatedSiteUrl: siteA,
+          googleConnected: true,
+          knownSites: [siteA, siteB],
+          onboardingCompleted: true,
+          unlockedSites: [siteA, siteB],
+        };
+        await fulfillRoute(route, {
+          contentType: 'application/json',
+          body: JSON.stringify(payload),
+        });
+      });
+
+      await page.route('**/api/warehouse/status', async (route) => {
+        await fulfillRoute(route, {
+          contentType: 'application/json',
+          body: JSON.stringify([{ siteUrl: siteA }, { siteUrl: siteB }]),
+        });
+      });
 
       await page.route('**/api/google/gsc/sites', async (route) => {
         await fulfillRoute(route, {
@@ -899,7 +1176,7 @@ async function run() {
 
       try {
         await clickSidebarItem(page, 'Internal Links');
-        await waitForCondition(async () => /Run analysis after a fresh crawl to generate screenshot-style internal link recommendations\./i.test(await getMainText(page)), { description: 'internal links empty state' });
+        await waitForCondition(async () => /Start a fresh crawl to collect the sentence context needed for recommendations\.|No recommendations are available yet\. Choose Analyze site to generate them from the latest crawl\./i.test(await getMainText(page)), { description: 'internal links empty state' });
         scenario.screenshots.push(await screenshot(page, ARTIFACT_DIR, 'state-empty-internal-links'));
       } finally {
         await page.unroute('**/api/internal-links/jobs**');

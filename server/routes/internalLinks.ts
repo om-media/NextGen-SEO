@@ -6,6 +6,7 @@ import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString, isNonEmptyString } from '../validation.js';
 import { cancelInternalLinkAnalysisJob, estimateInternalLinkAnalysis, getInternalLinkOpportunities, listInternalLinkAnalysisJobs, queueInternalLinkAnalysis, rerunInternalLinkAnalysisJob, updateInternalLinkOpportunityStatus } from '../services/internalLinks.js';
 import { deleteInternalLinkProviderSettings, getInternalLinkProviderSettings, listInternalLinkProviderSettings, upsertInternalLinkProviderSettings } from '../services/internalLinkProviderSettings.js';
+import { parseBoundedInteger } from '../routeValidation.js';
 
 type ParsedAnalysisInput = {
   embeddingModel: string | null;
@@ -632,7 +633,9 @@ export function registerInternalLinkRoutes(app: Express, db: AppDatabase) {
     const ownerId = req.authUser!.uid;
     const siteUrl = asTrimmedString(req.query.siteUrl);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
-    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 50) : 20;
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 20, max: 50, min: 1 });
+    if (!parsedLimit.ok) return res.status(400).json({ error: 'Invalid limit' });
+    const limit = parsedLimit.value;
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
@@ -716,8 +719,11 @@ export function registerInternalLinkRoutes(app: Express, db: AppDatabase) {
       return res.status(400).json({ error: 'Missing or invalid parameters' });
     }
 
-    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 500) : 50;
-    const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 50, max: 500, min: 1 });
+    const parsedOffset = parseBoundedInteger(req.query.offset, { defaultValue: 0, max: 1_000_000, min: 0 });
+    if (!parsedLimit.ok || !parsedOffset.ok) return res.status(400).json({ error: 'Invalid pagination' });
+    const limit = parsedLimit.value;
+    const offset = parsedOffset.value;
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {

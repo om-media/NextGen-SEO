@@ -5,6 +5,7 @@ import { canonicalPageKey } from '../reporting/url.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isIsoDateString } from '../validation.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
+import { isValidIsoDateRange, parseBoundedInteger } from '../routeValidation.js';
 
 type SourceState = 'present' | 'missing';
 
@@ -81,9 +82,6 @@ const toNumber = (value: unknown) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
 };
-
-const getLimit = (value: unknown) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 1), 5000) : 100);
-const getOffset = (value: unknown) => (Number.isFinite(Number(value)) ? Math.max(Number(value), 0) : 0);
 
 const addIsoDays = (date: string, days: number) => {
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -309,12 +307,14 @@ export function registerReconciliationRoutes(app: Express, db: AppDatabase) {
     const crawlJobIdParam = asTrimmedString(req.query.crawlJobId) || '';
     const search = (asTrimmedString(req.query.search) || '').toLowerCase();
     const status = asTrimmedString(req.query.status) || 'issues';
-    const limit = getLimit(req.query.limit);
-    const offset = getOffset(req.query.offset);
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 100, max: 5000, min: 1 });
+    const parsedOffset = parseBoundedInteger(req.query.offset, { defaultValue: 0, max: 1_000_000, min: 0 });
 
-    if (!siteUrl || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!siteUrl || !isValidIsoDateRange(startDate, endDate) || !parsedLimit.ok || !parsedOffset.ok) {
       return res.status(400).json({ error: 'Missing or invalid reconciliation parameters' });
     }
+    const limit = parsedLimit.value;
+    const offset = parsedOffset.value;
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {

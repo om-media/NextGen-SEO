@@ -6,6 +6,7 @@ import { asTrimmedString, isNonEmptyString } from '../validation.js';
 import { cancelCrawlJob, compareCrawlJobs, getCrawlJobs, getCrawlLinks, getCrawlPages, getCrawlStatus, queueCrawlJob, type CrawlIssueFilter } from '../services/crawl.js';
 import { getPlanCrawlLimits } from '../../shared/plans.js';
 import { canAccessSite } from '../accessControl.js';
+import { parseBoundedInteger } from '../routeValidation.js';
 
 type CrawlQueueJobRow = {
   completedAt: string | null;
@@ -337,6 +338,11 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     const user = await db.get<{ tier?: string | null }>('SELECT tier FROM users WHERE id = ?', [ownerId]);
     const resolvedStartUrl = resolveStartUrl(siteUrl, isNonEmptyString(startUrl) ? startUrl : null);
     const crawlLimits = getPlanCrawlLimits(user?.tier as any);
+    const parsedMaxDepth = parseBoundedInteger(maxDepth, { defaultValue: crawlLimits.maxDepth, max: crawlLimits.maxDepth, min: 0 });
+    const parsedMaxPages = parseBoundedInteger(maxPages, { defaultValue: crawlLimits.maxPages, max: crawlLimits.maxPages, min: 1 });
+    if (!parsedMaxDepth.ok || !parsedMaxPages.ok) {
+      return res.status(400).json({ error: 'Invalid crawl limits' });
+    }
 
     if (!isHttpUrl(resolvedStartUrl)) {
       return res.status(400).json({
@@ -366,8 +372,8 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
 
       const job = await queueCrawlJob(db, {
         includeQueryStrings: includeQueryStrings === true,
-        maxDepth: Number.isFinite(Number(maxDepth)) ? Math.min(Number(maxDepth), crawlLimits.maxDepth) : crawlLimits.maxDepth,
-        maxPages: Number.isFinite(Number(maxPages)) ? Math.min(Number(maxPages), crawlLimits.maxPages) : crawlLimits.maxPages,
+        maxDepth: parsedMaxDepth.value,
+        maxPages: parsedMaxPages.value,
         ownerId,
         renderMode: renderMode === 'javascript' && crawlLimits.allowJavaScriptRendering ? 'javascript' : 'html',
         respectRobots: respectRobots === undefined ? undefined : respectRobots !== false,
@@ -406,7 +412,9 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     const siteUrl = asTrimmedString(req.query.siteUrl);
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 
-    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 50) : 20;
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 20, max: 50, min: 1 });
+    if (!parsedLimit.ok) return res.status(400).json({ error: 'Invalid limit' });
+    const limit = parsedLimit.value;
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
@@ -427,8 +435,11 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     const jobId = asTrimmedString(req.query.jobId) || null;
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 
-    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 50;
-    const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 50, max: 5000, min: 1 });
+    const parsedOffset = parseBoundedInteger(req.query.offset, { defaultValue: 0, max: 1_000_000, min: 0 });
+    if (!parsedLimit.ok || !parsedOffset.ok) return res.status(400).json({ error: 'Invalid pagination' });
+    const limit = parsedLimit.value;
+    const offset = parsedOffset.value;
     const search = asTrimmedString(req.query.search) || null;
     const issue = parseCrawlIssueFilter(req.query.issue);
 
@@ -449,8 +460,11 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
     const siteUrl = asTrimmedString(req.query.siteUrl);
     const jobId = asTrimmedString(req.query.jobId);
     const search = asTrimmedString(req.query.search);
-    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 100;
-    const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 100, max: 5000, min: 1 });
+    const parsedOffset = parseBoundedInteger(req.query.offset, { defaultValue: 0, max: 1_000_000, min: 0 });
+    if (!parsedLimit.ok || !parsedOffset.ok) return res.status(400).json({ error: 'Invalid pagination' });
+    const limit = parsedLimit.value;
+    const offset = parsedOffset.value;
 
     if (!siteUrl) return res.status(400).json({ error: 'Missing siteUrl' });
 

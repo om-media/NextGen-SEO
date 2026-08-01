@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type ErrorRequestHandler } from 'express';
 import multer from 'multer';
 import type { AppDatabase } from './database.js';
 import { registerAccountDataRoutes } from './routes/accountData.js';
@@ -7,6 +7,7 @@ import { registerLocalAuthRoutes } from './routes/auth.js';
 import { registerCrawlRoutes } from './routes/crawl.js';
 import { registerBlendedRoutes } from './routes/blended.js';
 import { registerContentAuthorityRoutes } from './routes/contentAuthority.js';
+import { registerTopicalAuthorityRoutes } from './routes/topicalAuthority.js';
 import { registerIndexingRoutes } from './routes/indexing.js';
 import { registerInternalLinkRoutes } from './routes/internalLinks.js';
 import { registerLogRoutes } from './routes/logs.js';
@@ -99,10 +100,32 @@ export function buildApp({ db, upload, syncJobs, getSyncJobKey, startWorkers = t
   registerWarehouseRoutes(app, db);
   registerBlendedRoutes(app, db);
   registerContentAuthorityRoutes(app, db);
+  registerTopicalAuthorityRoutes(app, db);
   registerReconciliationRoutes(app, db);
   registerRankTrackingRoutes(app, db);
   registerIndexingRoutes(app, db, syncJobs, getSyncJobKey);
   registerInternalLinkRoutes(app, db);
+
+  const apiErrorHandler: ErrorRequestHandler = (error, _req, res, next) => {
+    if (error?.type === 'entity.too.large') {
+      res.status(413).json({
+        error: 'Request body is too large',
+        code: 'PAYLOAD_TOO_LARGE',
+      });
+      return;
+    }
+
+    if (error?.type === 'entity.parse.failed') {
+      res.status(400).json({
+        error: 'Invalid JSON request body',
+        code: 'INVALID_JSON',
+      });
+      return;
+    }
+
+    next(error);
+  };
+  app.use(apiErrorHandler);
 
   if (startWorkers) {
     app.locals.stopBackgroundWorkers = startRuntimeServices(db, 'all');

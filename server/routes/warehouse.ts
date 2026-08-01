@@ -32,6 +32,7 @@ import {
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { getBingCacheStatus } from '../services/bingWarehouse.js';
 import { resolveWorkspaceGa4PropertyStartDate, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
+import { isValidIsoDateRange, parseBoundedInteger } from '../routeValidation.js';
 import {
   getGscSummaryWindow,
   hasGscMonthlySummariesForRange,
@@ -886,8 +887,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
     if (
       !isNonEmptyString(propertyId)
-      || !isIsoDateString(startDate)
-      || !isIsoDateString(endDate)
+      || !isValidIsoDateRange(startDate, endDate)
       || !Array.isArray(dimensions)
       || !Array.isArray(metrics)
       || dimensions.some((dimension) => !isNonEmptyString(dimension))
@@ -992,7 +992,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   app.post('/api/warehouse/ga4/llm/missing', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { propertyId, siteUrl, startDate, endDate, maxDates } = req.body || {};
-    if (!isNonEmptyString(propertyId) || !isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!isNonEmptyString(propertyId) || !isNonEmptyString(siteUrl) || !isValidIsoDateRange(startDate, endDate)) {
       return res.status(400).json({ error: 'Invalid LLM traffic import request' });
     }
 
@@ -1092,7 +1092,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   app.post('/api/warehouse/ga4/llm/report', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { propertyId, siteUrl, startDate, endDate, autoQueue = false } = req.body || {};
-    if (!isNonEmptyString(propertyId) || !isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate) || typeof autoQueue !== 'boolean') {
+    if (!isNonEmptyString(propertyId) || !isNonEmptyString(siteUrl) || !isValidIsoDateRange(startDate, endDate) || typeof autoQueue !== 'boolean') {
       return res.status(400).json({ error: 'Invalid GA4 LLM report payload' });
     }
 
@@ -1563,7 +1563,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const startDate = asTrimmedString(req.query.startDate);
     const endDate = asTrimmedString(req.query.endDate);
 
-    if (!siteUrl || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!siteUrl || !isValidIsoDateRange(startDate, endDate)) {
       return res.status(400).json({ error: 'Missing or invalid coverage parameters' });
     }
 
@@ -2260,7 +2260,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   app.post('/api/warehouse/jobs/missing', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, propertyId, startDate, endDate, maxDates } = req.body || {};
-    if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!isNonEmptyString(siteUrl) || !isValidIsoDateRange(startDate, endDate)) {
       return res.status(400).json({ error: 'Invalid missing-days import request' });
     }
 
@@ -2559,7 +2559,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   app.post('/api/warehouse/jobs/retry-failed', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, startDate, endDate, maxJobs } = req.body || {};
-    if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!isNonEmptyString(siteUrl) || !isValidIsoDateRange(startDate, endDate)) {
       return res.status(400).json({ error: 'Invalid failed import retry request' });
     }
 
@@ -2640,7 +2640,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
   app.post('/api/warehouse/query', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
     const { siteUrl, startDate, endDate, dimensions, dimensionFilterGroups, metric, rowLimit, startRow, includeTotal, totalOnly } = req.body;
-    if (!isNonEmptyString(siteUrl) || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    const parsedLimit = parseBoundedInteger(rowLimit, { defaultValue: 50000, max: 50000, min: 1 });
+    const parsedOffset = parseBoundedInteger(startRow, { defaultValue: 0, max: 1_000_000, min: 0 });
+    if (!isNonEmptyString(siteUrl) || !isValidIsoDateRange(startDate, endDate) || !parsedLimit.ok || !parsedOffset.ok) {
       return res.status(400).json({ error: 'Missing or invalid parameters' });
     }
     if (dimensions !== undefined && !isValidWarehouseDimensions(dimensions)) {
@@ -2705,8 +2707,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       const groupByClause = groupByClauseElements.length > 0 ? `GROUP BY ${groupByClauseElements.join(', ')}` : '';
 
       let whereClause = 'WHERE ownerId = @ownerId AND siteUrl = @siteUrl AND date >= @startDate AND date <= @endDate';
-      const limit = Number.isFinite(Number(rowLimit)) ? Math.min(Math.max(Number(rowLimit), 1), 50000) : 50000;
-      const offset = Number.isFinite(Number(startRow)) ? Math.max(Number(startRow), 0) : 0;
+      const limit = parsedLimit.value;
+      const offset = parsedOffset.value;
       const params: Record<string, unknown> = { ownerId, siteUrl, startDate, endDate, limit, offset };
       whereClause = appendWarehouseFilterClauses(whereClause, params, dimensionFilterGroups, siteUrl);
 
@@ -3130,12 +3132,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const endDate = asTrimmedString(req.query.endDate);
     const kind = asTrimmedString(req.query.kind) || 'page_query';
     const search = asTrimmedString(req.query.search) || '';
-    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 100;
-    const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 100, max: 5000, min: 1 });
+    const parsedOffset = parseBoundedInteger(req.query.offset, { defaultValue: 0, max: 1_000_000, min: 0 });
 
-    if (!siteUrl || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!siteUrl || !isValidIsoDateRange(startDate, endDate) || !parsedLimit.ok || !parsedOffset.ok) {
       return res.status(400).json({ error: 'Missing or invalid raw GSC parameters' });
     }
+    const limit = parsedLimit.value;
+    const offset = parsedOffset.value;
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
@@ -3243,12 +3247,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const endDate = asTrimmedString(req.query.endDate);
     const kind = asTrimmedString(req.query.kind) || 'page';
     const search = asTrimmedString(req.query.search) || '';
-    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 100;
-    const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 100, max: 5000, min: 1 });
+    const parsedOffset = parseBoundedInteger(req.query.offset, { defaultValue: 0, max: 1_000_000, min: 0 });
 
-    if (!propertyId || !siteUrl || !isIsoDateString(startDate) || !isIsoDateString(endDate)) {
+    if (!propertyId || !siteUrl || !isValidIsoDateRange(startDate, endDate) || !parsedLimit.ok || !parsedOffset.ok) {
       return res.status(400).json({ error: 'Missing or invalid raw GA4 parameters' });
     }
+    const limit = parsedLimit.value;
+    const offset = parsedOffset.value;
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
@@ -3324,13 +3330,15 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
     const endDate = asTrimmedString(req.query.endDate);
     const kind = asTrimmedString(req.query.kind) || '';
     const search = asTrimmedString(req.query.search) || '';
-    const limit = Number.isFinite(Number(req.query.limit)) ? Math.min(Math.max(Number(req.query.limit), 1), 5000) : 100;
-    const offset = Number.isFinite(Number(req.query.offset)) ? Math.max(Number(req.query.offset), 0) : 0;
+    const parsedLimit = parseBoundedInteger(req.query.limit, { defaultValue: 100, max: 5000, min: 1 });
+    const parsedOffset = parseBoundedInteger(req.query.offset, { defaultValue: 0, max: 1_000_000, min: 0 });
     const dimension = GA4_RAW_DIMENSIONS[kind];
 
-    if (!propertyId || !siteUrl || !isIsoDateString(startDate) || !isIsoDateString(endDate) || !dimension) {
+    if (!propertyId || !siteUrl || !isValidIsoDateRange(startDate, endDate) || !dimension || !parsedLimit.ok || !parsedOffset.ok) {
       return res.status(400).json({ error: 'Missing or invalid raw GA4 report parameters' });
     }
+    const limit = parsedLimit.value;
+    const offset = parsedOffset.value;
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {

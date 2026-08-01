@@ -4,7 +4,7 @@ import { ComposedChart, Area, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, 
 import { differenceInCalendarDays, format, parseISO, startOfWeek, startOfMonth } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
-import { Check, Database, Download, Loader2, MoreVertical, Info } from "lucide-react"
+import { Check, Database, Download, Loader2, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Annotation } from "@/src/services/annotationsService"
 import { fetchCachedWarehouseQuery } from "@/src/services/warehouseQueryClient"
@@ -881,9 +881,6 @@ export function Overview({
               >
                 <Download className="mr-2 h-4 w-4" />
                 Export
-              </Button>
-              <Button variant="outline" size="icon" className="h-9 w-9 rounded-lg border-border bg-card" disabled>
-                <MoreVertical className="h-4 w-4" />
               </Button>
             </div>
           </div>

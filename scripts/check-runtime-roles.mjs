@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -21,6 +22,19 @@ async function waitForReady(url, timeoutMs) {
   throw lastError || new Error('Worker readiness timed out.');
 }
 
+async function getAvailablePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  assert(port > 0, 'Failed to reserve an available worker health port.');
+  return port;
+}
+
 async function main() {
   assert(fs.existsSync('.server-dist/worker.js'), 'Build worker.ts before running the runtime-role smoke.');
   assert(fs.existsSync('.server-dist/server/runtimeRoles.js'), 'Build server runtime roles before running the runtime-role smoke.');
@@ -29,7 +43,7 @@ async function main() {
   assert(parseRuntimeRole('internal-links', 'web') === 'internal-links', 'internal-links role parses');
   assert(parseRuntimeRole('not-real', 'web') === 'web', 'invalid role uses fallback');
 
-  const port = 3199;
+  const port = await getAvailablePort();
   const child = spawn(process.execPath, ['.server-dist/worker.js', 'crawl'], {
     cwd: process.cwd(),
     env: {
@@ -54,6 +68,13 @@ async function main() {
     const cleanExit = exit.code === 0 || (process.platform === 'win32' && exit.code === null && exit.signal === 'SIGTERM');
     assert(cleanExit, 'worker exits cleanly after SIGTERM: ' + JSON.stringify(exit));
     console.log(JSON.stringify({ exit, ready, stderr, stdout }, null, 2));
+  } catch (error) {
+    const detail = [
+      error?.stack || error?.message || String(error),
+      stdout ? `Worker stdout:\n${stdout}` : '',
+      stderr ? `Worker stderr:\n${stderr}` : '',
+    ].filter(Boolean).join('\n');
+    throw new Error(detail);
   } finally {
     if (child.exitCode === null) child.kill('SIGKILL');
   }

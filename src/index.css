@@ -74,7 +74,7 @@
     --muted-foreground: #647067;
     --accent: #eaf4ec;
     --accent-foreground: #0f3d2e;
-    --destructive: #d54848;
+    --destructive: #b4232d;
     --destructive-foreground: #fafafa;
     --border: #e6ece8;
     --input: #e6ece8;
@@ -109,8 +109,8 @@
     --muted-foreground: #a3a3a3;
     --accent: #262626;
     --accent-foreground: #fafafa;
-    --destructive: #991b1b;
-    --destructive-foreground: #fafafa;
+    --destructive: #f87171;
+    --destructive-foreground: #171717;
     --border: #262626;
     --input: #262626;
     --ring: #d4d4d4;
@@ -147,6 +147,26 @@
   .dark {
     color-scheme: dark;
   }
+
+  :focus-visible {
+    outline: 2px solid var(--ring) !important;
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 @layer utilities {
@@ -172,6 +192,30 @@
 
   .interactive-lift:active {
     transform: translateY(0) scale(0.99);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .interactive-lift:hover,
+    .interactive-lift:active {
+      transform: none;
+    }
+  }
+
+  @media (pointer: coarse) {
+    button:not([role="switch"]),
+    [data-slot="button"],
+    [data-slot="input"],
+    [data-slot="select-trigger"],
+    [data-slot="sidebar-trigger"],
+    [data-slot="sidebar-menu-button"],
+    [data-slot="tabs-trigger"] {
+      min-height: 44px !important;
+      min-width: 44px !important;
+    }
+
+    [data-slot="switch"]::after {
+      inset-block: -16px;
+    }
   }
 
   .text-pretty {

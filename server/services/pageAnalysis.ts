@@ -542,13 +542,14 @@ async function buildPageInputs(pageRows: CrawlPageRow[], blockRows: CrawlTextBlo
   }
 
   const builtPages: BuiltPage[] = [];
+  const builtPageKeys = new Set<string>();
   const total = pageRows.length;
   let completed = 0;
 
   for (const page of pageRows) {
     const pageKey = normalizeText(page.pageKey || page.resolvedCanonicalPageKey || page.normalizedUrl || page.url);
     const pageUrl = normalizeText(page.normalizedUrl || page.url);
-    if (!pageKey || !pageUrl) {
+    if (!pageKey || !pageUrl || builtPageKeys.has(pageKey)) {
       completed += 1;
       continue;
     }
@@ -583,6 +584,7 @@ async function buildPageInputs(pageRows: CrawlPageRow[], blockRows: CrawlTextBlo
       pageUrl,
       regions: persisted,
     });
+    builtPageKeys.add(pageKey);
 
     completed += 1;
     if (onProgress && (completed === total || completed % 25 === 0)) {

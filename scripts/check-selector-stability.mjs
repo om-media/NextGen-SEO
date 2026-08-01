@@ -17,7 +17,7 @@ assert(
   'Changing the selected site must not refetch source inventories',
 );
 assert(
-  inventoryEffect.includes('[backgroundEffectsReady, dataSource, isOnboarding, user, userProfile]'),
+  inventoryEffect.includes('[backgroundEffectsReady, dataSource, isOnboarding, mappedProfileGa4Sites, user, userProfile]'),
   'Source inventories should be keyed to source and account state only',
 );
 assert(
