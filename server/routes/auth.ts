@@ -89,9 +89,32 @@ function emailAlreadyInUse(res: any) {
 
 function ambiguousAccount(res: any) {
   return res.status(409).json({
-    error: 'Multiple accounts use this email address. Contact support before continuing.',
+    error: 'We found more than one workspace account for this email. Use the matching password or Google account.',
     code: 'AMBIGUOUS_ACCOUNT',
   });
+}
+
+export function resolvePasswordLoginUser(users: UserRow[], password: string) {
+  if (users.length === 0) return { kind: 'missing' as const };
+
+  const matches = users.filter((user) => user.passwordHash && verifyPassword(password, user.passwordHash));
+  if (matches.length === 1) return { kind: 'ready' as const, user: matches[0] };
+  if (matches.length > 1 || users.length > 1) return { kind: 'ambiguous' as const };
+  if (!users[0].passwordHash) return { kind: 'passwordless' as const };
+  return { kind: 'invalid' as const };
+}
+
+export function resolveGoogleAppAuthUser(users: UserRow[]) {
+  if (users.length === 0) return { kind: 'create' as const };
+  if (users.length === 1) return { kind: 'ready' as const, user: users[0] };
+
+  const googleUsers = users.filter((user) => user.authProvider?.trim().toLowerCase() === 'google');
+  if (googleUsers.length === 1) return { kind: 'ready' as const, user: googleUsers[0] };
+
+  const connectedUsers = users.filter((user) => Boolean(user.gscRefreshToken));
+  if (connectedUsers.length === 1) return { kind: 'ready' as const, user: connectedUsers[0] };
+
+  return { kind: 'ambiguous' as const };
 }
 
 export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
@@ -223,26 +246,27 @@ export function registerLocalAuthRoutes(app: Express, db: AppDatabase) {
     try {
       const normalizedEmail = email.trim().toLowerCase();
       const users = await db.all<UserRow>(
-        'SELECT * FROM users WHERE lower(trim(email)) = lower(trim(?)) LIMIT 2',
+        'SELECT * FROM users WHERE lower(trim(email)) = lower(trim(?))',
         [normalizedEmail],
       );
-      if (users.length > 1) {
+      const resolution = resolvePasswordLoginUser(users, password);
+      if (resolution.kind === 'ambiguous') {
         return ambiguousAccount(res);
       }
-      const user = users[0];
-
-      if (!user) {
+      if (resolution.kind === 'missing') {
         return res.status(401).json({ error: 'We could not find an account for that email.', code: 'INVALID_LOGIN' });
       }
 
-      if (!user.passwordHash) {
+      const user = resolution.user || users[0];
+
+      if (resolution.kind === 'passwordless') {
         return res.status(409).json({
           error: 'This email already belongs to an existing account that does not have a local password yet.',
           code: 'PASSWORD_NOT_SET',
         });
       }
 
-      if (!verifyPassword(password, user.passwordHash)) {
+      if (resolution.kind === 'invalid') {
         return res.status(401).json({ error: 'The email or password is incorrect.', code: 'INVALID_LOGIN' });
       }
 

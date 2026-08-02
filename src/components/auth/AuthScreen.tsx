@@ -54,7 +54,9 @@ export function AuthScreen() {
     try {
       await loginWithEmail(email, password)
     } catch (err: any) {
-      if (err.code === 'INVALID_LOGIN' || err.code === 'PASSWORD_NOT_SET') {
+      if (err.code === 'AMBIGUOUS_ACCOUNT') {
+        setError("We found more than one workspace profile for this email. Use the matching password or Google account, or contact support if neither is yours.")
+      } else if (err.code === 'INVALID_LOGIN' || err.code === 'PASSWORD_NOT_SET') {
         setError("We couldn't sign you in with that email and password. If this email belongs to an older Google-created account, registering once with a local password will claim it for local sign-in.")
       } else {
         setError(err.message)
@@ -77,7 +79,10 @@ export function AuthScreen() {
     try {
       await signInWithGoogle()
     } catch (err: any) {
-      setError(err.message || "Google sign-in failed.")
+      const googleError = err.message || "Google sign-in failed."
+      setError(err.code === 'AMBIGUOUS_ACCOUNT' || /more than one workspace/i.test(googleError)
+        ? "This Google email is linked to more than one workspace profile. Choose the Google account that owns the workspace, or contact support."
+        : googleError)
     } finally {
       setProviderLoading(null)
     }

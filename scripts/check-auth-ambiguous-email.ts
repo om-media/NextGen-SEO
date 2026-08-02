@@ -1,6 +1,11 @@
 import Database from 'better-sqlite3';
 import type { AppDatabase, QueryParams, RunResult } from '../server/database.js';
-import { registerLocalAuthRoutes } from '../server/routes/auth.js';
+import { hashPassword } from '../server/auth.js';
+import { registerLocalAuthRoutes, resolveGoogleAppAuthUser, resolvePasswordLoginUser } from '../server/routes/auth.js';
+
+const assert = (condition: unknown, message: string) => {
+  if (!condition) throw new Error(message);
+};
 
 class MemoryDatabase implements AppDatabase {
   dialect = 'sqlite' as const;
@@ -66,17 +71,31 @@ await db.exec(`
 `);
 await db.run(
   'INSERT INTO users (id, email, passwordHash, authProvider, tier, unlockedSites, knownSites) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ['duplicate-a', 'duplicate@example.com', 'invalid-a', 'local', 'enterprise', '[]', '[]'],
+  ['duplicate-a', 'duplicate@example.com', hashPassword('duplicate-a-password'), 'local', 'enterprise', '[]', '[]'],
 );
 await db.run(
   'INSERT INTO users (id, email, passwordHash, authProvider, tier, unlockedSites, knownSites) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ['duplicate-b', 'DUPLICATE@example.com', 'invalid-b', 'local', 'enterprise', '[]', '[]'],
+  ['duplicate-b', 'DUPLICATE@example.com', hashPassword('duplicate-b-password'), 'local', 'enterprise', '[]', '[]'],
 );
+const localUser = { id: 'local-user', email: 'duplicate@example.com', passwordHash: hashPassword('correct-password'), authProvider: 'local', gscRefreshToken: 'local-refresh' };
+const googleUser = { id: 'google-user', email: 'duplicate@example.com', passwordHash: null, authProvider: 'google', gscRefreshToken: 'google-refresh' };
+const passwordResolution = resolvePasswordLoginUser([localUser, googleUser], 'correct-password');
+assert(passwordResolution.kind === 'ready' && passwordResolution.user.id === 'local-user', 'A matching password should select the local account among duplicates');
+const wrongPasswordResolution = resolvePasswordLoginUser([localUser, googleUser], 'wrong-password');
+assert(wrongPasswordResolution.kind === 'ambiguous', 'A non-matching password must not guess between duplicate accounts');
+const googleResolution = resolveGoogleAppAuthUser([localUser, googleUser]);
+assert(googleResolution.kind === 'ready' && googleResolution.user.id === 'google-user', 'Google sign-in should select the Google-provider account among duplicates');
 
 const app = new FakeApp();
 registerLocalAuthRoutes(app as any, db);
 const loginHandler = app.routes.get('POST:/api/auth/login')?.at(-1);
 if (!loginHandler) throw new Error('Missing local login handler');
+
+const matchingResponse = new FakeResponse();
+await loginHandler({ body: { email: 'duplicate@example.com', password: 'duplicate-a-password' } }, matchingResponse);
+if (matchingResponse.statusCode !== 200 || matchingResponse.body?.user?.uid !== 'duplicate-a') {
+  throw new Error(`Matching duplicate password returned ${matchingResponse.statusCode}/${String(matchingResponse.body?.user?.uid)}`);
+}
 
 const response = new FakeResponse();
 await loginHandler({ body: { email: ' duplicate@example.com ', password: 'anything-valid-length' } }, response);

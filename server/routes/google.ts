@@ -17,7 +17,7 @@ import {
   verifyGoogleOauthStatePayload,
 } from '../services/googleAuth.js';
 import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
-import type { UserRow } from './auth.js';
+import { resolveGoogleAppAuthUser, type UserRow } from './auth.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { resolveWorkspaceGa4Property } from '../services/ga4Mappings.js';
 import { getInitialRegistrationTier } from '../services/registrationTier.js';
@@ -228,14 +228,15 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
         const normalizedEmail = googleUser.email!.trim().toLowerCase();
         const account = await withNormalizedEmailLock(db, normalizedEmail, async () => {
           const existingUsers = await db.all<UserRow>(
-            'SELECT * FROM users WHERE lower(trim(email)) = lower(trim(?)) LIMIT 2',
+            'SELECT * FROM users WHERE lower(trim(email)) = lower(trim(?))',
             [normalizedEmail],
           );
-          if (existingUsers.length > 1) {
+          const resolution = resolveGoogleAppAuthUser(existingUsers);
+          if (resolution.kind === 'ambiguous') {
             return { kind: 'ambiguous' as const };
           }
 
-          let user = existingUsers[0];
+          let user = resolution.kind === 'ready' ? resolution.user : undefined;
           if (user) {
             await db.run(
               `UPDATE users
