@@ -391,7 +391,7 @@ export function DataImportStatusPanel({
       style={{ width: "100%" }}
       className="rounded-2xl border border-border bg-card/95 p-4 shadow-[0_12px_34px_rgba(15,61,46,0.05)]"
     >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className={compact ? "flex flex-col gap-4" : "flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"}>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-secondary text-secondary-foreground">
@@ -445,7 +445,7 @@ export function DataImportStatusPanel({
           </div>
         </div>
 
-        <div className="grid min-w-0 gap-2 sm:grid-cols-5 lg:w-[640px]">
+        <div className={compact ? "grid min-w-0 w-full gap-2 sm:grid-cols-5" : "grid min-w-0 gap-2 sm:grid-cols-5 lg:w-[640px]"}>
           <StatusMetric label="Missing" value={formatWholeNumber(stats.missingDateCount)} />
           <StatusMetric label="Queued" value={formatWholeNumber(Number(coverage?.warehouseJobs.queued || 0) + Number(coverage?.warehouseJobs.retrying || 0))} />
           <StatusMetric label="Running" value={formatWholeNumber(Number(coverage?.warehouseJobs.running || 0))} />

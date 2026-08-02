@@ -29,5 +29,6 @@ assert(readinessPanel.includes('Import appears stalled') && readinessPanel.inclu
 assert(readinessPanel.includes('activeDateCount') && readinessPanel.includes('unscheduledMissingDateCount'), 'Import progress must distinguish active jobs from missing dates that are not scheduled');
 assert(readinessPanel.includes('Retrying ${formatWholeNumber(result.retried)} failed import') && readinessPanel.includes('Completed days and successful jobs were left untouched'), 'Retry actions must explain that only failed jobs are requeued');
 assert(readinessPanel.includes('width: \"min(720px, calc(100vw - 1rem))\"') && readinessPanel.includes('maxWidth: \"calc(100vw - 1rem)\"'), 'Compact readiness details must keep a usable responsive width');
+assert(readinessPanel.includes('compact ? \"flex flex-col gap-4\"') && readinessPanel.includes('compact ? \"grid min-w-0 w-full gap-2 sm:grid-cols-5\"'), 'Compact readiness details must stack before the desktop metrics width can squeeze the copy');
 
 console.log('Dashboard readiness UI check passed');
