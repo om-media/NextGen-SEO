@@ -172,6 +172,31 @@ export function getPreferredGa4PropertyId(
   const savedDefaultSite = activatedGa4PropertyId
     ? availableSites.find((site) => site.siteUrl === activatedGa4PropertyId)
     : null;
+  const workspaceMatchedSites = availableSites.filter((site) => isGa4PropertyForWorkspaceSite(site, workspaceSite));
+  const workspaceMatchedProperty = workspaceMatchedSites[0]?.siteUrl || "";
+
+  // Keep an explicitly activated property when it also matches this workspace.
+  // If it does not, prefer the unique property whose name identifies the selected site
+  // over a stale global default from another workspace.
+  if (
+    workspaceSite &&
+    workspaceSite === activatedSiteUrl &&
+    savedDefaultSite &&
+    workspaceMatchedSites.some((site) => site.siteUrl === savedDefaultSite.siteUrl)
+  ) {
+    return activatedGa4PropertyId || "";
+  }
+
+  if (workspaceMatchedSites.length > 0) {
+    if (workspaceMatchedSites.length === 1) {
+      return workspaceMatchedProperty;
+    }
+    if (currentPreferenceIsAvailable && workspaceMatchedSites.some((site) => site.siteUrl === currentPreference)) {
+      return currentPreference;
+    }
+    return workspaceMatchedProperty;
+  }
+
   if (
     workspaceSite &&
     workspaceSite === activatedSiteUrl &&
@@ -186,7 +211,7 @@ export function getPreferredGa4PropertyId(
     return currentPreference;
   }
 
-  return getGa4PropertyForWorkspaceSite(availableSites, workspaceSite);
+  return workspaceMatchedProperty;
 }
 
 export function getWorkspaceSiteForGa4Property(

@@ -97,6 +97,11 @@ export function Ga4Demographics({ propertyId, workspaceSiteUrl, dateRange, refre
   ), [dimensionStates]);
 
   useEffect(() => {
+    setDimensionStates(emptyDimensionState())
+    setError(null)
+  }, [propertyId, workspaceSiteUrl])
+
+  useEffect(() => {
     if (!userProfile?.googleConnected || !propertyId || !dateRange?.from || !dateRange?.to) return;
     const controller = new AbortController()
     let isCurrent = true

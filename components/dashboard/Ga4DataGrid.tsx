@@ -102,6 +102,13 @@ export function Ga4DataGrid({ propertyId, workspaceSiteUrl, dateRange, dimension
     setSelectedRowKey(null)
   }, [propertyId, dimension])
 
+  useEffect(() => {
+    setData([])
+    setCoverage(null)
+    setError(null)
+    setPageIndex(0)
+  }, [propertyId, workspaceSiteUrl])
+
   const stripWorkspaceSite = (value: string) => {
     if (!workspaceSiteUrl) return value
     return value.replace(workspaceSiteUrl, '') || '/'

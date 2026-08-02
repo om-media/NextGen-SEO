@@ -90,6 +90,23 @@ export function runSiteSelectionTests() {
   );
 
   assert.equal(
+    getPreferredGa4PropertyId(
+      [
+        { siteUrl: "properties/shop", displayName: "DECIBEL.shop Analytics 4" },
+        { siteUrl: "properties/international", displayName: "Decibel International Analytics 4" },
+      ],
+      {
+        activatedGa4PropertyId: "properties/shop",
+        activatedSiteUrl: "https://decibelinternational.co.uk/",
+        currentPreference: "properties/shop",
+        currentPreferenceSite: "https://decibelinternational.co.uk/",
+        workspaceSite: "https://decibelinternational.co.uk/",
+      },
+    ),
+    "properties/international",
+  );
+
+  assert.equal(
     getWorkspaceSiteForGa4Property("properties/222", alpha, ga4Sites, workspaceSites),
     beta,
   );

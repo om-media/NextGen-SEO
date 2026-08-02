@@ -64,6 +64,13 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
   const [coverage, setCoverage] = useState<Ga4WarehouseCoverage | null>(null)
 
   useEffect(() => {
+    setData(null)
+    setCompareData(null)
+    setCoverage(null)
+    setError(null)
+  }, [propertyId, workspaceSiteUrl])
+
+  useEffect(() => {
     if (!userProfile?.googleConnected || !dateRange.from || !dateRange.to) {
       setLoading(false)
       setData(null)

@@ -189,6 +189,13 @@ export function Ga4Overview({
   })
   const [timeframe, setTimeframe] = useState<"Day" | "Week" | "Month">("Day")
 
+  useEffect(() => {
+    setData([])
+    setCompareData([])
+    setCoverage(null)
+    setError(null)
+  }, [propertyId, workspaceSiteUrl])
+
   const colors = {
     sessions: "#2F7DF6",
     users: "#7C3AED",

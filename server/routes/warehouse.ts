@@ -100,12 +100,24 @@ const parseWarehouseJobMetrics = (value: unknown) => {
 
 
 async function resolveActiveGa4PropertyForSite(db: AppDatabase, ownerId: string, siteUrl: string, propertyId: string) {
-  if (!propertyId) return '';
+  if (!propertyId || !siteUrl) return '';
   const [siteAllowed, propertyAllowed] = await Promise.all([
     canAccessSite(db, ownerId, siteUrl),
     canAccessGa4Property(db, ownerId, propertyId),
   ]);
-  return siteAllowed && propertyAllowed ? propertyId : '';
+  if (!siteAllowed || !propertyAllowed) return '';
+
+  const mapping = await db.get<{ propertyId?: string }>(
+    'SELECT propertyId FROM workspace_ga4_mappings WHERE ownerId = ? AND siteUrl = ? AND propertyId = ? LIMIT 1',
+    [ownerId, siteUrl, propertyId],
+  );
+  if (mapping?.propertyId === propertyId) return propertyId;
+
+  const user = await db.get<{ activatedSiteUrl?: string | null; activatedGa4PropertyId?: string | null }>(
+    'SELECT activatedSiteUrl, activatedGa4PropertyId FROM users WHERE id = ?',
+    [ownerId],
+  );
+  return user?.activatedSiteUrl === siteUrl && user?.activatedGa4PropertyId === propertyId ? propertyId : '';
 }
 
 const eachIsoDate = (startDate: string, endDate: string) => {
@@ -915,6 +927,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       if (isNonEmptyString(siteUrl) && !(await canAccessSite(db, ownerId, siteUrl))) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
+      if (!(await resolveActiveGa4PropertyForSite(db, ownerId, resolvedSiteUrl, propertyId))) {
+        return res.status(409).json({
+          code: 'GA4_PROPERTY_SITE_MISMATCH',
+          error: 'This GA4 property is not connected to the selected workspace site. Choose the matching Analytics property or reconnect it.',
+        });
+      }
       const ga4PropertyStartDate = await resolveWorkspaceGa4PropertyStartDate(db, ownerId, resolvedSiteUrl, propertyId);
 
       if (canServeGa4PageWarehouseReport(dimensions, metrics, dimensionFilter)) {
@@ -1105,6 +1123,12 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
       }
       if (!(await canAccessGa4Property(db, ownerId, propertyId))) {
         return res.status(403).json({ error: 'This GA4 property is not activated for your workspace.' });
+      }
+      if (!(await resolveActiveGa4PropertyForSite(db, ownerId, siteUrl, propertyId))) {
+        return res.status(409).json({
+          code: 'GA4_PROPERTY_SITE_MISMATCH',
+          error: 'This GA4 property is not connected to the selected workspace site. Choose the matching Analytics property or reconnect it.',
+        });
       }
 
       const latestAvailableDate = latestStableReportingDate();
