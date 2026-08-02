@@ -4,6 +4,12 @@ import type { GscSearchAnalyticsRow } from "./gscService";
 const AI_PROVIDER_UNAVAILABLE_MESSAGE =
   "AI insights are temporarily unavailable while the LLM provider is being configured.";
 
+export const AI_PROVIDER_READINESS = {
+  available: false,
+  code: "AI_PROVIDER_UNAVAILABLE",
+  message: AI_PROVIDER_UNAVAILABLE_MESSAGE,
+} as const;
+
 export class AiProviderUnavailableError extends Error {
   constructor(message = AI_PROVIDER_UNAVAILABLE_MESSAGE) {
     super(message);

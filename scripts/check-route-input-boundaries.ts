@@ -86,6 +86,7 @@ const cases: MatrixCase[] = [
   { name: 'internal links negative opportunity offset', method: 'GET', path: `/api/internal-links/opportunities?siteUrl=${encodeURIComponent(siteUrl)}&startDate=2026-08-01&endDate=2026-08-02&offset=-1` },
   { name: 'internal links missing job id', method: 'POST', path: '/api/internal-links/jobs/%20/cancel', body: {} },
   { name: 'crawl negative max pages', method: 'POST', path: '/api/crawl/start', body: { siteUrl, maxPages: -1 } },
+  { name: 'crawl private sitemap target', method: 'POST', path: '/api/crawl/start', body: { siteUrl, sitemapUrl: 'http://127.0.0.1/private-sitemap.xml' } },
   { name: 'crawl negative jobs limit', method: 'GET', path: `/api/crawl/jobs?siteUrl=${encodeURIComponent(siteUrl)}&limit=-1` },
   { name: 'crawl oversized jobs limit', method: 'GET', path: `/api/crawl/jobs?siteUrl=${encodeURIComponent(siteUrl)}&limit=51` },
   { name: 'crawl negative pages offset', method: 'GET', path: `/api/crawl/pages?siteUrl=${encodeURIComponent(siteUrl)}&offset=-1` },

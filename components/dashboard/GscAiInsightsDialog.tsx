@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AI_PROVIDER_READINESS } from "@/src/services/aiService";
 import { Info, Loader2, Sparkles } from "lucide-react";
 import Markdown from "react-markdown";
 
@@ -26,6 +27,22 @@ export function GscAiInsightsDialog({
   title,
   error,
 }: GscAiInsightsDialogProps) {
+  if (!AI_PROVIDER_READINESS.available) {
+    return (
+      <Button
+        aria-label={`AI unavailable: ${AI_PROVIDER_READINESS.message}`}
+        className="border-amber-200 bg-amber-50 text-amber-900"
+        disabled
+        size="sm"
+        title={AI_PROVIDER_READINESS.message}
+        variant="outline"
+      >
+        <Info className="mr-2 h-4 w-4" />
+        AI unavailable
+      </Button>
+    );
+  }
+
   return (
     <Dialog
       open={open}

@@ -4,6 +4,7 @@ import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
 import { asTrimmedString, isNonEmptyString } from '../validation.js';
 import { cancelCrawlJob, compareCrawlJobs, getCrawlJobs, getCrawlLinks, getCrawlPages, getCrawlStatus, queueCrawlJob, type CrawlIssueFilter } from '../services/crawl.js';
+import { resolveSafeCrawlTarget, UnsafeCrawlTargetError } from '../services/crawlNetworkPolicy.js';
 import { getPlanCrawlLimits } from '../../shared/plans.js';
 import { canAccessSite } from '../accessControl.js';
 import { parseBoundedInteger } from '../routeValidation.js';
@@ -337,6 +338,15 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
 
     const user = await db.get<{ tier?: string | null }>('SELECT tier FROM users WHERE id = ?', [ownerId]);
     const resolvedStartUrl = resolveStartUrl(siteUrl, isNonEmptyString(startUrl) ? startUrl : null);
+    let resolvedSitemapUrl: string | null = null;
+    if (isNonEmptyString(sitemapUrl)) {
+      try {
+        resolvedSitemapUrl = new URL(sitemapUrl, resolvedStartUrl).toString();
+      } catch {
+        return res.status(400).json({ error: 'The sitemap URL is invalid.' });
+      }
+    }
+
     const crawlLimits = getPlanCrawlLimits(user?.tier as any);
     const parsedMaxDepth = parseBoundedInteger(maxDepth, { defaultValue: crawlLimits.maxDepth, max: crawlLimits.maxDepth, min: 0 });
     const parsedMaxPages = parseBoundedInteger(maxPages, { defaultValue: crawlLimits.maxPages, max: crawlLimits.maxPages, min: 1 });
@@ -358,6 +368,15 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
       if (!isStartUrlAllowedForSite(siteUrl, resolvedStartUrl)) {
         return res.status(400).json({ error: 'The crawl start URL must stay on the selected workspace site host.' });
       }
+      if (resolvedSitemapUrl && !isStartUrlAllowedForSite(resolvedStartUrl, resolvedSitemapUrl)) {
+        return res.status(400).json({ error: 'The sitemap URL must stay on the selected workspace site host.' });
+      }
+
+      const startHostname = new URL(resolvedStartUrl).hostname;
+      await resolveSafeCrawlTarget(resolvedStartUrl, startHostname);
+      if (resolvedSitemapUrl) {
+        await resolveSafeCrawlTarget(resolvedSitemapUrl, startHostname);
+      }
 
       const current = await getCrawlStatus(db, ownerId, siteUrl);
       if (current.job && ['queued', 'retrying', 'running'].includes(current.job.status)) {
@@ -377,7 +396,7 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
         ownerId,
         renderMode: renderMode === 'javascript' && crawlLimits.allowJavaScriptRendering ? 'javascript' : 'html',
         respectRobots: respectRobots === undefined ? undefined : respectRobots !== false,
-        sitemapUrl: isNonEmptyString(sitemapUrl) ? sitemapUrl : null,
+        sitemapUrl: resolvedSitemapUrl,
         siteUrl,
         startUrl: resolvedStartUrl,
         userAgent: isNonEmptyString(userAgent) ? userAgent : null,
@@ -385,6 +404,9 @@ export function registerCrawlRoutes(app: Express, db: AppDatabase) {
 
       res.json({ success: true, job, queue: await getCrawlQueueMetadata(db, ownerId, job), startUrl: resolvedStartUrl });
     } catch (err: any) {
+      if (err instanceof UnsafeCrawlTargetError) {
+        return res.status(400).json({ error: err.message });
+      }
       res.status(500).json({ error: err.message });
     }
   });

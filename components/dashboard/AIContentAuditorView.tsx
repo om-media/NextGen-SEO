@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { generateContentAuditBrief, isAiProviderUnavailableError } from "@/src/services/aiService";
+import { AI_PROVIDER_READINESS, generateContentAuditBrief, isAiProviderUnavailableError } from "@/src/services/aiService";
 import { fetchCrawlPages, type CrawlPageRow } from "@/src/services/crawlService";
 import { GscApiService, type GscSearchAnalyticsRow } from "@/src/services/gscService";
 
@@ -249,9 +249,14 @@ export function AIContentAuditorView({ dateRange, siteUrl, useLiveData: _useLive
               <Download className="mr-2 h-4 w-4" />
               Export
             </Button>
-            <Button className="h-10 rounded-xl" onClick={loadBrief} disabled={!rows.length || briefLoading}>
+            <Button
+              className="h-10 rounded-xl"
+              disabled={!AI_PROVIDER_READINESS.available || !rows.length || briefLoading}
+              onClick={loadBrief}
+              title={!AI_PROVIDER_READINESS.available ? AI_PROVIDER_READINESS.message : undefined}
+            >
               {briefLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-              Generate brief
+              {AI_PROVIDER_READINESS.available ? "Generate brief" : "AI brief unavailable"}
             </Button>
           </div>
         </CardHeader>

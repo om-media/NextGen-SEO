@@ -1,6 +1,10 @@
 type GscInsightRow = Record<string, unknown>;
 
+export const AI_PROVIDER_UNAVAILABLE_CODE = 'AI_PROVIDER_UNAVAILABLE';
+
 export class AiProviderNotConfiguredError extends Error {
+  readonly code = AI_PROVIDER_UNAVAILABLE_CODE;
+
   constructor() {
     super('AI insights are temporarily unavailable while the LLM provider is being configured.');
     this.name = 'AiProviderNotConfiguredError';

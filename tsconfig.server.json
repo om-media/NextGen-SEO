@@ -15,5 +15,8 @@
     "databasePrepare.ts",
     "server/**/*.ts",
     "scripts/**/*.ts"
+  ],
+  "exclude": [
+    "scripts/check-ai-provider-readiness.ts"
   ]
 }

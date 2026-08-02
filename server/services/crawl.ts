@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import crypto from 'crypto';
 import { canonicalPageKey, resolvedCanonicalPageKey } from '../reporting/url.js';
 import type { AppDatabase } from '../database.js';
+import { fetchCrawlText, resolveSafeCrawlTarget } from './crawlNetworkPolicy.js';
 import { queueCompletedCrawlAnalysis } from './pageAnalysis.js';
 import type { Browser } from 'puppeteer';
 
@@ -283,7 +284,10 @@ const DEFAULT_MAX_PAGES = 25000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const FETCH_TIMEOUT_MS = 15000;
 const RENDER_TIMEOUT_MS = 30000;
+const MAX_ROBOTS_BYTES = 1024 * 1024;
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
+const MAX_SITEMAP_BYTES = 10 * 1024 * 1024;
+const MAX_SITEMAPS = 1000;
 const MAX_SITEMAP_URLS = 50000;
 const CRAWLER_USER_AGENT = 'NextGenSEO-Crawler/1.0';
 const DEFAULT_CRAWL_QUEUE_POLL_MS = 5000;
@@ -442,20 +446,11 @@ function buildPageKey(value: string, siteUrl: string) {
   return canonicalPageKey(value, isHttpUrl(siteUrl) ? siteUrl : undefined);
 }
 
-async function fetchText(url: string, init: RequestInit = {}, userAgent = CRAWLER_USER_AGENT) {
+async function fetchText(url: string, init: RequestInit = {}, userAgent = CRAWLER_USER_AGENT, allowedHostname: string, maxBytes?: number) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        'user-agent': userAgent,
-        ...(init.headers || {}),
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-    return response;
+    return await fetchCrawlText(url, { ...init, signal: controller.signal }, userAgent, allowedHostname, maxBytes);
   } finally {
     clearTimeout(timeout);
   }
@@ -473,7 +468,8 @@ async function getRenderBrowser() {
   return renderBrowserPromise;
 }
 
-async function renderPageHtml(url: string, userAgent: string) {
+async function renderPageHtml(url: string, userAgent: string, allowedHostname: string) {
+  await resolveSafeCrawlTarget(url, allowedHostname);
   const browser = await getRenderBrowser();
   const page = await browser.newPage();
   const startedAt = Date.now();
@@ -483,12 +479,23 @@ async function renderPageHtml(url: string, userAgent: string) {
     await page.setCacheEnabled(false);
     await page.setRequestInterception(true);
     page.on('request', (request) => {
-      const resourceType = request.resourceType();
-      if (['font', 'image', 'media'].includes(resourceType)) {
-        void request.abort();
-        return;
-      }
-      void request.continue();
+      void (async () => {
+        const resourceType = request.resourceType();
+        if (['font', 'image', 'media'].includes(resourceType)) {
+          await request.abort();
+          return;
+        }
+
+        const navigationHostname = request.isNavigationRequest() && request.frame() === page.mainFrame()
+          ? allowedHostname
+          : undefined;
+        try {
+          await resolveSafeCrawlTarget(request.url(), navigationHostname);
+          await request.continue();
+        } catch {
+          await request.abort();
+        }
+      })().catch(() => request.abort().catch(() => {}));
     });
 
     const response = await page.goto(url, {
@@ -518,7 +525,8 @@ async function fetchRobotsRules(startUrl: string, userAgent: string): Promise<Cr
   const rules: CrawlRules = { allowPaths: [], disallowPaths: [], sitemaps: [] };
   try {
     const robotsUrl = new URL('/robots.txt', startUrl).toString();
-    const response = await fetchText(robotsUrl, {}, userAgent);
+    const startHostname = new URL(startUrl).hostname;
+    const response = await fetchText(robotsUrl, {}, userAgent, startHostname, MAX_ROBOTS_BYTES);
     if (!response.ok) return rules;
     const text = await response.text();
     const lines = text.split(/\r?\n/);
@@ -573,14 +581,20 @@ function isPathAllowed(pathname: string, rules: CrawlRules) {
 async function collectSitemapUrls(startUrl: string, sitemapUrl: string | null | undefined, options: CrawlUrlOptions & { respectRobots: boolean; userAgent: string }) {
   const robotsRules = await fetchRobotsRules(startUrl, options.userAgent);
   const rules = options.respectRobots ? robotsRules : { allowPaths: [], disallowPaths: [], sitemaps: robotsRules.sitemaps };
-  const discovered = new Set<string>();
+  const startHostname = new URL(startUrl).hostname;
+  const queuedSitemaps = new Set<string>();
   const queue: string[] = [];
 
   const addCandidate = (candidate: string | null | undefined) => {
     if (!candidate) return;
     const normalized = normalizeAbsoluteUrl(candidate, startUrl, options);
-    if (!normalized || discovered.has(normalized)) return;
-    discovered.add(normalized);
+    if (!normalized || queuedSitemaps.has(normalized) || queuedSitemaps.size >= MAX_SITEMAPS) return;
+    try {
+      if (!isInternalHost(new URL(normalized).hostname, startHostname)) return;
+    } catch {
+      return;
+    }
+    queuedSitemaps.add(normalized);
     queue.push(normalized);
   };
 
@@ -593,13 +607,13 @@ async function collectSitemapUrls(startUrl: string, sitemapUrl: string | null | 
   const urls = new Set<string>();
   const visitedSitemaps = new Set<string>();
 
-  while (queue.length > 0 && urls.size < MAX_SITEMAP_URLS) {
+  while (queue.length > 0 && urls.size < MAX_SITEMAP_URLS && visitedSitemaps.size < MAX_SITEMAPS) {
     const current = queue.shift()!;
     if (visitedSitemaps.has(current)) continue;
     visitedSitemaps.add(current);
 
     try {
-      const response = await fetchText(current, {}, options.userAgent);
+      const response = await fetchText(current, {}, options.userAgent, startHostname, MAX_SITEMAP_BYTES);
       if (!response.ok) continue;
       const xml = await response.text();
       const $ = cheerio.load(xml, { xmlMode: true });
@@ -607,10 +621,7 @@ async function collectSitemapUrls(startUrl: string, sitemapUrl: string | null | 
       if ($('sitemapindex').length > 0) {
         $('sitemapindex sitemap loc').each((_, element) => {
           const loc = $(element).text().trim();
-          const normalized = normalizeAbsoluteUrl(loc, current, options);
-          if (normalized && !visitedSitemaps.has(normalized)) {
-            queue.push(normalized);
-          }
+          addCandidate(normalizeAbsoluteUrl(loc, current, options));
         });
         continue;
       }
@@ -1619,8 +1630,8 @@ async function processCrawlPage(
   try {
     const userAgent = input.userAgent || CRAWLER_USER_AGENT;
     const useJavaScriptRendering = input.renderMode === 'javascript';
-    const rendered = useJavaScriptRendering ? await renderPageHtml(normalizedUrl, userAgent) : null;
-    const response = rendered ? null : await fetchText(normalizedUrl, {}, userAgent);
+    const rendered = useJavaScriptRendering ? await renderPageHtml(normalizedUrl, userAgent, startHost) : null;
+    const response = rendered ? null : await fetchText(normalizedUrl, {}, userAgent, startHost, MAX_HTML_BYTES);
     const responseHeaders = rendered ? new Headers(rendered.headers as Record<string, string>) : response!.headers;
     const finalUrl = normalizeAbsoluteUrl(rendered?.finalUrl || response?.url || normalizedUrl, input.startUrl, urlOptions) || normalizedUrl;
     const statusCode = rendered?.statusCode ?? response!.status;

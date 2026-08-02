@@ -35,7 +35,10 @@ export function registerAiRoutes(app: Express, db: AppDatabase) {
       );
       res.json({ insights });
     } catch (err: any) {
-      res.status(err instanceof AiProviderNotConfiguredError ? 503 : 500).json({ error: err.message || 'Failed to generate AI insights' });
+      if (err instanceof AiProviderNotConfiguredError) {
+        return res.status(503).json({ code: err.code, error: err.message });
+      }
+      res.status(500).json({ error: err.message || 'Failed to generate AI insights' });
     }
   });
 
@@ -53,7 +56,10 @@ export function registerAiRoutes(app: Express, db: AppDatabase) {
       const brief = await generateContentAuditBrief(data, siteUrl);
       res.json({ brief });
     } catch (err: any) {
-      res.status(err instanceof AiProviderNotConfiguredError ? 503 : 500).json({ error: err.message || 'Failed to generate content audit brief' });
+      if (err instanceof AiProviderNotConfiguredError) {
+        return res.status(503).json({ code: err.code, error: err.message });
+      }
+      res.status(500).json({ error: err.message || 'Failed to generate content audit brief' });
     }
   });
 }

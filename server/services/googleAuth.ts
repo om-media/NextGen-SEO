@@ -67,6 +67,16 @@ function googleApiError(message: string, status: number, payload: unknown) {
   return error;
 }
 
+function isInvalidGrantError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const payload = (error as GoogleRequestError).payload;
+  return Boolean(
+    payload
+    && typeof payload === 'object'
+    && (payload as GoogleTokenResponse).error === 'invalid_grant',
+  );
+}
+
 async function fetchGoogleJson<T>(url: string, init: RequestInit, action: string) {
   let response: Response;
   try {
@@ -311,11 +321,19 @@ export async function getGoogleAccessTokenForUser(db: AppDatabase, userId: strin
     grant_type: 'refresh_token',
   });
 
-  const { data } = await fetchGoogleJson<GoogleTokenResponse>(GOOGLE_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  }, 'access token refresh');
+  let data: GoogleTokenResponse;
+  try {
+    ({ data } = await fetchGoogleJson<GoogleTokenResponse>(GOOGLE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    }, 'access token refresh'));
+  } catch (error) {
+    if (isInvalidGrantError(error)) {
+      await clearGoogleRefreshToken(db, userId);
+    }
+    throw error;
+  }
 
   if (!data.access_token) {
     if (data.error === 'invalid_grant') {
