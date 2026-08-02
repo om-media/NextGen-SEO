@@ -42,6 +42,7 @@ const migrations: TableMigration[] = [
   { table: 'site_scope_sources', conflictColumns: ['siteScopeId', 'sourceType', 'sourceKey'] },
   { table: 'warehouse_sync_status', conflictColumns: ['ownerId', 'siteUrl'] },
   { table: 'warehouse_jobs', conflictColumns: ['id'] },
+  { table: 'warehouse_runtime_heartbeats', conflictColumns: ['role'] },
   { table: 'warehouse_dataset_coverage', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'dataset'] },
   { table: 'gsc_site_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date'] },
   { table: 'gsc_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
