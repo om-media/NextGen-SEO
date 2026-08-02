@@ -51,6 +51,16 @@ Recommended production worker topology for the 200-user acceptance target:
 | Internal-link worker | 2 worker processes |
 | BGE worker | 2 worker processes or 1 process with validated concurrency headroom |
 
+## Warehouse scheduler monitoring
+
+The production `warehouse-worker` and `scheduler` processes expose two internal probes:
+
+- `/health` is process liveness and remains `200` while the process is serving HTTP.
+- `/ready` checks the database and, for these two roles, returns `503` when the runtime heartbeat is missing/stale, a tick has failed, a running job is stale, or ready work has exceeded the stale-age threshold. The JSON includes queue counts, oldest ready age, stale running count, and 24-hour auth/quota/provider failure counts.
+
+Scrape the JSON on ports `3103` (warehouse worker) and `3104` (scheduler), or let the Docker healthchecks restart unhealthy roles. Do not alert on an idle queue: `idle` is a healthy state. Alert on `degraded`/`failed`, stale heartbeat age, non-zero stale running jobs, or growing `recentFailures.auth`/`recentFailures.quota`.
+
+The scheduler uses the shared Google OAuth refresh token stored as `gscRefreshToken`; that token carries both Search Console and GA4 scopes. A connected account with only GA4 properties is therefore included. A tokenless GA4 account is intentionally not scheduled because there is no credential with which to fetch the API data.
 ## Scenarios
 
 ### 1. Dashboard read load

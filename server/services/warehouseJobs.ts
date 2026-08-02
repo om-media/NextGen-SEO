@@ -158,6 +158,192 @@ const GA4_DIMENSION_SYNC_CONFIGS = [
   },
 ] as const;
 const nowIso = () => new Date().toISOString();
+export type WarehouseRuntimeRole = 'warehouse' | 'scheduler';
+type WarehouseRuntimeHeartbeatInput = {
+  lastErrorCode?: string | null;
+  lastTickErrorAt?: string | null;
+  lastTickProcessedCount?: number;
+  lastTickStartedAt?: string | null;
+  lastTickSuccessAt?: string | null;
+  processId?: string | null;
+  role: WarehouseRuntimeRole;
+  startedAt: string;
+};
+
+type WarehouseRuntimeHeartbeatRow = WarehouseRuntimeHeartbeatInput & {
+  updatedAt: string;
+};
+
+export type WarehouseRuntimeHealth = {
+  failureWindowHours: number;
+  heartbeat: {
+    ageMs: number | null;
+    lastErrorCode: string | null;
+    lastTickErrorAt: string | null;
+    lastTickProcessedCount: number;
+    lastTickStartedAt: string | null;
+    lastTickSuccessAt: string | null;
+    processId: string | null;
+    startedAt: string | null;
+  };
+  queue: {
+    failedCount: number;
+    oldestReadyAgeMs: number | null;
+    oldestReadyAt: string | null;
+    queuedCount: number;
+    readyCount: number;
+    retryingCount: number;
+    runningCount: number;
+    staleRunningCount: number;
+  };
+  recentFailures: {
+    auth: number;
+    other: number;
+    provider: number;
+    quota: number;
+    total: number;
+    lastAt: string | null;
+  };
+  role: WarehouseRuntimeRole;
+  status: 'healthy' | 'idle' | 'starting' | 'degraded' | 'failed';
+  thresholds: {
+    heartbeatStaleAfterMs: number;
+    jobStaleAfterMs: number;
+  };
+  observedAt: string;
+};
+
+const RUNTIME_FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const runtimeHeartbeatStaleAfterMs = (role: WarehouseRuntimeRole) =>
+  role === 'scheduler' ? DAILY_SCHEDULER_MS * 2 + 60_000 : Math.max(POLL_MS * 4, 120_000);
+
+export function classifyWarehouseRuntimeError(error: unknown) {
+  const message = String(error instanceof Error ? error.message : error || '').toLowerCase();
+  if (/invalid_grant|google_not_connected|token|oauth|unauthori[sz]ed|\b401\b|\b403\b/.test(message)) return 'AUTH';
+  if (/quota|rate.?limit|too many requests|\b429\b/.test(message)) return 'QUOTA';
+  if (/\b5\d\d\b|unavailable|timeout|timed out|econn(reset|refused)|fetch failed/.test(message)) return 'PROVIDER';
+  if (/database|sqlite|postgres|connection|pool|deadlock/.test(message)) return 'DB';
+  return 'UNKNOWN';
+}
+
+function reportWarehouseHeartbeatError(prefix: string, error: unknown) {
+  const message = String(error instanceof Error ? error.message : error || '');
+  if (/no such table|relation .* does not exist/i.test(message)) return;
+  console.error(prefix, error);
+}
+export async function upsertWarehouseRuntimeHeartbeat(db: AppDatabase, input: WarehouseRuntimeHeartbeatInput) {
+  const now = nowIso();
+  await db.run(
+    `INSERT INTO warehouse_runtime_heartbeats
+      (role, processId, startedAt, lastTickStartedAt, lastTickSuccessAt, lastTickErrorAt, lastErrorCode, lastTickProcessedCount, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(role) DO UPDATE SET
+       processId = excluded.processId,
+       startedAt = excluded.startedAt,
+       lastTickStartedAt = excluded.lastTickStartedAt,
+       lastTickSuccessAt = excluded.lastTickSuccessAt,
+       lastTickErrorAt = excluded.lastTickErrorAt,
+       lastErrorCode = excluded.lastErrorCode,
+       lastTickProcessedCount = excluded.lastTickProcessedCount,
+       updatedAt = excluded.updatedAt
+     WHERE excluded.updatedAt >= warehouse_runtime_heartbeats.updatedAt`,
+    [
+      input.role,
+      input.processId || null,
+      input.startedAt,
+      input.lastTickStartedAt || null,
+      input.lastTickSuccessAt || null,
+      input.lastTickErrorAt || null,
+      input.lastErrorCode || null,
+      input.lastTickProcessedCount || 0,
+      now,
+    ],
+  );
+}
+
+function parseRuntimeDate(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export async function getWarehouseRuntimeHealth(db: AppDatabase, role: WarehouseRuntimeRole, observedAt = nowIso()): Promise<WarehouseRuntimeHealth> {
+  const observedMs = Date.parse(observedAt);
+  const nowMs = Number.isFinite(observedMs) ? observedMs : Date.now();
+  const staleCutoff = new Date(nowMs - WAREHOUSE_JOB_STALE_AFTER_MS).toISOString();
+  const failureCutoff = new Date(nowMs - RUNTIME_FAILURE_WINDOW_MS).toISOString();
+  const heartbeat = await db.get<WarehouseRuntimeHeartbeatRow>(
+    'SELECT role, processId, startedAt, lastTickStartedAt, lastTickSuccessAt, lastTickErrorAt, lastErrorCode, lastTickProcessedCount, updatedAt FROM warehouse_runtime_heartbeats WHERE role = ?',
+    [role],
+  );
+  const queue = await db.get<any>(
+    `SELECT
+       SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queuedCount,
+       SUM(CASE WHEN status = 'retrying' THEN 1 ELSE 0 END) AS retryingCount,
+       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS runningCount,
+       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS failedCount,
+       SUM(CASE WHEN status IN ('queued', 'retrying') AND (nextRunAt IS NULL OR nextRunAt <= ?) THEN 1 ELSE 0 END) AS readyCount,
+       MIN(CASE WHEN status IN ('queued', 'retrying') AND (nextRunAt IS NULL OR nextRunAt <= ?) THEN COALESCE(nextRunAt, updatedAt, startedAt) END) AS oldestReadyAt,
+       SUM(CASE WHEN status = 'running' AND COALESCE(lockedAt, updatedAt, startedAt) IS NOT NULL AND COALESCE(lockedAt, updatedAt, startedAt) <= ? THEN 1 ELSE 0 END) AS staleRunningCount
+     FROM warehouse_jobs`,
+    [observedAt, observedAt, staleCutoff],
+  );
+  const failures = await db.all<any>(
+    `SELECT lastError, updatedAt FROM warehouse_jobs
+     WHERE status = 'error' AND updatedAt >= ?
+     ORDER BY updatedAt DESC LIMIT 500`,
+    [failureCutoff],
+  );
+  const recentFailures = { auth: 0, other: 0, provider: 0, quota: 0, total: failures.length, lastAt: failures[0]?.updatedAt || null };
+  for (const failure of failures) {
+    const code = classifyWarehouseRuntimeError(failure.lastError);
+    if (code === 'AUTH') recentFailures.auth += 1;
+    else if (code === 'QUOTA') recentFailures.quota += 1;
+    else if (code === 'PROVIDER') recentFailures.provider += 1;
+    else recentFailures.other += 1;
+  }
+  const tickDates = [heartbeat?.lastTickStartedAt, heartbeat?.lastTickSuccessAt].map(parseRuntimeDate).filter((value): value is number => value !== null);
+  const latestTickMs = tickDates.length ? Math.max(...tickDates) : null;
+  const heartbeatAgeMs = latestTickMs === null ? null : Math.max(0, nowMs - latestTickMs);
+  const heartbeatThreshold = runtimeHeartbeatStaleAfterMs(role);
+  const staleHeartbeat = !heartbeat || heartbeatAgeMs === null || heartbeatAgeMs > heartbeatThreshold;
+  const lastErrorMs = parseRuntimeDate(heartbeat?.lastTickErrorAt);
+  const lastSuccessMs = parseRuntimeDate(heartbeat?.lastTickSuccessAt);
+  const failedHeartbeat = lastErrorMs !== null && (lastSuccessMs === null || lastErrorMs > lastSuccessMs);
+  const queuedCount = Number(queue?.queuedCount || 0);
+  const retryingCount = Number(queue?.retryingCount || 0);
+  const runningCount = Number(queue?.runningCount || 0);
+  const failedCount = Number(queue?.failedCount || 0);
+  const readyCount = Number(queue?.readyCount || 0);
+  const staleRunningCount = Number(queue?.staleRunningCount || 0);
+  const oldestReadyAt = typeof queue?.oldestReadyAt === 'string' ? queue.oldestReadyAt : null;
+  const oldestReadyMs = parseRuntimeDate(oldestReadyAt);
+  const oldestReadyAgeMs = oldestReadyMs === null ? null : Math.max(0, nowMs - oldestReadyMs);
+  let status: WarehouseRuntimeHealth['status'] = 'healthy';
+  if (!heartbeat) status = 'starting';
+  else if (failedHeartbeat) status = 'failed';
+  else if (staleHeartbeat || staleRunningCount > 0 || recentFailures.total > 0 || (oldestReadyAgeMs !== null && oldestReadyAgeMs >= WAREHOUSE_JOB_STALE_AFTER_MS)) status = 'degraded';
+  else if (readyCount === 0 && runningCount === 0) status = 'idle';
+  return {
+    failureWindowHours: 24,
+    heartbeat: {
+      ageMs: heartbeatAgeMs,
+      lastErrorCode: heartbeat?.lastErrorCode || null,
+      lastTickErrorAt: heartbeat?.lastTickErrorAt || null,
+      lastTickProcessedCount: Number(heartbeat?.lastTickProcessedCount || 0),
+      lastTickStartedAt: heartbeat?.lastTickStartedAt || null,
+      lastTickSuccessAt: heartbeat?.lastTickSuccessAt || null,
+      processId: heartbeat?.processId || null,
+      startedAt: heartbeat?.startedAt || null,
+    },
+    queue: { failedCount, oldestReadyAgeMs, oldestReadyAt, queuedCount, readyCount, retryingCount, runningCount, staleRunningCount },
+    recentFailures,
+    role,
+    status,
+    thresholds: { heartbeatStaleAfterMs: heartbeatThreshold, jobStaleAfterMs: WAREHOUSE_JOB_STALE_AFTER_MS },
+    observedAt,
+  };
+}
 
 type WarehouseJobActivityInput = Pick<WarehouseJob, "status"> & Partial<Pick<WarehouseJob, "lockedAt" | "nextRunAt" | "startedAt" | "updatedAt">>;
 
@@ -2128,16 +2314,35 @@ export async function listWarehouseJobs(db: AppDatabase, ownerId: string, siteUr
 export function startWarehouseJobWorker(db: AppDatabase) {
   let stopped = false;
   let running = false;
+  const startedAt = nowIso();
+  let lastTickStartedAt: string | null = null;
+  let lastTickSuccessAt: string | null = null;
+  let lastTickErrorAt: string | null = null;
+  let lastErrorCode: string | null = null;
+  let lastTickProcessedCount = 0;
+  const persistHeartbeat = () => void upsertWarehouseRuntimeHeartbeat(db, {
+    lastErrorCode,
+    lastTickErrorAt,
+    lastTickProcessedCount,
+    lastTickStartedAt,
+    lastTickSuccessAt,
+    processId: String(process.pid),
+    role: 'warehouse',
+    startedAt,
+  }).catch((error) => reportWarehouseHeartbeatError('[warehouse] Runtime heartbeat update failed:', error));
+  persistHeartbeat();
   const maxConcurrentJobs = db.dialect === 'postgres' ? Math.min(JOBS_PER_TICK, POSTGRES_JOB_CONCURRENCY) : 1;
   const tick = async () => {
     if (stopped || running) return;
     running = true;
+    lastTickStartedAt = nowIso();
+    persistHeartbeat();
+    let processedThisTick = 0;
     try {
       await recoverStaleWarehouseJobs(db);
       await supersedeLegacyCoreDailyJobs(db);
       await supersedeLegacyLlmDailyJobs(db);
       await supersedeObsoleteCoreRangeJobs(db);
-      let processedThisTick = 0;
       while (processedThisTick < JOBS_PER_TICK) {
         const batch: WarehouseJob[] = [];
         for (let i = 0; i < maxConcurrentJobs && processedThisTick + batch.length < JOBS_PER_TICK; i += 1) {
@@ -2165,7 +2370,16 @@ export function startWarehouseJobWorker(db: AppDatabase) {
         }));
         processedThisTick += batch.length;
       }
+      lastTickProcessedCount = processedThisTick;
+      lastTickSuccessAt = nowIso();
+      lastTickErrorAt = null;
+      lastErrorCode = null;
+      persistHeartbeat();
     } catch (error) {
+      lastTickProcessedCount = processedThisTick;
+      lastTickErrorAt = nowIso();
+      lastErrorCode = classifyWarehouseRuntimeError(error);
+      persistHeartbeat();
       console.error('[warehouse] Queue worker failed:', error);
     } finally {
       running = false;
@@ -2200,6 +2414,7 @@ export async function runWarehouseDailySchedulerTick(db: AppDatabase) {
   const users = await db.all<any>(`
     SELECT id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites
     FROM users
+    -- The shared Google OAuth refresh token grants both Search Console and GA4 scopes.
     WHERE gscRefreshToken IS NOT NULL AND gscRefreshToken != ''
   `);
 
@@ -2257,13 +2472,40 @@ export async function runWarehouseDailySchedulerTick(db: AppDatabase) {
 export function startWarehouseDailyScheduler(db: AppDatabase) {
   let stopped = false;
   let running = false;
+  const startedAt = nowIso();
+  let lastTickStartedAt: string | null = null;
+  let lastTickSuccessAt: string | null = null;
+  let lastTickErrorAt: string | null = null;
+  let lastErrorCode: string | null = null;
+  let lastTickProcessedCount = 0;
+  const persistHeartbeat = () => void upsertWarehouseRuntimeHeartbeat(db, {
+    lastErrorCode,
+    lastTickErrorAt,
+    lastTickProcessedCount,
+    lastTickStartedAt,
+    lastTickSuccessAt,
+    processId: String(process.pid),
+    role: 'scheduler',
+    startedAt,
+  }).catch((error) => reportWarehouseHeartbeatError('[warehouse] Scheduler heartbeat update failed:', error));
+  persistHeartbeat();
 
   const tick = async () => {
     if (stopped || running) return;
     running = true;
+    lastTickStartedAt = nowIso();
+    persistHeartbeat();
     try {
       await runWarehouseDailySchedulerTick(db);
+      lastTickProcessedCount = 1;
+      lastTickSuccessAt = nowIso();
+      lastTickErrorAt = null;
+      lastErrorCode = null;
+      persistHeartbeat();
     } catch (error) {
+      lastTickErrorAt = nowIso();
+      lastErrorCode = classifyWarehouseRuntimeError(error);
+      persistHeartbeat();
       console.error('[warehouse] Daily scheduler failed:', error);
     } finally {
       running = false;

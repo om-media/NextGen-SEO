@@ -439,6 +439,18 @@ const commonSchemaSql = `
     rowsSynced INTEGER DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS warehouse_runtime_heartbeats (
+    role TEXT PRIMARY KEY,
+    processId TEXT,
+    startedAt TEXT NOT NULL,
+    lastTickStartedAt TEXT,
+    lastTickSuccessAt TEXT,
+    lastTickErrorAt TEXT,
+    lastErrorCode TEXT,
+    lastTickProcessedCount INTEGER DEFAULT 0,
+    updatedAt TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS crawl_jobs (
     id TEXT PRIMARY KEY,
     ownerId TEXT,
@@ -1205,6 +1217,12 @@ const camelCaseColumns: Record<string, string> = {
   earliestsyncdate: 'earliestSyncDate',
   lastupdated: 'lastUpdated',
   jobtype: 'jobType',
+  processid: 'processId',
+  lasttickstartedat: 'lastTickStartedAt',
+  lastticksuccessat: 'lastTickSuccessAt',
+  lasttickerrorat: 'lastTickErrorAt',
+  lasterrorcode: 'lastErrorCode',
+  lasttickprocessedcount: 'lastTickProcessedCount',
   targetstartdate: 'targetStartDate',
   targetdate: 'targetDate',
   metricsjson: 'metricsJson',

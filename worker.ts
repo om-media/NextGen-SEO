@@ -3,6 +3,7 @@ import http from 'node:http';
 import { validateRuntimeConfig } from './server/config.js';
 import { initializeDatabase } from './server/database.js';
 import { parseRuntimeRole, startRuntimeServices, type RuntimeRole } from './server/runtimeRoles.js';
+import { getWarehouseRuntimeHealth } from './server/services/warehouseJobs.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -42,11 +43,15 @@ async function startWorker() {
 
     try {
       await db.get('SELECT 1 AS ok');
-      response.writeHead(200, { 'Content-Type': 'application/json' });
       const diagnostics = db.getDiagnostics?.();
+      const runtimeHealth = !dryRun && (role === 'warehouse' || role === 'scheduler')
+        ? await getWarehouseRuntimeHealth(db, role)
+        : undefined;
+      const ready = !runtimeHealth || runtimeHealth.status === 'healthy' || runtimeHealth.status === 'idle';
+      response.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({
         database: db.dialect,
-        ok: true,
+        ok: ready,
         pool: diagnostics?.pool ? {
           idle: diagnostics.pool.idleCount,
           max: diagnostics.pool.max,
@@ -54,6 +59,7 @@ async function startWorker() {
           waiting: diagnostics.pool.waitingCount,
         } : undefined,
         role,
+        runtime: runtimeHealth,
       }));
     } catch {
       response.writeHead(503, { 'Content-Type': 'application/json' });

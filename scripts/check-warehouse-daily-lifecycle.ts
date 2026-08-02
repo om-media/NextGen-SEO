@@ -121,6 +121,13 @@ await db.run(
   [ownerId, 'pro', siteUrl, propertyId, JSON.stringify([]), JSON.stringify([siteUrl]), 'refresh-token', null],
 );
 
+const tokenlessGa4OwnerId = 'owner-tokenless-ga4';
+const tokenlessGa4SiteUrl = 'https://ga4-only.example/';
+const tokenlessGa4PropertyId = 'properties/456';
+await db.run(
+  'INSERT INTO users (id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites, gscRefreshToken, bingApiKey) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  [tokenlessGa4OwnerId, 'pro', tokenlessGa4SiteUrl, tokenlessGa4PropertyId, JSON.stringify([]), JSON.stringify([tokenlessGa4SiteUrl]), null, null],
+);
 const stableDates = recentStableWarehouseDates(14);
 assert(stableDates.length === 14, 'Expected 14 stable dates');
 const targetDate = stableDates[0];
@@ -159,6 +166,8 @@ assert(dailyJobs.length === 0, `Expected 0 daily-sync jobs because overlapping c
 assert(dimJobs[0]?.targetStartDate !== targetDate, 'Dimension scheduler follow-up should reuse the backfill range instead of queueing a one-day duplicate');
 assert(llmJobs[0]?.targetStartDate !== targetDate, 'LLM scheduler follow-up should reuse the backfill range instead of queueing a one-day duplicate');
 assert(JSON.stringify(firstPassSummary) === JSON.stringify(secondPassSummary), 'Second scheduler tick should not add duplicate warehouse jobs');
+const tokenlessGa4Jobs = secondPassJobs.filter((job: any) => job.siteUrl === tokenlessGa4SiteUrl);
+assert(tokenlessGa4Jobs.length === 0, 'A GA4-only account without a Google refresh token must not queue jobs it cannot authorize');
 
 console.log(JSON.stringify({
   ok: true,
