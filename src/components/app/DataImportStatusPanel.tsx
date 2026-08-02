@@ -86,6 +86,8 @@ function getDatasetStats(coverage: DataCoverageResponse | null, dataSource: Data
       missingDateCount: 0,
       readyDateCount: 0,
       totalRows: 0,
+      latestAvailableDate: null as string | null,
+      unavailableDateCount: 0,
     };
   }
 
@@ -96,6 +98,7 @@ function getDatasetStats(coverage: DataCoverageResponse | null, dataSource: Data
       coverage.gsc.site,
       coverage.gsc.query,
       coverage.gsc.pageQuery,
+      coverage.gsc.country,
     );
   }
 
@@ -121,10 +124,12 @@ function getDatasetStats(coverage: DataCoverageResponse | null, dataSource: Data
   return {
     expectedDateCount,
     firstCoveredDate: coveredFirstDates[0] || null,
-    lastCoveredDate: coveredLastDates[0] || null,
+    lastCoveredDate: coveredLastDates[coveredLastDates.length - 1] || null,
     missingDateCount,
     readyDateCount,
     totalRows: datasets.reduce((sum, dataset) => sum + dataset.totalRows, 0),
+    latestAvailableDate: coverage.dateRange.latestAvailableDate || coveredLastDates[coveredLastDates.length - 1] || null,
+    unavailableDateCount: Number(coverage.dateRange.unavailableDateCount || 0),
   };
 }
 
@@ -260,24 +265,24 @@ export function DataImportStatusPanel({
       text: `${failedJobCount} import ${failedJobCount === 1 ? "job has" : "jobs have"} failed in this range.`,
     },
     checking: {
-      icon: <RefreshCw className="h-4 w-4 animate-spin text-primary" />,
+      icon: <RefreshCw className="h-4 w-4 motion-safe:animate-spin motion-reduce:animate-none text-primary" />,
       label: "Checking stored data",
       text: "Reading the stored reporting coverage for this date range.",
     },
     starting: {
-      icon: <RefreshCw className="h-4 w-4 animate-spin text-primary" />,
+      icon: <RefreshCw className="h-4 w-4 motion-safe:animate-spin motion-reduce:animate-none text-primary" />,
       label: "Starting import",
-      text: "The app is starting the missing historical import automatically.",
+      text: "Starting an import for the missing source data now.",
     },
     importing: {
-      icon: <RefreshCw className="h-4 w-4 animate-spin text-primary" />,
-      label: "Preparing in background",
-      text: "Stored reports stay available while the app fills in missing source data.",
+      icon: <RefreshCw className="h-4 w-4 motion-safe:animate-spin motion-reduce:animate-none text-primary" />,
+      label: "Import in progress",
+      text: `${formatWholeNumber(stats.missingDateCount)} missing ${stats.missingDateCount === 1 ? "day is" : "days are"} queued or running. Stored reports stay available while the app fills in source data. This panel checks again every 10 seconds.`,
     },
     missing: {
       icon: <Clock3 className="h-4 w-4 text-amber-600" />,
-      label: "Preparing automatically",
-      text: "The app will fill missing source data in the background. No export, upload, or manual import is needed.",
+      label: "Missing data",
+      text: `${formatWholeNumber(stats.missingDateCount)} ${stats.missingDateCount === 1 ? "day is" : "days are"} missing and no import is running. Choose Prepare now to start the missing-day import.`,
     },
     ready: {
       icon: <CheckCircle2 className="h-4 w-4 text-primary" />,
@@ -326,7 +331,11 @@ export function DataImportStatusPanel({
   };
 
   return (
-    <section className="rounded-2xl border border-border bg-card/95 p-4 shadow-[0_12px_34px_rgba(15,61,46,0.05)]">
+    <section
+      aria-busy={loading || activeJobCount > 0}
+      aria-labelledby="source-data-readiness-heading"
+      className="rounded-2xl border border-border bg-card/95 p-4 shadow-[0_12px_34px_rgba(15,61,46,0.05)]"
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -334,9 +343,9 @@ export function DataImportStatusPanel({
               <Database className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-foreground">Source data readiness</h3>
+              <h3 className="text-sm font-semibold text-foreground" id="source-data-readiness-heading">Source data readiness</h3>
               <p className="text-xs text-muted-foreground">
-                {range.startDate} to {range.endDate}
+                {format(parseISO(range.startDate), "MMM d, yyyy")} to {format(parseISO(range.endDate), "MMM d, yyyy")}
                 {latestJobDistance ? ` · last import update ${latestJobDistance}` : ""}
               </p>
             </div>
@@ -346,7 +355,15 @@ export function DataImportStatusPanel({
             </span>
           </div>
 
-          <p className="mt-3 text-sm text-muted-foreground">{statusCopy.text}</p>
+          <p aria-live="polite" className="mt-3 text-sm text-muted-foreground" role="status">{statusCopy.text}</p>
+          {stats.latestAvailableDate && stats.latestAvailableDate < range.endDate && (
+            <p className="mt-1 text-xs text-amber-700">
+              Source data is currently available through {format(parseISO(stats.latestAvailableDate), "MMM d, yyyy")}.
+              {stats.unavailableDateCount > 0
+                ? ` ${formatWholeNumber(stats.unavailableDateCount)} ${stats.unavailableDateCount === 1 ? "requested date is" : "requested dates are"} not published yet.`
+                : ` ${format(parseISO(range.endDate), "MMM d, yyyy")} is not available yet.`}
+            </p>
+          )}
           {estimateText && (
             <p className="mt-1 text-xs text-muted-foreground">{estimateText}</p>
           )}
@@ -357,7 +374,15 @@ export function DataImportStatusPanel({
                 {formatWholeNumber(stats.readyDateCount)} / {formatWholeNumber(stats.expectedDateCount)} days ready
               </span>
               <span className="ml-auto text-xs text-muted-foreground">{progressValue}%</span>
-              <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                aria-label="Source data coverage"
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={progressValue}
+                aria-valuetext={`${formatWholeNumber(stats.readyDateCount)} of ${formatWholeNumber(stats.expectedDateCount)} requested days ready`}
+                className="h-1 w-full overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+              >
                 <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progressValue}%` }} />
               </div>
             </div>
@@ -408,7 +433,7 @@ export function DataImportStatusPanel({
                 size="sm"
                 variant="outline"
               >
-                <RotateCcw className={`h-3.5 w-3.5 ${actionState === "retrying" ? "animate-spin" : ""}`} />
+                <RotateCcw className={`h-3.5 w-3.5 ${actionState === "retrying" ? "motion-safe:animate-spin motion-reduce:animate-none" : ""}`} />
                 Retry failed
               </Button>
             )}
@@ -430,7 +455,7 @@ export function DataImportStatusPanel({
               size="sm"
               variant="default"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${actionState === "importing" ? "animate-spin" : ""}`} />
+              <RefreshCw className={`h-3.5 w-3.5 ${actionState === "importing" ? "motion-safe:animate-spin motion-reduce:animate-none" : ""}`} />
               {actionState === "importing"
                 ? "Starting"
                 : activeJobCount > 0

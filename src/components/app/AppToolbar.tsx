@@ -26,6 +26,7 @@ type AppToolbarProps = {
   onToDateChange: (date: Date | undefined) => void;
   onWarehouseCoverageChange?: () => void;
   rawDataAvailable?: boolean;
+  showImportStatusBadge?: boolean;
   setIsCompareMode: (value: boolean) => void;
 };
 
@@ -60,6 +61,7 @@ export function AppToolbar({
   onToDateChange,
   onWarehouseCoverageChange,
   rawDataAvailable = false,
+  showImportStatusBadge = false,
   setIsCompareMode,
 }: AppToolbarProps) {
   const sectionCopy = getSectionCopy(activeMenu, dataSource);
@@ -101,7 +103,7 @@ export function AppToolbar({
   };
   const toolbarHasActiveImport = Number(toolbarCoverage?.activeJobCount || 0) > 0;
   const toolbarNeedsDataAttention = Boolean(toolbarCoverage && toolbarCoverage.errorJobCount > 0);
-  const showImportControl = syncActionState === "queueing" || toolbarNeedsDataAttention;
+  const showImportControl = showImportStatusBadge && (syncActionState === "queueing" || toolbarNeedsDataAttention);
   const importButtonDisabled = syncActionState === "queueing" || toolbarHasActiveImport;
   const importButtonLabel = syncActionState === "queueing"
     ? "Starting retry"
@@ -132,16 +134,18 @@ export function AppToolbar({
         <div className="flex w-full flex-wrap items-center gap-2 2xl:justify-end">
           {isDashboard && (dataSource === "gsc" || dataSource === "blended" || dataSource === "ga4") && (
             <>
-              <GscSyncStatusBadge
-                activeMenu={activeMenu}
-                dataSource={dataSource}
-                dateRange={dateRange}
-                ga4PropertyId={reportingGa4PropertyId}
-                onCoverageLoaded={setToolbarCoverage}
-                onCoverageProgress={onWarehouseCoverageChange}
-                refreshKey={syncRefreshKey + gscSyncVersion}
-                siteUrl={currentSiteUrl}
-              />
+              {showImportStatusBadge && (
+                <GscSyncStatusBadge
+                  activeMenu={activeMenu}
+                  dataSource={dataSource}
+                  dateRange={dateRange}
+                  ga4PropertyId={reportingGa4PropertyId}
+                  onCoverageLoaded={setToolbarCoverage}
+                  onCoverageProgress={onWarehouseCoverageChange}
+                  refreshKey={syncRefreshKey + gscSyncVersion}
+                  siteUrl={currentSiteUrl}
+                />
+              )}
               {showImportControl && (
                 <button
                   className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-foreground shadow-[0_8px_20px_rgba(15,61,46,0.06)] transition hover:bg-background disabled:cursor-default disabled:opacity-75"
