@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
-const source = fs.readFileSync('src/App.tsx', 'utf8');
-const appContentSource = fs.readFileSync('src/components/app/AppContent.tsx', 'utf8');
-const bingGridSource = fs.readFileSync('components/dashboard/BingDataGrid.tsx', 'utf8');
-const reconciliationSource = fs.readFileSync('components/dashboard/ReconciliationView.tsx', 'utf8');
+const read = (filePath) => fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
+
+const source = read('src/App.tsx');
+const appContentSource = read('src/components/app/AppContent.tsx');
+const bingGridSource = read('components/dashboard/BingDataGrid.tsx');
+const reconciliationSource = read('components/dashboard/ReconciliationView.tsx');
 
 const inventoryEffectStart = source.indexOf('const googleConnected = Boolean(userProfile?.googleConnected)');
 const inventoryEffectEnd = source.indexOf('const handleSiteSelect', inventoryEffectStart);
@@ -36,7 +39,7 @@ assert(
   'Settings must only save an accessible workspace site, never a source-only selection',
 );
 
-const onboardingSource = fs.readFileSync('src/components/app/OnboardingFlow.tsx', 'utf8');
+const onboardingSource = read('src/components/app/OnboardingFlow.tsx');
 assert(
   onboardingSource.includes('isUnlocked: !isFirstActivation && Boolean(userProfile?.unlockedSites.includes(site.siteUrl))')
     && !onboardingSource.includes('isUnlocked: true'),
@@ -91,7 +94,7 @@ assert(
   'Bing must repair a cached site selection that is absent from the verified Bing site list',
 );
 
-const tempRoot = path.resolve('.tmp', 'selector-stability-check');
+const tempRoot = path.join(process.cwd(), 'node_modules', `.selector-stability-${process.pid}`);
 fs.mkdirSync(tempRoot, { recursive: true });
 
 function transpileToTemp(inputPath, sourceText) {
@@ -127,7 +130,7 @@ function scriptKindFor(filePath) {
 }
 
 function extractFunctionSource(filePath, functionName) {
-  const sourceText = fs.readFileSync(filePath, 'utf8');
+  const sourceText = read(filePath);
   const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, scriptKindFor(filePath));
   let result = null;
 
@@ -156,7 +159,7 @@ const compileTargets = [
 ];
 
 for (const inputPath of compileTargets) {
-  transpileToTemp(inputPath, fs.readFileSync(inputPath, 'utf8'));
+  transpileToTemp(inputPath, read(inputPath));
 }
 
 const appContentHelperPath = transpileToTemp(
