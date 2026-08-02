@@ -210,6 +210,7 @@ export function DataImportStatusPanel({
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setActionNotice(null);
 
     Promise.all([
       fetchDataCoverage({
