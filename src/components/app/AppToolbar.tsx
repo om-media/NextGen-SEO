@@ -90,6 +90,7 @@ export function AppToolbar({
               propertyId: reportingGa4PropertyId || undefined,
               maxDates: 486,
               siteUrl: currentSiteUrl,
+              sources: dataSource === "gsc" ? ["gsc"] : dataSource === "blended" ? ["gsc", "ga4-pages"] : ["ga4-pages"],
               startDate: range.startDate,
             }),
         });

@@ -116,6 +116,7 @@ const BOOTSTRAP_DETAIL_JOB_PRIORITY = 5;
 export const SEARCH_CONSOLE_HISTORY_DAYS = 486;
 const INITIAL_BACKFILL_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_INITIAL_BACKFILL_DAYS, SEARCH_CONSOLE_HISTORY_DAYS, 1, SEARCH_CONSOLE_HISTORY_DAYS);
 export const CORE_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_CORE_RANGE_JOB_DAYS, 120, 7, 365);
+export const GA4_PAGE_RANGE_JOB_DAYS = positiveIntegerEnv(process.env.WAREHOUSE_GA4_PAGE_RANGE_JOB_DAYS, 7, 1, 30);
 const GSC_ROW_LIMIT = 25_000;
 const GSC_MAX_PAGES_PER_DATASET = 200;
 const GA4_ROW_LIMIT = 100_000;
@@ -856,84 +857,89 @@ async function syncGa4PageRange(db: AppDatabase, job: WarehouseJob, startDate: s
            pageViews=ga4_page_metrics.pageViews + excluded.pageViews,
            eventCount=ga4_page_metrics.eventCount + excluded.eventCount`;
   const insertPage = prepareWarehouseStatement(db, insertPageSql);
-  const rows = [];
-  let offset = 0;
+  const dates = eachIsoDate(startDate, endDate);
+  let totalRows = 0;
+  let apiMs = 0;
+  let writeMs = 0;
   let truncated = false;
 
-  const apiStartedAt = Date.now();
-  for (let page = 0; page < GA4_MAX_PAGES_PER_DATASET; page += 1) {
-    const data = await googleApiFetchJson(
-      db,
-      job.ownerId,
-      `https://analyticsdata.googleapis.com/v1beta/${job.propertyId}:runReport`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          dateRanges: [{ startDate, endDate }],
-          dimensions: [{ name: 'date' }, { name: 'landingPagePlusQueryString' }],
-          limit: GA4_ROW_LIMIT,
-          metrics: [{ name: 'sessions' }, { name: 'totalUsers' }, { name: 'screenPageViews' }, { name: 'bounceRate' }, { name: 'eventCount' }],
-          offset,
-        }),
-      },
-    );
-    const batch = Array.isArray(data?.rows) ? data.rows : [];
-    rows.push(...batch);
-    if (batch.length < GA4_ROW_LIMIT) {
-      break;
+  for (const date of dates) {
+    const rows = [];
+    let offset = 0;
+    let dateTruncated = false;
+    const apiStartedAt = Date.now();
+    for (let page = 0; page < GA4_MAX_PAGES_PER_DATASET; page += 1) {
+      const data = await googleApiFetchJson(
+        db,
+        job.ownerId,
+        `https://analyticsdata.googleapis.com/v1beta/${job.propertyId}:runReport`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            dateRanges: [{ startDate: date, endDate: date }],
+            dimensions: [{ name: 'date' }, { name: 'landingPagePlusQueryString' }],
+            limit: GA4_ROW_LIMIT,
+            metrics: [{ name: 'sessions' }, { name: 'totalUsers' }, { name: 'screenPageViews' }, { name: 'bounceRate' }, { name: 'eventCount' }],
+            offset,
+          }),
+        },
+      );
+      const batch = Array.isArray(data?.rows) ? data.rows : [];
+      rows.push(...batch);
+      if (batch.length < GA4_ROW_LIMIT) {
+        break;
+      }
+      if (page === GA4_MAX_PAGES_PER_DATASET - 1) dateTruncated = true;
+      offset += GA4_ROW_LIMIT;
     }
-    if (page === GA4_MAX_PAGES_PER_DATASET - 1) truncated = true;
-    offset += GA4_ROW_LIMIT;
-  }
-  const apiMs = elapsedMs(apiStartedAt);
+    apiMs += elapsedMs(apiStartedAt);
+    truncated = truncated || dateTruncated;
 
-  const rowCountsByDate = ga4RowsByDate(rows);
-  const writeStartedAt = Date.now();
-  await db.transaction(async () => {
-    await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?', [job.ownerId, job.propertyId, job.siteUrl, startDate, endDate]);
-    const seenDates = new Set<string>();
-    for (const row of rows) {
-      const date = normalizeGa4Date(row.dimensionValues?.[0]?.value) || startDate;
-      seenDates.add(date);
-      const pagePath = row.dimensionValues?.[1]?.value || '/';
-      await runWarehouseStatement(
-        db,
-        insertPage,
-        insertPageSql,
-        [job.ownerId, job.propertyId, job.siteUrl, date, pagePath, canonicalPageKey(pagePath, job.siteUrl), toNumber(row.metricValues?.[0]?.value), toNumber(row.metricValues?.[1]?.value), toNumber(row.metricValues?.[2]?.value), toNumber(row.metricValues?.[3]?.value), toNumber(row.metricValues?.[4]?.value)],
-      );
-    }
-    for (const date of eachIsoDate(startDate, endDate)) {
-      if (seenDates.has(date)) continue;
-      await runWarehouseStatement(
-        db,
-        insertPage,
-        insertPageSql,
-        [job.ownerId, job.propertyId, job.siteUrl, date, '', '', 0, 0, 0, 0, 0],
-      );
-    }
-    for (const date of eachIsoDate(startDate, endDate)) {
-      const rowCount = rowCountsByDate.get(date) || 0;
+    const writeStartedAt = Date.now();
+    await db.transaction(async () => {
+      await db.run('DELETE FROM ga4_page_metrics WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date = ?', [job.ownerId, job.propertyId, job.siteUrl, date]);
+      let seenRows = 0;
+      for (const row of rows) {
+        const rowDate = normalizeGa4Date(row.dimensionValues?.[0]?.value) || date;
+        const pagePath = row.dimensionValues?.[1]?.value || '/';
+        seenRows += 1;
+        await runWarehouseStatement(
+          db,
+          insertPage,
+          insertPageSql,
+          [job.ownerId, job.propertyId, job.siteUrl, rowDate, pagePath, canonicalPageKey(pagePath, job.siteUrl), toNumber(row.metricValues?.[0]?.value), toNumber(row.metricValues?.[1]?.value), toNumber(row.metricValues?.[2]?.value), toNumber(row.metricValues?.[3]?.value), toNumber(row.metricValues?.[4]?.value)],
+        );
+      }
+      if (seenRows === 0) {
+        await runWarehouseStatement(
+          db,
+          insertPage,
+          insertPageSql,
+          [job.ownerId, job.propertyId, job.siteUrl, date, '', '', 0, 0, 0, 0, 0],
+        );
+      }
       await upsertGa4DatasetCoverage(db, {
         dataset: 'pages',
         date,
         job,
-        rowCount,
-        status: truncated ? 'partial' : rowCount > 0 ? 'complete' : 'zero',
-        truncated,
+        rowCount: rows.length,
+        status: dateTruncated ? 'partial' : rows.length > 0 ? 'complete' : 'zero',
+        truncated: dateTruncated,
       });
-    }
-  })();
-  const writeMs = elapsedMs(writeStartedAt);
+      totalRows += rows.length;
+    })();
+    writeMs += elapsedMs(writeStartedAt);
+  }
+
   return {
     apiMs,
-    metrics: { days: eachIsoDate(startDate, endDate).length, source: 'ga4-pages' },
-    rows: { ga4Pages: rows.length },
-    rowsSynced: rows.length,
+    metrics: { days: dates.length, source: 'ga4-pages' },
+    rows: { ga4Pages: totalRows },
+    rowsSynced: totalRows,
     writeMs,
+    ...(truncated ? { truncated: true } : {}),
   };
 }
-
 async function syncGa4Date(db: AppDatabase, job: WarehouseJob) {
   return syncGa4PageRange(db, job, job.targetDate, job.targetDate);
 }
@@ -1544,7 +1550,20 @@ export async function claimNextWarehouseJob(db: AppDatabase) {
           AND running_site.ownerId = queued.ownerId
           AND running_site.siteUrl = queued.siteUrl
       )
-    ORDER BY COALESCE(queued.priority, 0) DESC, queued.nextRunAt ASC, queued.targetDate DESC, queued.updatedAt ASC
+    ORDER BY
+      COALESCE(queued.priority, 0) DESC,
+      CASE queued.jobType
+        WHEN 'ga4-page-range-sync' THEN 0
+        WHEN 'core-range-sync' THEN 1
+        WHEN 'daily-sync' THEN 2
+        WHEN 'ga4-dimension-range-sync' THEN 3
+        WHEN 'ga4-llm-range-sync' THEN 4
+        WHEN 'ga4-llm-sync' THEN 5
+        ELSE 6
+      END ASC,
+      queued.nextRunAt ASC,
+      queued.targetDate DESC,
+      queued.updatedAt ASC
     LIMIT 1
   `, [now]);
   if (!job) return null;
@@ -2159,7 +2178,7 @@ export async function queueWarehouseBackfillJobs(db: AppDatabase, input: { days?
 export async function queueWarehouseGa4PageBackfillJobs(db: AppDatabase, input: Ga4BackfillInput) {
   const jobs = [];
   const missingDates = await missingGa4PageWarehouseDates(db, input);
-  for (const chunk of chunkDescendingDates(missingDates, CORE_RANGE_JOB_DAYS)) {
+  for (const chunk of chunkDescendingDates(missingDates, GA4_PAGE_RANGE_JOB_DAYS)) {
     const job = await queueWarehouseGa4PageRangeJob(db, {
       endDate: chunk.endDate,
       ownerId: input.ownerId,

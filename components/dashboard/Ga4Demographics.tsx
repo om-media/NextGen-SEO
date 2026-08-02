@@ -122,7 +122,7 @@ export function Ga4Demographics({ propertyId, workspaceSiteUrl, dateRange, refre
             [dimension.key],
             ['sessions'],
             undefined,
-            { signal: controller.signal, siteUrl: workspaceSiteUrl },
+            { autoQueue: true, signal: controller.signal, siteUrl: workspaceSiteUrl },
           );
           return { dimension, result };
         }));

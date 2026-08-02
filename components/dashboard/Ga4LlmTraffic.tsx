@@ -104,13 +104,13 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
         const ga4Service = new Ga4ApiService()
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
-        const reports = [ga4Service.getLlmTrafficReport(propertyId, startDate, endDate, { signal: controller.signal, siteUrl: workspaceSiteUrl })]
+        const reports = [ga4Service.getLlmTrafficReport(propertyId, startDate, endDate, { autoQueue: true, signal: controller.signal, siteUrl: workspaceSiteUrl })]
         let compareReport = null
 
         if (isCompareMode && compareDateRange.from && compareDateRange.to) {
           const compareStartDate = format(compareDateRange.from, 'yyyy-MM-dd')
           const compareEndDate = format(compareDateRange.to, 'yyyy-MM-dd')
-          reports.push(ga4Service.getLlmTrafficReport(propertyId, compareStartDate, compareEndDate, { signal: controller.signal, siteUrl: workspaceSiteUrl }))
+          reports.push(ga4Service.getLlmTrafficReport(propertyId, compareStartDate, compareEndDate, { autoQueue: true, signal: controller.signal, siteUrl: workspaceSiteUrl }))
         }
 
         const [primaryReport, loadedCompareReport] = await Promise.all(reports)

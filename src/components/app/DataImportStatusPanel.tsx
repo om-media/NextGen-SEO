@@ -108,11 +108,6 @@ function getDatasetStats(coverage: DataCoverageResponse | null, dataSource: Data
     datasets.push(coverage.ga4.pages);
   }
 
-  if (dataSource === "ga4" && coverage.ga4.enabled) {
-    datasets.push(coverage.ga4.dimensions);
-    if (coverage.ga4.llm) datasets.push(coverage.ga4.llm);
-  }
-
   const expectedDateCount = Math.max(...datasets.map((dataset) => dataset.expectedDateCount), 0);
   const readyDateCount = datasets.length > 0
     ? Math.min(...datasets.map((dataset) => dataset.coveredDateCount))
@@ -160,9 +155,8 @@ function getJobErrorCopy(error?: string | null) {
 }
 
 function isJobForDataSource(job: WarehouseJobSummary, dataSource: DataSource) {
-  if (dataSource === "blended") return true;
   if (dataSource === "gsc") return job.jobType === "daily-sync" || job.jobType === "core-range-sync";
-  return ["daily-sync", "core-range-sync", "ga4-page-range-sync", "ga4-dimension-range-sync", "ga4-llm-range-sync", "ga4-llm-sync"].includes(job.jobType);
+  return ["daily-sync", "core-range-sync", "ga4-page-range-sync"].includes(job.jobType);
 }
 
 function getStatusClasses(status: string) {
@@ -191,11 +185,25 @@ export function DataImportStatusPanel({
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const range = useMemo(() => getIsoDateRange(dateRange), [dateRange]);
+  const importSources = dataSource === "gsc"
+    ? ["gsc"]
+    : dataSource === "blended"
+      ? ["gsc", "ga4-pages"]
+      : ["ga4-pages"];
   const stats = getDatasetStats(coverage, dataSource);
-  const activeJobCount = Number(coverage?.warehouseJobs.queued || 0)
-    + Number(coverage?.warehouseJobs.retrying || 0)
-    + Number(coverage?.warehouseJobs.running || 0);
-  const failedJobCount = Number(coverage?.warehouseJobs.error || 0);
+  const selectedSourceJobs = coverage?.sourceJobs
+    ? dataSource === "gsc"
+      ? [coverage.sourceJobs.gsc]
+      : dataSource === "blended"
+        ? [coverage.sourceJobs.gsc, coverage.sourceJobs.ga4Pages]
+        : [coverage.sourceJobs.ga4Pages]
+    : [];
+  const activeJobCount = selectedSourceJobs.length > 0
+    ? selectedSourceJobs.reduce((sum, source) => sum + Number(source.queued || 0) + Number(source.retrying || 0) + Number(source.running || 0), 0)
+    : Number(coverage?.warehouseJobs.queued || 0) + Number(coverage?.warehouseJobs.retrying || 0) + Number(coverage?.warehouseJobs.running || 0);
+  const failedJobCount = selectedSourceJobs.length > 0
+    ? selectedSourceJobs.reduce((sum, source) => sum + Number(source.error || 0), 0)
+    : Number(coverage?.warehouseJobs.error || 0);
   const staleActiveCount = Number(coverage?.warehouseJobs.staleActiveCount || 0);
   const staleSince = coverage?.warehouseJobs.staleSince || null;
   const activeDateCount = Number(coverage?.warehouseJobs.activeDateCount || 0);
@@ -346,6 +354,7 @@ export function DataImportStatusPanel({
         maxDates: 486,
         propertyId: dataSource === "blended" || dataSource === "ga4" ? ga4PropertyId : null,
         siteUrl,
+        sources: importSources,
         startDate: range.startDate,
       });
       setActionNotice(result.queued > 0 ? `Queued ${formatWholeNumber(result.queued)} import ${result.queued === 1 ? "job" : "jobs"} for missing dates. Completed data was left untouched.` : "No new missing-date jobs were queued.");

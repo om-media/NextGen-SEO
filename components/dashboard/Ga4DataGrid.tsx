@@ -133,7 +133,7 @@ export function Ga4DataGrid({ propertyId, workspaceSiteUrl, dateRange, dimension
         const ga4Service = new Ga4ApiService()
         const startDate = format(dateRange.from!, 'yyyy-MM-dd')
         const endDate = format(dateRange.to!, 'yyyy-MM-dd')
-        const reportOptions = { signal: controller.signal, siteUrl: workspaceSiteUrl }
+        const reportOptions = { autoQueue: isWarehouseDimension, signal: controller.signal, siteUrl: workspaceSiteUrl }
         const primaryResult = await ga4Service.runReport(
           propertyId,
           startDate,

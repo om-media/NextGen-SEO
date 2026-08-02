@@ -120,6 +120,7 @@ export async function fetchDataCoverage(params: {
 export async function queueMissingCoverageSync(params: {
   endDate: string;
   maxDates?: number;
+  sources?: string[];
   propertyId?: string | null;
   siteUrl: string;
   startDate: string;

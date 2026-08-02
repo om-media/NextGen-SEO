@@ -15,6 +15,7 @@ import { googleApiFetchJson } from '../services/googleAuth.js';
 import {
   CORE_RANGE_JOB_DAYS,
   GA4_DIMENSION_RANGE_JOB_DAYS,
+  GA4_PAGE_RANGE_JOB_DAYS,
   GSC_COVERAGE_DATASETS,
   GSC_COVERAGE_PROPERTY_ID,
   LLM_RANGE_JOB_DAYS,
@@ -712,7 +713,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         siteUrl,
         startDate: effectiveStartDate,
       });
-      for (const chunk of chunkAscendingDates(datesToQueue, CORE_RANGE_JOB_DAYS)) {
+      for (const chunk of chunkAscendingDates(datesToQueue, GA4_PAGE_RANGE_JOB_DAYS)) {
         const job = await queueWarehouseGa4PageRangeJob(db, {
           endDate: chunk.endDate,
           ownerId,
@@ -1988,7 +1989,7 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
               siteUrl,
               startDate: ga4EffectiveStartDate,
             });
-            for (const chunk of chunkAscendingDates(ga4PageDatesToQueue, CORE_RANGE_JOB_DAYS)) {
+            for (const chunk of chunkAscendingDates(ga4PageDatesToQueue, GA4_PAGE_RANGE_JOB_DAYS)) {
               const job = await queueWarehouseGa4PageRangeJob(db, {
                 endDate: chunk.endDate,
                 ownerId,
@@ -2299,10 +2300,20 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
 
   app.post('/api/warehouse/jobs/missing', authRequired, async (req: AuthedRequest, res) => {
     const ownerId = req.authUser!.uid;
-    const { siteUrl, propertyId, startDate, endDate, maxDates } = req.body || {};
+    const { siteUrl, propertyId, startDate, endDate, maxDates, sources } = req.body || {};
     if (!isNonEmptyString(siteUrl) || !isValidIsoDateRange(startDate, endDate)) {
       return res.status(400).json({ error: 'Invalid missing-days import request' });
     }
+
+    const validImportSources = new Set(['gsc', 'ga4-pages', 'ga4-dimensions', 'ga4-llm']);
+    if (sources !== undefined && (!Array.isArray(sources) || sources.length === 0 || sources.some((source) => typeof source !== 'string' || !validImportSources.has(source)))) {
+      return res.status(400).json({ error: 'Invalid import sources' });
+    }
+    const importSources = new Set<string>(sources === undefined ? [...validImportSources] : sources);
+    const wantsGsc = importSources.has('gsc');
+    const wantsGa4Pages = importSources.has('ga4-pages');
+    const wantsGa4Dimensions = importSources.has('ga4-dimensions');
+    const wantsGa4Llm = importSources.has('ga4-llm');
 
     try {
       if (!(await canAccessSite(db, ownerId, siteUrl))) {
@@ -2464,25 +2475,25 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         && !ga4LlmDates.has(date)
         && !hasMatchingLlmJob(date),
       );
-      const coreDatesToQueue = gscExpectedDates
+      const coreDatesToQueue = (wantsGsc ? gscExpectedDates : [])
         .filter((date) => needsExistingGscSync(date) && !hasAnyCoreWarehouseJob(date))
         .sort((a, b) => b.localeCompare(a))
         .slice(0, gscQueueLimit);
-      const ga4PageDatesToQueue = expectedDates
+      const ga4PageDatesToQueue = (wantsGa4Pages ? expectedDates : [])
         .filter((date) => needsGa4Sync(date) && !hasMatchingGa4PageJob(date))
         .sort((a, b) => b.localeCompare(a))
         .slice(0, ga4QueueLimit);
-      const dimensionDatesToQueue = expectedDates
+      const dimensionDatesToQueue = (wantsGa4Dimensions ? expectedDates : [])
         .filter(needsGa4DimensionSync)
         .sort((a, b) => b.localeCompare(a))
         .slice(0, ga4QueueLimit);
-      const llmDatesToQueue = expectedDates
+      const llmDatesToQueue = (wantsGa4Llm ? expectedDates : [])
         .filter(needsGa4LlmSync)
         .sort((a, b) => b.localeCompare(a))
         .slice(0, ga4QueueLimit);
 
       const jobs = [];
-      if (gscExpectedDates.length > 0) {
+      if (wantsGsc && gscExpectedDates.length > 0) {
         await promoteWarehouseJobsForRange(db, {
           endDate: effectiveEndDate,
           jobTypes: ['core-range-sync'],
@@ -2506,74 +2517,80 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         }
       }
       if (requestedPropertyId && expectedDates.length > 0) {
-        await promoteWarehouseJobsForRange(db, {
-          endDate: effectiveEndDate,
-          jobTypes: [GA4_PAGE_RANGE_JOB_TYPE],
-          ownerId,
-          priority: USER_REQUESTED_JOB_PRIORITY,
-          propertyId: requestedPropertyId,
-          siteUrl,
-          startDate: ga4EffectiveStartDate,
-        });
-        for (const chunk of chunkAscendingDates(ga4PageDatesToQueue, CORE_RANGE_JOB_DAYS)) {
-          const job = await queueWarehouseGa4PageRangeJob(db, {
-            dedupeCompleted: false,
-            endDate: chunk.endDate,
+        if (wantsGa4Pages) {
+          await promoteWarehouseJobsForRange(db, {
+            endDate: effectiveEndDate,
+            jobTypes: [GA4_PAGE_RANGE_JOB_TYPE],
             ownerId,
             priority: USER_REQUESTED_JOB_PRIORITY,
             propertyId: requestedPropertyId,
             siteUrl,
-            startDate: chunk.startDate,
+            startDate: ga4EffectiveStartDate,
           });
-          jobs.push(job);
+          for (const chunk of chunkAscendingDates(ga4PageDatesToQueue, GA4_PAGE_RANGE_JOB_DAYS)) {
+            const job = await queueWarehouseGa4PageRangeJob(db, {
+              dedupeCompleted: false,
+              endDate: chunk.endDate,
+              ownerId,
+              priority: USER_REQUESTED_JOB_PRIORITY,
+              propertyId: requestedPropertyId,
+              siteUrl,
+              startDate: chunk.startDate,
+            });
+            jobs.push(job);
+          }
         }
-        await promoteWarehouseJobsForRange(db, {
-          endDate: effectiveEndDate,
-          jobTypes: ['ga4-dimension-range-sync'],
-          ownerId,
-          priority: USER_REQUESTED_JOB_PRIORITY,
-          propertyId: requestedPropertyId,
-          siteUrl,
-          startDate: ga4EffectiveStartDate,
-        });
-        for (const chunk of chunkAscendingDates(dimensionDatesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
-          const job = await queueWarehouseGa4DimensionRangeJob(db, {
-            dedupeCompleted: false,
-            endDate: chunk.endDate,
+        if (wantsGa4Dimensions) {
+          await promoteWarehouseJobsForRange(db, {
+            endDate: effectiveEndDate,
+            jobTypes: ['ga4-dimension-range-sync'],
             ownerId,
             priority: USER_REQUESTED_JOB_PRIORITY,
             propertyId: requestedPropertyId,
             siteUrl,
-            startDate: chunk.startDate,
+            startDate: ga4EffectiveStartDate,
           });
-          jobs.push(job);
+          for (const chunk of chunkAscendingDates(dimensionDatesToQueue, GA4_DIMENSION_RANGE_JOB_DAYS)) {
+            const job = await queueWarehouseGa4DimensionRangeJob(db, {
+              dedupeCompleted: false,
+              endDate: chunk.endDate,
+              ownerId,
+              priority: USER_REQUESTED_JOB_PRIORITY,
+              propertyId: requestedPropertyId,
+              siteUrl,
+              startDate: chunk.startDate,
+            });
+            jobs.push(job);
+          }
         }
-        await promoteWarehouseJobsForRange(db, {
-          endDate: effectiveEndDate,
-          jobTypes: ['ga4-llm-range-sync'],
-          ownerId,
-          priority: USER_REQUESTED_JOB_PRIORITY,
-          propertyId: requestedPropertyId,
-          siteUrl,
-          startDate: ga4EffectiveStartDate,
-        });
-        for (const chunk of chunkAscendingDates(llmDatesToQueue, LLM_RANGE_JOB_DAYS)) {
-          const job = await queueWarehouseLlmRangeJob(db, {
-            dedupeCompleted: false,
-            endDate: chunk.endDate,
+        if (wantsGa4Llm) {
+          await promoteWarehouseJobsForRange(db, {
+            endDate: effectiveEndDate,
+            jobTypes: ['ga4-llm-range-sync'],
             ownerId,
             priority: USER_REQUESTED_JOB_PRIORITY,
             propertyId: requestedPropertyId,
             siteUrl,
-            startDate: chunk.startDate,
+            startDate: ga4EffectiveStartDate,
           });
-          jobs.push(job);
+          for (const chunk of chunkAscendingDates(llmDatesToQueue, LLM_RANGE_JOB_DAYS)) {
+            const job = await queueWarehouseLlmRangeJob(db, {
+              dedupeCompleted: false,
+              endDate: chunk.endDate,
+              ownerId,
+              priority: USER_REQUESTED_JOB_PRIORITY,
+              propertyId: requestedPropertyId,
+              siteUrl,
+              startDate: chunk.startDate,
+            });
+            jobs.push(job);
+          }
         }
       }
-      const missingCoreCount = gscExpectedDates.filter(needsExistingGscSync).length;
-      const missingGa4PageCount = expectedDates.filter(needsGa4Sync).length;
-      const missingDimensionCount = expectedDates.filter(needsGa4DimensionSync).length;
-      const missingLlmCount = expectedDates.filter(needsGa4LlmSync).length;
+      const missingCoreCount = (wantsGsc ? gscExpectedDates : []).filter(needsExistingGscSync).length;
+      const missingGa4PageCount = (wantsGa4Pages ? expectedDates : []).filter(needsGa4Sync).length;
+      const missingDimensionCount = (wantsGa4Dimensions ? expectedDates : []).filter(needsGa4DimensionSync).length;
+      const missingLlmCount = (wantsGa4Llm ? expectedDates : []).filter(needsGa4LlmSync).length;
 
       return res.json({
         jobs,
