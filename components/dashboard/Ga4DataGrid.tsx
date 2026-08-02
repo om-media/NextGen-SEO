@@ -83,7 +83,6 @@ export function Ga4DataGrid({ propertyId, workspaceSiteUrl, dateRange, dimension
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [coverage, setCoverage] = useState<WarehouseCoverage | null>(null)
-  const [pollKey, setPollKey] = useState(0)
   
   // Selected row for chart
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
@@ -214,20 +213,7 @@ export function Ga4DataGrid({ propertyId, workspaceSiteUrl, dateRange, dimension
       isCurrent = false
       controller.abort()
     }
-  }, [propertyId, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, pollKey, refreshKey, metricsKey])
-
-  useEffect(() => {
-    if (!coverage || loading) return;
-    const hasWarehouseWork =
-      Number(coverage.activeJobCount || 0) > 0 ||
-      Number(coverage.activeDateCount || 0) > 0 ||
-      Number(coverage.queuedDateCount || 0) > 0 ||
-      Number(coverage.missingDateCount || 0) > 0;
-    if (!hasWarehouseWork) return;
-
-    const timeout = window.setTimeout(() => setPollKey((value) => value + 1), 10000);
-    return () => window.clearTimeout(timeout);
-  }, [coverage, loading])
+  }, [propertyId, workspaceSiteUrl, dateRange, dimension, isCompareMode, compareDateRange, userProfile?.googleConnected, isWarehouseDimension, refreshKey, metricsKey])
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {

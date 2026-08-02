@@ -36,4 +36,20 @@ assert(llmTraffic.includes('activeDateCount') && llmTraffic.includes('unschedule
 assert(llmTraffic.includes('rounded-2xl border border-border bg-card px-4 py-3') && llmTraffic.includes('coverageStatusDescription'), 'LLM traffic readiness must use the shared dashboard status-strip treatment');
 assert(appStatusPanels.includes('Reporting connection failed') && appStatusPanels.includes('onRetry') && appStatusPanels.includes('not proof that the Google API is disabled'), 'Network reporting failures must be distinguished from Google API configuration failures and be retryable');
 
+const appToolbar = read('src/components/app/AppToolbar.tsx');
+const ga4ReportPaths = [
+  'components/dashboard/Ga4DataGrid.tsx',
+  'components/dashboard/Ga4Demographics.tsx',
+  'components/dashboard/Ga4LlmTraffic.tsx',
+  'components/dashboard/Ga4Overview.tsx',
+];
+const tenSecondTimeoutPattern = /(?:window\.)?setTimeout\(\s*\(\)\s*=>[\s\S]{0,180}?\b(?:10_000|10000)\b/;
+for (const reportPath of ga4ReportPaths) {
+  const report = read(reportPath);
+  assert(!tenSecondTimeoutPattern.test(report), `${reportPath} must not schedule a 10-second full-report poll while warehouse imports run; status pollers own that cadence`);
+  assert(!/\bsetPollKey\s*\(/.test(report), `${reportPath} must not trigger repeated full-report fetches through a poll key`);
+}
+assert(tenSecondTimeoutPattern.test(appToolbar) && /\bsetPollKey\s*\(/.test(appToolbar), 'AppToolbar must remain the 10-second warehouse-status poller');
+assert(tenSecondTimeoutPattern.test(readinessPanel) && /\bsetPollKey\s*\(/.test(readinessPanel), 'DataImportStatusPanel must remain the 10-second source-data status poller');
+
 console.log('Dashboard readiness UI check passed');

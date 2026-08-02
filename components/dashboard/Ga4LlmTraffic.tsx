@@ -61,7 +61,6 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [pollKey, setPollKey] = useState(0)
   const [coverage, setCoverage] = useState<Ga4WarehouseCoverage | null>(null)
 
   useEffect(() => {
@@ -86,7 +85,6 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
     }
 
     let isMounted = true
-    let pollTimer: number | null = null
     const controller = new AbortController()
     const fetchData = async () => {
       const hasExistingReport = Boolean(data)
@@ -117,17 +115,6 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
           setData(primaryReport)
           setCompareData(isCompareMode ? compareReport : null)
           setCoverage(primaryReport.coverage || null)
-          const nextCoverage = primaryReport.coverage || {}
-          const hasWarehouseWork =
-            Number(nextCoverage.activeJobCount || 0) > 0 ||
-            Number(nextCoverage.activeDateCount || 0) > 0 ||
-            Number(nextCoverage.queuedDateCount || 0) > 0 ||
-            Number(nextCoverage.missingDateCount || 0) > 0
-          if (hasWarehouseWork) {
-            pollTimer = window.setTimeout(() => {
-              if (isMounted) setPollKey((key) => key + 1)
-            }, 10_000)
-          }
         }
       } catch (err: any) {
         if (!isMounted || err?.name === "AbortError") return
@@ -154,9 +141,8 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
     return () => {
       isMounted = false
       controller.abort()
-      if (pollTimer) window.clearTimeout(pollTimer)
     }
-  }, [propertyId, workspaceSiteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.googleConnected, pollKey, refreshKey])
+  }, [propertyId, workspaceSiteUrl, dateRange, compareDateRange, isCompareMode, userProfile?.googleConnected, refreshKey])
 
 
   const formatValue = (metric: string, value: string) => {

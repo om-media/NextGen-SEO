@@ -83,7 +83,6 @@ export function Ga4Demographics({ propertyId, workspaceSiteUrl, dateRange, refre
   const [dimensionStates, setDimensionStates] = useState<Record<DemographicDimensionKey, DimensionLoadState>>(() => emptyDimensionState())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [pollKey, setPollKey] = useState(0)
 
   const data = useMemo(() => Object.fromEntries(
     DIMENSIONS.map((dimension) => [dimension.key, dimensionStates[dimension.key]?.rows || []]),
@@ -175,18 +174,7 @@ export function Ga4Demographics({ propertyId, workspaceSiteUrl, dateRange, refre
       isCurrent = false
       controller.abort()
     }
-  }, [propertyId, workspaceSiteUrl, dateRange, userProfile?.googleConnected, pollKey, refreshKey])
-
-  useEffect(() => {
-    if (loading) return;
-    const shouldPoll = Object.values(dimensionStates).some((state) => (
-      hasWarehouseWork(state.coverage) || hasCoverageGap(state.coverage) || isPreparationMessage(state.error)
-    ));
-    if (!shouldPoll) return;
-
-    const timeout = window.setTimeout(() => setPollKey((value) => value + 1), 10000);
-    return () => window.clearTimeout(timeout);
-  }, [dimensionStates, loading])
+  }, [propertyId, workspaceSiteUrl, dateRange, userProfile?.googleConnected, refreshKey])
 
   if (loading && !hasAnyRows) {
     return (

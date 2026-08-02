@@ -179,7 +179,6 @@ export function Ga4Overview({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [coverage, setCoverage] = useState<WarehouseCoverage | null>(null)
-  const [pollKey, setPollKey] = useState(0)
 
   const [activeMetrics, setActiveMetrics] = useState<Record<MetricKey, boolean>>({
     sessions: true,
@@ -254,21 +253,7 @@ export function Ga4Overview({
       isCurrent = false
       controller.abort()
     }
-  }, [propertyId, workspaceSiteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected, pollKey, refreshKey])
-
-
-  useEffect(() => {
-    if (!coverage || loading) return
-    const hasWarehouseWork =
-      Number(coverage.activeJobCount || 0) > 0 ||
-      Number(coverage.activeDateCount || 0) > 0 ||
-      Number(coverage.queuedDateCount || 0) > 0 ||
-      Number(coverage.missingDateCount || 0) > 0
-    if (!hasWarehouseWork) return
-
-    const timeout = window.setTimeout(() => setPollKey((value) => value + 1), 10000)
-    return () => window.clearTimeout(timeout)
-  }, [coverage, loading])
+  }, [propertyId, workspaceSiteUrl, dateRange, isCompareMode, compareDateRange, filterDimension, filterValue, userProfile?.googleConnected, refreshKey])
   const { chartData, summary, compareSummary } = useMemo(() => {
     if (!data.length || !dateRange?.from || !dateRange?.to) {
       return {
