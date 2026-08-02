@@ -16,6 +16,7 @@ type AppStatusPanelsProps = {
   isConnectingGoogle: boolean;
   onConnectGoogle: () => Promise<void>;
   onOpenGa4Setup: () => void;
+  onRetry: () => void;
   selectedSite: string;
   sessionExpired: boolean;
 };
@@ -49,6 +50,7 @@ export function AppStatusPanels({
   isConnectingGoogle,
   onConnectGoogle,
   onOpenGa4Setup,
+  onRetry,
   selectedSite,
   sessionExpired,
 }: AppStatusPanelsProps) {
@@ -134,14 +136,14 @@ export function AppStatusPanels({
       )}
 
       {apiError && (
-        <div role="alert" className="flex flex-col items-start space-y-4 rounded-2xl border border-red-200 bg-red-50/90 p-6 shadow-[0_16px_44px_rgba(127,29,29,0.06)] dark:border-red-900/50 dark:bg-red-950/35">
-          <div className="flex items-center gap-2 font-semibold text-red-600">
+        <div role="alert" className={`flex flex-col items-start space-y-4 rounded-2xl border p-6 shadow-[0_16px_44px_rgba(127,29,29,0.06)] ${apiError.startsWith("Network error:") ? "border-amber-300 bg-amber-50/90 dark:border-amber-900/50 dark:bg-amber-950/35" : "border-red-200 bg-red-50/90 dark:border-red-900/50 dark:bg-red-950/35"}`}>
+          <div className={`flex items-center gap-2 font-semibold ${apiError.startsWith("Network error:") ? "text-amber-700 dark:text-amber-200" : "text-red-600"}`}>
             <AlertCircle className="h-5 w-5" />
-            <h3>API Access Required</h3>
+            <h3>{apiError.startsWith("Network error:") ? "Reporting connection failed" : apiError.includes("https://console.developers.google.com") ? "Google API setup required" : "Google reporting needs attention"}</h3>
           </div>
-          <p className="text-sm text-foreground">The required Google API needs to be enabled before we can fetch live reporting data for this workspace.</p>
+          <p className="text-sm text-foreground">{apiError.startsWith("Network error:") ? "The browser could not reach the reporting request. This is usually caused by a temporary connection problem, an ad blocker, a privacy extension, or the local server—not proof that the Google API is disabled." : apiError.includes("https://console.developers.google.com") ? "The required Google API must be enabled before live reporting can load for this workspace." : "Google returned an error while loading the reporting properties. Reconnect Google Data or review the details below."}</p>
           {apiError.includes("https://console.developers.google.com") ? (
-            <div className="space-y-4 w-full">
+            <div className="w-full space-y-4">
               <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
               <a
                 href={apiError.match(/https:\/\/console\.developers\.google\.com[^\s]*/)?.[0] || "#"}
@@ -151,10 +153,13 @@ export function AppStatusPanels({
               >
                 Enable API in Google Cloud Console <ExternalLink className="ml-2 h-4 w-4" />
               </a>
-              <p className="text-xs text-muted-foreground mt-2">After enabling the API, wait a minute or two, then refresh this page.</p>
+              <p className="mt-2 text-xs text-muted-foreground">After enabling the API, wait a minute or two, then refresh this page.</p>
             </div>
           ) : (
-            <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
+            <div className="w-full space-y-3">
+              <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
+              {apiError.startsWith("Network error:") ? <Button onClick={onRetry} size="sm" variant="outline">Try again</Button> : <Button onClick={onConnectGoogle} disabled={isConnectingGoogle} size="sm" variant="outline">{isConnectingGoogle ? "Reconnecting..." : "Reconnect Google Data"}</Button>}
+            </div>
           )}
         </div>
       )}

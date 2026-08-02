@@ -79,6 +79,7 @@ function MainApp() {
   const [isDisconnectingGoogleData, setIsDisconnectingGoogleData] = useState(false)
   const [isUpdatingDefaultSite, setIsUpdatingDefaultSite] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
+  const [siteRefreshKey, setSiteRefreshKey] = useState(0)
   const [dataSource, setDataSource] = useState<DataSource>('gsc')
   const [gscSyncVersion, setGscSyncVersion] = useState(0)
   const [backgroundEffectsReady, setBackgroundEffectsReady] = useState(false)
@@ -539,7 +540,7 @@ function MainApp() {
       cancelled = true;
       startedScopes.forEach((scope) => selectorRequestGate.cancel(scope));
     };
-  }, [backgroundEffectsReady, dataSource, isOnboarding, mappedProfileGa4Sites, user, userProfile])
+  }, [backgroundEffectsReady, dataSource, isOnboarding, mappedProfileGa4Sites, siteRefreshKey, user, userProfile])
 
   const handleSiteSelect = async (siteUrl: string) => {
     explicitSiteSelectionRef.current = true;
@@ -1069,6 +1070,7 @@ function MainApp() {
                   isConnectingGoogle={isConnectingGoogleData}
                   onConnectGoogle={handleConnectGoogleData}
                   onOpenGa4Setup={() => setShowGa4PropertyDialog(true)}
+                  onRetry={() => setSiteRefreshKey((key) => key + 1)}
                   selectedSite={currentSelection}
                   sessionExpired={sessionExpired}
                 />

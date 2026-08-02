@@ -10,6 +10,7 @@ const header = read('src/components/app/AppHeader.tsx');
 const readinessPanel = read('src/components/app/DataImportStatusPanel.tsx');
 const warehouseRoute = read('server/routes/warehouse.ts');
 const llmTraffic = read('components/dashboard/Ga4LlmTraffic.tsx');
+const appStatusPanels = read('src/components/app/AppStatusPanels.tsx');
 
 assert(header.includes('import { DataImportStatusPanel }'), 'The app header must own the compact source-data readiness control');
 assert(header.includes('<DataImportStatusPanel') && header.includes('compact'), 'The app header must render the compact readiness control');
@@ -33,5 +34,6 @@ assert(readinessPanel.includes('width: \"min(720px, calc(100vw - 1rem))\"') && r
 assert(readinessPanel.includes('compact ? \"flex flex-col gap-4\"') && readinessPanel.includes('compact ? \"grid min-w-0 w-full gap-2 sm:grid-cols-5\"'), 'Compact readiness details must stack before the desktop metrics width can squeeze the copy');
 assert(llmTraffic.includes('activeDateCount') && llmTraffic.includes('unscheduledMissingDateCount') && llmTraffic.includes('Analytics import needs attention'), 'LLM traffic readiness must expose the same queue and failure states as other Analytics pages');
 assert(llmTraffic.includes('rounded-2xl border border-border bg-card px-4 py-3') && llmTraffic.includes('coverageStatusDescription'), 'LLM traffic readiness must use the shared dashboard status-strip treatment');
+assert(appStatusPanels.includes('Reporting connection failed') && appStatusPanels.includes('onRetry') && appStatusPanels.includes('not proof that the Google API is disabled'), 'Network reporting failures must be distinguished from Google API configuration failures and be retryable');
 
 console.log('Dashboard readiness UI check passed');
