@@ -7,6 +7,7 @@ const assert = (condition, message) => {
 
 const app = read('src/App.tsx');
 const readinessPanel = read('src/components/app/DataImportStatusPanel.tsx');
+const warehouseRoute = read('server/routes/warehouse.ts');
 
 assert(
   /import\s+\{\s*DataImportStatusPanel\s*\}\s+from\s+["']\.\/components\/app\/DataImportStatusPanel["']/.test(app),
@@ -50,6 +51,10 @@ assert(
 assert(
   readinessPanel.includes('{formatWholeNumber(stats.readyDateCount)} / {formatWholeNumber(stats.expectedDateCount)} days ready') && readinessPanel.includes('role="progressbar"'),
   'Source-data readiness panel must show explicit day coverage progress',
+);
+assert(
+  readinessPanel.includes('Import appears stalled') && readinessPanel.includes('staleActiveCount') && warehouseRoute.includes('staleSince'),
+  'Stale warehouse jobs must be surfaced as an explicit stalled state with heartbeat metadata',
 );
 
 console.log('Dashboard readiness UI check passed');

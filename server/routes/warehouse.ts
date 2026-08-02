@@ -20,6 +20,9 @@ import {
   LLM_RANGE_JOB_DAYS,
   SEARCH_CONSOLE_HISTORY_DAYS,
   USER_REQUESTED_JOB_PRIORITY,
+  WAREHOUSE_JOB_STALE_AFTER_MS,
+  isWarehouseJobStale,
+  warehouseJobActivityAt,
   listWarehouseJobs,
   promoteWarehouseJobsForRange,
   queueWarehouseBootstrapJobs,
@@ -2019,6 +2022,16 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         counts[row.status] = (counts[row.status] || 0) + 1;
         return counts;
       }, {} as Record<string, number>);
+      const hasFreshRunningWarehouseJob = relevantActiveJobs.some((job) => (
+        job.status === 'running' && !isWarehouseJobStale(job)
+      ));
+      const staleActiveJobs = relevantActiveJobs.filter((job) => (
+        isWarehouseJobStale(job) && (job.status === 'running' || !hasFreshRunningWarehouseJob)
+      ));
+      const staleSince = staleActiveJobs
+        .map((job) => warehouseJobActivityAt(job))
+        .filter(Boolean)
+        .sort()[0] || null;
       const supersededJobCount = warehouseJobRows.filter((row) => row.status === 'superseded').length;
       const visibleWarehouseJobRows = warehouseJobRows.filter((row) => row.status !== 'superseded');
       const jobCountByStatus = visibleWarehouseJobRows.reduce((counts, row) => {
@@ -2124,6 +2137,9 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           retrying: activeJobCountByStatus.retrying || 0,
           running: activeJobCountByStatus.running || 0,
           superseded: supersededJobCount,
+          staleActiveCount: staleActiveJobs.length,
+          staleAfterMs: WAREHOUSE_JOB_STALE_AFTER_MS,
+          staleSince,
           total: visibleWarehouseJobRows.length,
         },
         autoQueue: {

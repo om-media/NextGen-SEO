@@ -6,6 +6,8 @@ import {
   createWarehouseJobLease,
   finalizeOwnedWarehouseJob,
   recoverStaleWarehouseJobs,
+  isWarehouseJobStale,
+  warehouseJobActivityAt,
   WarehouseJobLeaseLostError,
 } from '../server/services/warehouseJobs.js';
 
@@ -93,6 +95,10 @@ try {
   const ownedJob = await db.get<any>('SELECT * FROM warehouse_jobs WHERE id = ?', ['owned-job']);
   assert.ok(ownedJob);
   const staleWorker = { ...ownedJob };
+  assert.equal(warehouseJobActivityAt(staleWorker), initialLease);
+  assert.equal(isWarehouseJobStale(staleWorker, Date.parse("2026-07-14T08:11:00.000Z")), true, "A job without a recent heartbeat must be marked stale");
+  assert.equal(isWarehouseJobStale({ ...staleWorker, lockedAt: "2026-07-14T08:10:30.000Z", updatedAt: "2026-07-14T08:10:30.000Z" }, Date.parse("2026-07-14T08:11:00.000Z")), false, "A recently renewed job must not be marked stale");
+  assert.equal(isWarehouseJobStale({ ...staleWorker, status: "queued", nextRunAt: "2026-07-14T08:12:00.000Z" }, Date.parse("2026-07-14T08:11:00.000Z")), false, "A queued retry scheduled in the future must not be marked stale");
 
   const lease = createWarehouseJobLease(db, ownedJob, 5);
   await lease.refresh();

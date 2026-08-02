@@ -169,6 +169,8 @@ export function DataImportStatusPanel({
     + Number(coverage?.warehouseJobs.retrying || 0)
     + Number(coverage?.warehouseJobs.running || 0);
   const failedJobCount = Number(coverage?.warehouseJobs.error || 0);
+  const staleActiveCount = Number(coverage?.warehouseJobs.staleActiveCount || 0);
+  const staleSince = coverage?.warehouseJobs.staleSince || null;
 
   useEffect(() => {
     if (!siteUrl || !range || (dataSource !== "gsc" && dataSource !== "blended" && dataSource !== "ga4")) {
@@ -232,6 +234,7 @@ export function DataImportStatusPanel({
   const latestJob = visibleJobs[0] || null;
   const latestTimedJob = visibleJobs.find((job) => Number.isFinite(Number(job.metrics?.totalMs))) || null;
   const latestJobDistance = formatDateDistance(latestJob?.updatedAt);
+  const staleSinceDistance = formatDateDistance(staleSince);
   const latestTotalDuration = formatDurationMs(latestJob?.metrics?.totalMs);
   const latestApiDuration = formatDurationMs(latestJob?.metrics?.apiMs);
   const latestWriteDuration = formatDurationMs(latestJob?.metrics?.writeMs);
@@ -240,7 +243,9 @@ export function DataImportStatusPanel({
     ? activeJobCount * latestTimedDuration
     : null;
   const estimatedRemaining = formatWaitEstimate(estimatedRemainingMs);
-  const estimateText = activeJobCount > 0
+  const estimateText = staleActiveCount > 0
+    ? null
+    : activeJobCount > 0
     ? estimatedRemaining
       ? `Estimated wait ${estimatedRemaining}, based on the latest completed import job. Large sites and Google API throttling can change this.`
       : "Estimated wait will appear after the first import job completes."
@@ -250,7 +255,9 @@ export function DataImportStatusPanel({
     ? "starting"
     : loading && !coverage
     ? "checking"
-    : activeJobCount > 0
+    : staleActiveCount > 0
+      ? "stalled"
+      : activeJobCount > 0
       ? "importing"
       : failedJobCount > 0
         ? "attention"
@@ -273,6 +280,11 @@ export function DataImportStatusPanel({
       icon: <RefreshCw className="h-4 w-4 motion-safe:animate-spin motion-reduce:animate-none text-primary" />,
       label: "Starting import",
       text: "Starting an import for the missing source data now.",
+    },
+    stalled: {
+      icon: <AlertTriangle className="h-4 w-4 text-amber-600" />,
+      label: "Import appears stalled",
+      text: `No warehouse worker heartbeat has been received${staleSinceDistance ? ` ${staleSinceDistance}` : " recently"}. No new data is being recorded; the import may need the worker to restart.`,
     },
     importing: {
       icon: <RefreshCw className="h-4 w-4 motion-safe:animate-spin motion-reduce:animate-none text-primary" />,
@@ -332,7 +344,7 @@ export function DataImportStatusPanel({
 
   return (
     <section
-      aria-busy={loading || activeJobCount > 0}
+      aria-busy={loading || (activeJobCount > 0 && staleActiveCount === 0)}
       aria-labelledby="source-data-readiness-heading"
       className="rounded-2xl border border-border bg-card/95 p-4 shadow-[0_12px_34px_rgba(15,61,46,0.05)]"
     >
@@ -394,7 +406,7 @@ export function DataImportStatusPanel({
           <StatusMetric label="Queued" value={formatWholeNumber(Number(coverage?.warehouseJobs.queued || 0) + Number(coverage?.warehouseJobs.retrying || 0))} />
           <StatusMetric label="Running" value={formatWholeNumber(Number(coverage?.warehouseJobs.running || 0))} />
           <StatusMetric label="Failed" tone={failedJobCount > 0 ? "danger" : "default"} value={formatWholeNumber(failedJobCount)} />
-          <StatusMetric label="Est. wait" value={activeJobCount > 0 ? estimatedRemaining || "Learning" : "Ready"} />
+          <StatusMetric label="Est. wait" value={staleActiveCount > 0 ? "Stalled" : activeJobCount > 0 ? estimatedRemaining || "Learning" : "Ready"} />
         </div>
       </div>
 
@@ -425,6 +437,18 @@ export function DataImportStatusPanel({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {staleActiveCount > 0 && (
+              <Button
+                className="rounded-xl"
+                disabled={actionState !== "idle"}
+                onClick={() => setPollKey((key) => key + 1)}
+                size="sm"
+                variant="outline"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Check again
+              </Button>
+            )}
             {failedJobCount > 0 && (
               <Button
                 className="rounded-xl"

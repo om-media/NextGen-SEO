@@ -84,6 +84,9 @@ export type DataCoverageResponse = {
     queued: number;
     retrying: number;
     running: number;
+    staleActiveCount?: number;
+    staleAfterMs?: number;
+    staleSince?: string | null;
     superseded?: number;
     total: number;
   };

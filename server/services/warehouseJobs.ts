@@ -105,6 +105,7 @@ const positiveIntegerEnv = (value: string | undefined, fallback: number, min: nu
 const POLL_MS = positiveIntegerEnv(process.env.WAREHOUSE_WORKER_POLL_MS, 5_000, 1_000, 60_000);
 const DAILY_SCHEDULER_MS = 60 * 60 * 1000;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+export const WAREHOUSE_JOB_STALE_AFTER_MS = LOCK_TIMEOUT_MS;
 const WAREHOUSE_HEARTBEAT_MS = positiveIntegerEnv(process.env.WAREHOUSE_HEARTBEAT_MS, 30_000, 1_000, LOCK_TIMEOUT_MS / 2);
 const DEFAULT_MAX_ATTEMPTS = 3;
 const JOBS_PER_TICK = positiveIntegerEnv(process.env.WAREHOUSE_JOBS_PER_TICK, 8, 1, 24);
@@ -157,6 +158,26 @@ const GA4_DIMENSION_SYNC_CONFIGS = [
   },
 ] as const;
 const nowIso = () => new Date().toISOString();
+
+type WarehouseJobActivityInput = Pick<WarehouseJob, "status"> & Partial<Pick<WarehouseJob, "lockedAt" | "nextRunAt" | "startedAt" | "updatedAt">>;
+
+export function warehouseJobActivityAt(job: WarehouseJobActivityInput) {
+  return job.status === "running"
+    ? job.lockedAt || job.updatedAt || job.startedAt || null
+    : job.updatedAt || job.startedAt || null;
+}
+
+export function isWarehouseJobStale(
+  job: WarehouseJobActivityInput,
+  now = Date.now(),
+) {
+  if (!['queued', 'retrying', 'running'].includes(job.status)) return false;
+  const nextRunAt = job.status === 'running' || !job.nextRunAt ? null : Date.parse(job.nextRunAt);
+  if (nextRunAt !== null && Number.isFinite(nextRunAt) && nextRunAt > now) return false;
+  const activityAt = warehouseJobActivityAt(job);
+  const activityMs = activityAt ? Date.parse(activityAt) : NaN;
+  return Number.isFinite(activityMs) && now - activityMs >= WAREHOUSE_JOB_STALE_AFTER_MS;
+}
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const addDays = (value: Date, days: number) => {
   const next = new Date(value);
