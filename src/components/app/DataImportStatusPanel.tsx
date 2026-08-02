@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   fetchDataCoverage,
   fetchWarehouseJobs,
@@ -16,6 +17,7 @@ import type { DateRange } from "react-day-picker";
 type DataSource = "gsc" | "bing" | "ga4" | "blended";
 
 type DataImportStatusPanelProps = {
+  compact?: boolean;
   dataSource: DataSource;
   dateRange: DateRange;
   ga4PropertyId?: string | null;
@@ -140,6 +142,29 @@ function getJobLabel(job: WarehouseJobSummary) {
   return job.targetDate;
 }
 
+function getJobStatusLabel(status: string) {
+  if (status === "retrying") return "Retrying after a failed attempt";
+  if (status === "running") return "Running now";
+  if (status === "queued") return "Queued for the worker";
+  if (status === "error") return "Failed — action needed";
+  if (status === "completed") return "Completed";
+  return status;
+}
+
+function getJobErrorCopy(error?: string | null) {
+  if (!error) return null;
+  if (/sufficient permission|permission denied|forbidden/i.test(error)) {
+    return "Google rejected access to this property. Reconnect Google Data or choose a property your account can access.";
+  }
+  return error;
+}
+
+function isJobForDataSource(job: WarehouseJobSummary, dataSource: DataSource) {
+  if (dataSource === "blended") return true;
+  if (dataSource === "gsc") return job.jobType === "daily-sync" || job.jobType === "core-range-sync";
+  return ["daily-sync", "core-range-sync", "ga4-page-range-sync", "ga4-dimension-range-sync", "ga4-llm-range-sync", "ga4-llm-sync"].includes(job.jobType);
+}
+
 function getStatusClasses(status: string) {
   if (status === "completed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (status === "running") return "border-sky-200 bg-sky-50 text-sky-700";
@@ -149,6 +174,7 @@ function getStatusClasses(status: string) {
 }
 
 export function DataImportStatusPanel({
+  compact = false,
   dataSource,
   dateRange,
   ga4PropertyId,
@@ -231,8 +257,12 @@ export function DataImportStatusPanel({
     ? Math.round((stats.readyDateCount / stats.expectedDateCount) * 100)
     : 0;
   const visibleJobs = jobs.filter((job) => job.status !== "superseded");
-  const latestJob = visibleJobs[0] || null;
-  const latestTimedJob = visibleJobs.find((job) => Number.isFinite(Number(job.metrics?.totalMs))) || null;
+  const sourceJobs = visibleJobs.filter((job) => {
+    const jobStart = job.targetStartDate || job.targetDate;
+    return isJobForDataSource(job, dataSource) && jobStart <= range.endDate && job.targetDate >= range.startDate;
+  });
+  const latestJob = sourceJobs[0] || null;
+  const latestTimedJob = sourceJobs.find((job) => Number.isFinite(Number(job.metrics?.totalMs))) || null;
   const latestJobDistance = formatDateDistance(latestJob?.updatedAt);
   const staleSinceDistance = formatDateDistance(staleSince);
   const latestTotalDuration = formatDurationMs(latestJob?.metrics?.totalMs);
@@ -342,7 +372,13 @@ export function DataImportStatusPanel({
     }
   };
 
-  return (
+  const statusIndicatorClass = status === "ready"
+    ? "bg-emerald-500"
+    : status === "stalled" || status === "attention"
+      ? "bg-red-500"
+      : "bg-amber-400";
+
+  const panel = (
     <section
       aria-busy={loading || (activeJobCount > 0 && staleActiveCount === 0)}
       aria-labelledby="source-data-readiness-heading"
@@ -419,7 +455,7 @@ export function DataImportStatusPanel({
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span>Latest job</span>
                 <span className={`rounded-full border px-2 py-0.5 font-medium ${getStatusClasses(latestJob.status)}`}>
-                  {latestJob.status}
+                  {getJobStatusLabel(latestJob.status)}
                 </span>
                 <span>{getJobLabel(latestJob)}</span>
                 <span>{formatDate(latestJob.updatedAt)}</span>
@@ -429,7 +465,7 @@ export function DataImportStatusPanel({
                 {latestTotalDuration && <span>{latestTotalDuration} total</span>}
                 {latestApiDuration && <span>API {latestApiDuration}</span>}
                 {latestWriteDuration && <span>write {latestWriteDuration}</span>}
-                {latestJob.lastError && <span className="text-destructive">{latestJob.lastError}</span>}
+                {getJobErrorCopy(latestJob.lastError) && <span className="text-destructive">{getJobErrorCopy(latestJob.lastError)}</span>}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No import jobs have run for this site yet.</p>
@@ -492,8 +528,30 @@ export function DataImportStatusPanel({
       )}
     </section>
   );
-}
 
+  if (!compact) return panel;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            aria-label={`Data readiness: ${statusCopy.label}`}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card shadow-sm transition hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            title={`Data readiness: ${statusCopy.label}`}
+            type="button"
+          >
+            <span aria-hidden="true" className={`h-3 w-3 rounded-full ${statusIndicatorClass} ${activeJobCount > 0 && staleActiveCount === 0 ? "motion-safe:animate-pulse motion-reduce:animate-none" : ""}`} />
+            <span className="sr-only">{statusCopy.label}</span>
+          </button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-[min(720px,calc(100vw-1rem))] max-h-[calc(100vh-1rem)] overflow-y-auto p-0">
+        {panel}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 function StatusMetric({
   label,
   tone = "default",

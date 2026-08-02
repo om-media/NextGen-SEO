@@ -24,7 +24,6 @@ import type { Ga4DashboardTab, GscDashboardTab } from "./components/app/AppConte
 import { AppHeader } from "./components/app/AppHeader"
 import { AppStatusPanels } from "./components/app/AppStatusPanels"
 import { AppToolbar } from "./components/app/AppToolbar"
-import { DataImportStatusPanel } from "./components/app/DataImportStatusPanel"
 import type { SettingsDraft } from "./components/app/SettingsDialog"
 import { getPreferredGa4PropertyId, getPreferredSiteUrl, getProfileWorkspaceSites, getSelectionPersistenceSource, getWorkspaceSiteForGa4Property, isGa4PropertyForWorkspaceSite, legacySelectedGa4PropertyCacheKey, legacySelectedSiteCacheKey, mergeUniqueSites, readCachedSiteSelection, resolveSourceSwitchSelection, selectedGa4PropertyCacheKey, selectedSiteCacheKey, type SiteLike } from "./lib/siteSelection"
 import { useSelectorRequestGate } from "./lib/useSelectorRequestGate"
@@ -1010,12 +1009,16 @@ function MainApp() {
             activeMenu={activeMenu}
             currentSites={currentSites}
             dataSource={dataSource}
+            dateRange={dateRange}
+            ga4PropertyId={activeGa4PropertyId}
+            gscSyncVersion={gscSyncVersion}
             googleConnected={Boolean(userProfile?.googleConnected)}
             onOpenSettings={() => {
               openSettings("profile");
             }}
             onSelectSite={dataSource === 'ga4' ? handleGa4PropertySelect : handleSiteSelect}
             onConnectGoogle={handleConnectGoogleData}
+            onCoverageChange={bumpGscSyncVersion}
             isConnectingGoogle={isConnectingGoogleData}
             onSignOut={signOut}
             onSwitchDataSource={(nextSource) => {
@@ -1051,16 +1054,6 @@ function MainApp() {
                 />
               )}
 
-              {showStatusPanels && (
-                <DataImportStatusPanel
-                  dataSource={dataSource}
-                  dateRange={dateRange}
-                  ga4PropertyId={activeGa4PropertyId}
-                  onCoverageChange={bumpGscSyncVersion}
-                  refreshKey={gscSyncVersion}
-                  siteUrl={selectedSite}
-                />
-              )}
 
               {showStatusPanels && (
                 <AppStatusPanels

@@ -14,7 +14,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertCircle, Loader2, LogOut, Settings2 } from "lucide-react";
 import type { AppUser, UserProfile } from "../../contexts/AuthContext";
 import type { SiteLike } from "../../lib/siteSelection";
+import type { DateRange } from "react-day-picker";
 import { ThemeToggle } from "./ThemeToggle";
+import { DataImportStatusPanel } from "./DataImportStatusPanel";
 
 type DataSource = "gsc" | "bing" | "ga4" | "blended";
 
@@ -22,11 +24,15 @@ type AppHeaderProps = {
   activeMenu: string;
   currentSites: SiteLike[];
   dataSource: DataSource;
+  dateRange: DateRange;
+  ga4PropertyId?: string | null;
+  gscSyncVersion?: number;
   googleConnected: boolean;
   isConnectingGoogle: boolean;
   onOpenSettings: () => void;
   onSelectSite: (siteUrl: string) => void;
   onConnectGoogle: () => Promise<void>;
+  onCoverageChange?: () => void;
   onSignOut: () => Promise<void>;
   onSwitchDataSource: (nextSource: DataSource) => void;
   selectedSite: string;
@@ -71,11 +77,15 @@ export function AppHeader({
   activeMenu,
   currentSites,
   dataSource,
+  dateRange,
+  ga4PropertyId,
+  gscSyncVersion = 0,
   googleConnected,
   isConnectingGoogle,
   onOpenSettings,
   onSelectSite,
   onConnectGoogle,
+  onCoverageChange,
   onSignOut,
   onSwitchDataSource,
   selectedSite,
@@ -106,6 +116,17 @@ export function AppHeader({
 
       <div className="ml-auto flex items-center gap-2 md:order-3">
         <ThemeToggle />
+        {activeMenu === "Dashboard" && (dataSource === "gsc" || dataSource === "blended" || dataSource === "ga4") && selectedWorkspaceSite && (
+          <DataImportStatusPanel
+            compact
+            dataSource={dataSource}
+            dateRange={dateRange}
+            ga4PropertyId={ga4PropertyId}
+            onCoverageChange={onCoverageChange}
+            refreshKey={gscSyncVersion}
+            siteUrl={selectedWorkspaceSite}
+          />
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger render={<button aria-label={`Open account menu for ${displayName}`} className="interactive-lift inline-flex h-10 w-10 items-center justify-center rounded-full bg-transparent p-0 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />}>
             <Avatar className="h-9 w-9 rounded-full">

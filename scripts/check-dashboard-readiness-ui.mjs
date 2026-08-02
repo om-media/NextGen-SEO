@@ -6,55 +6,25 @@ const assert = (condition, message) => {
 };
 
 const app = read('src/App.tsx');
+const header = read('src/components/app/AppHeader.tsx');
 const readinessPanel = read('src/components/app/DataImportStatusPanel.tsx');
 const warehouseRoute = read('server/routes/warehouse.ts');
 
-assert(
-  /import\s+\{\s*DataImportStatusPanel\s*\}\s+from\s+["']\.\/components\/app\/DataImportStatusPanel["']/.test(app),
-  'The primary app shell must import the full source-data readiness panel',
-);
-
-const mainStart = app.indexOf('<main ');
-const mainEnd = mainStart >= 0 ? app.indexOf('</main>', mainStart) : -1;
-assert(mainStart >= 0 && mainEnd > mainStart, 'The primary app shell must expose a main dashboard region');
-
-const main = app.slice(mainStart, mainEnd);
-const panelIndex = main.indexOf('<DataImportStatusPanel');
-const contentIndex = main.indexOf('<AppContent');
-assert(
-  panelIndex >= 0,
-  'The primary dashboard must render the full source-data readiness panel in the main content area',
-);
-assert(
-  contentIndex < 0 || panelIndex < contentIndex,
-  'Source-data readiness must appear before dashboard reports so users see status before scrolling through data',
-);
-
+assert(header.includes('import { DataImportStatusPanel }'), 'The app header must own the compact source-data readiness control');
+assert(header.includes('<DataImportStatusPanel') && header.includes('compact'), 'The app header must render the compact readiness control');
 for (const prop of [
-  'dataSource={dataSource}',
   'dateRange={dateRange}',
-  'ga4PropertyId={activeGa4PropertyId}',
+  'ga4PropertyId={ga4PropertyId}',
   'refreshKey={gscSyncVersion}',
-  'siteUrl={selectedSite}',
+  'siteUrl={selectedWorkspaceSite}',
 ]) {
-  assert(main.includes(prop), `Source-data readiness panel must receive ${prop}`);
+  assert(header.includes(prop), `Compact readiness control must receive ${prop}`);
 }
-
-assert(
-  readinessPanel.includes('Source data readiness') && readinessPanel.includes('source-data-readiness-heading'),
-  'Source-data readiness panel must have a visible, plain-language heading',
-);
-assert(
-  readinessPanel.includes('format(parseISO(range.startDate), "MMM d, yyyy")') && readinessPanel.includes('format(parseISO(range.endDate), "MMM d, yyyy")'),
-  'Source-data readiness panel must show the selected date range next to its status',
-);
-assert(
-  readinessPanel.includes('{formatWholeNumber(stats.readyDateCount)} / {formatWholeNumber(stats.expectedDateCount)} days ready') && readinessPanel.includes('role="progressbar"'),
-  'Source-data readiness panel must show explicit day coverage progress',
-);
-assert(
-  readinessPanel.includes('Import appears stalled') && readinessPanel.includes('staleActiveCount') && warehouseRoute.includes('staleSince'),
-  'Stale warehouse jobs must be surfaced as an explicit stalled state with heartbeat metadata',
-);
+assert(app.includes('dateRange={dateRange}') && app.includes('gscSyncVersion={gscSyncVersion}'), 'The app shell must pass live readiness inputs to the header');
+assert(readinessPanel.includes('Data readiness: ${statusCopy.label}'), 'The readiness control must expose an accessible status label');
+assert(readinessPanel.includes('Source data readiness'), 'Readiness details must have a visible, plain-language heading');
+assert(readinessPanel.includes('format(parseISO(range.startDate), "MMM d, yyyy")') && readinessPanel.includes('format(parseISO(range.endDate), "MMM d, yyyy")'), 'Readiness details must show the selected date range');
+assert(readinessPanel.includes('{formatWholeNumber(stats.readyDateCount)} / {formatWholeNumber(stats.expectedDateCount)} days ready') && readinessPanel.includes('role="progressbar"'), 'Readiness details must show explicit day coverage progress');
+assert(readinessPanel.includes('Import appears stalled') && readinessPanel.includes('staleActiveCount') && warehouseRoute.includes('staleSince'), 'Stale warehouse jobs must be surfaced as an explicit stalled state with heartbeat metadata');
 
 console.log('Dashboard readiness UI check passed');
