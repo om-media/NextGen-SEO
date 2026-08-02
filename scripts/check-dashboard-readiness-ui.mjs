@@ -26,5 +26,8 @@ assert(readinessPanel.includes('Source data readiness'), 'Readiness details must
 assert(readinessPanel.includes('format(parseISO(range.startDate), "MMM d, yyyy")') && readinessPanel.includes('format(parseISO(range.endDate), "MMM d, yyyy")'), 'Readiness details must show the selected date range');
 assert(readinessPanel.includes('{formatWholeNumber(stats.readyDateCount)} / {formatWholeNumber(stats.expectedDateCount)} days ready') && readinessPanel.includes('role="progressbar"'), 'Readiness details must show explicit day coverage progress');
 assert(readinessPanel.includes('Import appears stalled') && readinessPanel.includes('staleActiveCount') && warehouseRoute.includes('staleSince'), 'Stale warehouse jobs must be surfaced as an explicit stalled state with heartbeat metadata');
+assert(readinessPanel.includes('activeDateCount') && readinessPanel.includes('unscheduledMissingDateCount'), 'Import progress must distinguish active jobs from missing dates that are not scheduled');
+assert(readinessPanel.includes('Retrying ${formatWholeNumber(result.retried)} failed import') && readinessPanel.includes('Completed days and successful jobs were left untouched'), 'Retry actions must explain that only failed jobs are requeued');
+assert(readinessPanel.includes('width: \"min(720px, calc(100vw - 1rem))\"') && readinessPanel.includes('maxWidth: \"calc(100vw - 1rem)\"'), 'Compact readiness details must keep a usable responsive width');
 
 console.log('Dashboard readiness UI check passed');

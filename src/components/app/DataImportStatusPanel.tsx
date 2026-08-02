@@ -188,6 +188,7 @@ export function DataImportStatusPanel({
   const [loading, setLoading] = useState(false);
   const [actionState, setActionState] = useState<"idle" | "importing" | "retrying">("idle");
   const [pollKey, setPollKey] = useState(0);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const range = useMemo(() => getIsoDateRange(dateRange), [dateRange]);
   const stats = getDatasetStats(coverage, dataSource);
@@ -197,6 +198,7 @@ export function DataImportStatusPanel({
   const failedJobCount = Number(coverage?.warehouseJobs.error || 0);
   const staleActiveCount = Number(coverage?.warehouseJobs.staleActiveCount || 0);
   const staleSince = coverage?.warehouseJobs.staleSince || null;
+  const activeDateCount = Number(coverage?.warehouseJobs.activeDateCount || 0);
 
   useEffect(() => {
     if (!siteUrl || !range || (dataSource !== "gsc" && dataSource !== "blended" && dataSource !== "ga4")) {
@@ -273,6 +275,7 @@ export function DataImportStatusPanel({
     ? activeJobCount * latestTimedDuration
     : null;
   const estimatedRemaining = formatWaitEstimate(estimatedRemainingMs);
+  const unscheduledMissingDateCount = Math.max(stats.missingDateCount - activeDateCount, 0);
   const estimateText = staleActiveCount > 0
     ? null
     : activeJobCount > 0
@@ -319,7 +322,7 @@ export function DataImportStatusPanel({
     importing: {
       icon: <RefreshCw className="h-4 w-4 motion-safe:animate-spin motion-reduce:animate-none text-primary" />,
       label: "Import in progress",
-      text: `${formatWholeNumber(stats.missingDateCount)} missing ${stats.missingDateCount === 1 ? "day is" : "days are"} queued or running. Stored reports stay available while the app fills in source data. This panel checks again every 10 seconds.`,
+      text: `${formatWholeNumber(stats.missingDateCount)} missing ${stats.missingDateCount === 1 ? "day" : "days"}; ${formatWholeNumber(activeDateCount)} ${activeDateCount === 1 ? "day is" : "days are"} queued or running${unscheduledMissingDateCount > 0 ? `, and ${formatWholeNumber(unscheduledMissingDateCount)} ${unscheduledMissingDateCount === 1 ? "day is" : "days are"} still waiting to be scheduled` : ""}. Stored reports stay available while the app fills in source data. This panel checks again every 10 seconds.`,
     },
     missing: {
       icon: <Clock3 className="h-4 w-4 text-amber-600" />,
@@ -337,13 +340,14 @@ export function DataImportStatusPanel({
     setActionState("importing");
     setError(null);
     try {
-      await queueMissingCoverageSync({
+      const result = await queueMissingCoverageSync({
         endDate: range.endDate,
         maxDates: 486,
         propertyId: dataSource === "blended" || dataSource === "ga4" ? ga4PropertyId : null,
         siteUrl,
         startDate: range.startDate,
       });
+      setActionNotice(result.queued > 0 ? `Queued ${formatWholeNumber(result.queued)} import ${result.queued === 1 ? "job" : "jobs"} for missing dates. Completed data was left untouched.` : "No new missing-date jobs were queued.");
       onCoverageChange?.();
       setPollKey((key) => key + 1);
     } catch (err: any) {
@@ -357,12 +361,13 @@ export function DataImportStatusPanel({
     setActionState("retrying");
     setError(null);
     try {
-      await retryFailedCoverageSync({
+      const result = await retryFailedCoverageSync({
         endDate: range.endDate,
         maxJobs: 60,
         siteUrl,
         startDate: range.startDate,
       });
+      setActionNotice(result.retried > 0 ? `Retrying ${formatWholeNumber(result.retried)} failed import ${result.retried === 1 ? "job" : "jobs"} only. Completed days and successful jobs were left untouched.` : "No failed import jobs matched this date range.");
       onCoverageChange?.();
       setPollKey((key) => key + 1);
     } catch (err: any) {
@@ -382,6 +387,7 @@ export function DataImportStatusPanel({
     <section
       aria-busy={loading || (activeJobCount > 0 && staleActiveCount === 0)}
       aria-labelledby="source-data-readiness-heading"
+      style={{ width: "100%" }}
       className="rounded-2xl border border-border bg-card/95 p-4 shadow-[0_12px_34px_rgba(15,61,46,0.05)]"
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -404,6 +410,7 @@ export function DataImportStatusPanel({
           </div>
 
           <p aria-live="polite" className="mt-3 text-sm text-muted-foreground" role="status">{statusCopy.text}</p>
+          {actionNotice && <p aria-live="polite" className="mt-2 text-sm font-medium text-primary" role="status">{actionNotice}</p>}
           {stats.latestAvailableDate && stats.latestAvailableDate < range.endDate && (
             <p className="mt-1 text-xs text-amber-700">
               Source data is currently available through {format(parseISO(stats.latestAvailableDate), "MMM d, yyyy")}.
@@ -494,7 +501,7 @@ export function DataImportStatusPanel({
                 variant="outline"
               >
                 <RotateCcw className={`h-3.5 w-3.5 ${actionState === "retrying" ? "motion-safe:animate-spin motion-reduce:animate-none" : ""}`} />
-                Retry failed
+                {actionState === "retrying" ? "Retrying failed" : "Retry failed"}
               </Button>
             )}
             {stats.missingDateCount === 0 ? (
@@ -546,7 +553,7 @@ export function DataImportStatusPanel({
           </button>
         }
       />
-      <DropdownMenuContent align="end" className="w-[min(720px,calc(100vw-1rem))] max-h-[calc(100vh-1rem)] overflow-y-auto p-0">
+      <DropdownMenuContent align="end" className="max-h-[calc(100vh-1rem)] min-w-0 overflow-y-auto p-0" style={{ maxWidth: "calc(100vw - 1rem)", width: "min(720px, calc(100vw - 1rem))" }}>
         {panel}
       </DropdownMenuContent>
     </DropdownMenu>
