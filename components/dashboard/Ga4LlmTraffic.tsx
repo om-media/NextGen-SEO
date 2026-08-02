@@ -206,21 +206,26 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
   const errorJobCount = Number(coverage?.errorJobCount || 0)
   const coveredDateCount = Number(coverage?.coveredDateCount || 0)
   const expectedDateCount = Number(coverage?.expectedDateCount || 0)
+  const unscheduledMissingDateCount = Math.max(missingDateCount - activeDateCount, 0)
   const isWarehouseUpdating = refreshing || activeJobCount > 0
   const coverageText = expectedDateCount > 0
     ? `${coveredDateCount}/${expectedDateCount} days ready`
     : "Checking stored data"
-  const statusText = error
-    ? "Could not refresh LLM report"
-    : activeJobCount > 0
-      ? "Importing LLM traffic history"
+  const coverageStatusTitle = errorJobCount > 0
+    ? "Analytics import needs attention"
+    : isWarehouseUpdating
+      ? "Updating Analytics history"
       : missingDateCount > 0
-        ? `${missingDateCount} day${missingDateCount === 1 ? "" : "s"} still importing`
-        : refreshing
-          ? "Refreshing stored report"
-          : errorJobCount > 0
-            ? `${errorJobCount} import issue${errorJobCount === 1 ? "" : "s"}`
-            : "Report ready"
+        ? "Analytics data update available"
+        : "Stored Analytics data is ready"
+  const coverageStatusDescription = error
+    ? error
+    : isWarehouseUpdating
+      ? `Existing rows stay visible while stored Analytics data catches up. ${activeDateCount} ${activeDateCount === 1 ? "day is" : "days are"} queued or running${unscheduledMissingDateCount > 0 ? `; ${unscheduledMissingDateCount} ${unscheduledMissingDateCount === 1 ? "day is" : "days are"} still waiting to be scheduled` : "."}`
+      : missingDateCount > 0
+        ? `No import is currently running for ${missingDateCount} missing ${missingDateCount === 1 ? "day" : "days"}. Refresh the selected range to fill the missing stored Analytics data.`
+        : "This Analytics report is loaded from the app warehouse for the selected range."
+  const statusText = error ? "Could not refresh LLM report" : coverageStatusTitle
   const isPreparationError = Boolean(error && /stored history|being prepared|not ready|warehouse/i.test(error))
 
   if (coverage && activeJobCount > 0 && !data?.source?.rows?.length) {
@@ -501,19 +506,21 @@ export function Ga4LlmTraffic({ propertyId, workspaceSiteUrl, dateRange, isCompa
 
   return (
     <div className="space-y-6" aria-busy={isWarehouseUpdating}>
-      {(isWarehouseUpdating || errorJobCount > 0 || error) && (
-        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-[0_10px_24px_rgba(15,61,46,0.045)] sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
+      {(isWarehouseUpdating || errorJobCount > 0 || error || missingDateCount > 0) && (
+        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[0_12px_32px_rgba(15,61,46,0.035)] sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
             {isWarehouseUpdating && !error ? (
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+            ) : errorJobCount > 0 || error ? (
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500" />
             ) : (
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+              <Database className="h-4 w-4 shrink-0 text-primary" />
             )}
             <span className="font-medium text-foreground">{statusText}</span>
-            <span>{error || coverageText}</span>
+            {expectedDateCount > 0 && <span className="whitespace-nowrap">{coverageText}</span>}
           </div>
-          <span className="text-xs text-muted-foreground">
-            Existing rows stay visible while the import catches up.
+          <span aria-live="polite" className="text-xs leading-5 text-muted-foreground sm:text-right" role="status">
+            {coverageStatusDescription}
           </span>
         </div>
       )}
