@@ -1706,8 +1706,8 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           ORDER BY COALESCE(completedAt, updatedAt, startedAt) DESC
           LIMIT 1
         `, [ownerId, siteUrl]),
-        db.all<{ jobType: string; lastError: string | null; metricsJson: string | null; propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null; updatedAt: string | null }>(`
-          SELECT jobType, lastError, metricsJson, propertyId, status, targetStartDate, targetDate, updatedAt
+        db.all<{ id: string; jobType: string; lastError: string | null; metricsJson: string | null; propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null; updatedAt: string | null }>(`
+          SELECT id, jobType, lastError, metricsJson, propertyId, status, targetStartDate, targetDate, updatedAt
           FROM warehouse_jobs
           WHERE ownerId = ? AND siteUrl = ? AND targetDate >= ? AND COALESCE(targetStartDate, targetDate) <= ?
             AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
@@ -2057,6 +2057,34 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
         .map((job) => warehouseJobActivityAt(job))
         .filter(Boolean)
         .sort()[0] || null;
+      const countActiveDates = (jobs: typeof relevantActiveJobs, missingSourceDates: Set<string>) => {
+        const dates = new Set<string>();
+        addJobDatesToSet(dates, jobs, effectiveStartDate, effectiveEndDate);
+        for (const date of [...dates]) {
+          if (!missingSourceDates.has(date)) dates.delete(date);
+        }
+        return dates.size;
+      };
+      const mergeWarehouseJobs = (...groups: Array<typeof relevantActiveJobs>) => Array.from(
+        new Map(groups.flat().map((job) => [job.id, job])).values(),
+      );
+      const gscSourceJobs = coreActiveJobs.filter(coreJobSupportsGsc);
+      const ga4PageSourceJobs = mergeWarehouseJobs(
+        coreActiveJobs.filter(coreJobSupportsGa4Pages),
+        ga4PageActiveJobs,
+      );
+      const blendedSourceJobs = mergeWarehouseJobs(gscSourceJobs, ga4PageSourceJobs);
+      const blendedMissingDates = new Set([...missingGscDates, ...missingGa4PageDates]);
+      const blendedActiveSummary = summarizeActiveJobs(blendedSourceJobs);
+      const blendedErrorJobs = relevantErrorJobs.filter((job) => ['core', 'gsc', 'ga4-pages'].includes(failedSource(job)));
+      const sourceStaleSince = (jobs: typeof relevantActiveJobs) => jobs
+        .filter((job) => staleActiveJobs.includes(job))
+        .map((job) => warehouseJobActivityAt(job))
+        .filter(Boolean)
+        .sort()[0] || null;
+      const gscSourceStaleCount = staleActiveJobs.filter((job) => gscSourceJobs.includes(job)).length;
+      const ga4PageSourceStaleCount = staleActiveJobs.filter((job) => ga4PageSourceJobs.includes(job)).length;
+      const blendedSourceStaleCount = staleActiveJobs.filter((job) => blendedSourceJobs.includes(job)).length;
       const supersededJobCount = warehouseJobRows.filter((row) => row.status === 'superseded').length;
       const visibleWarehouseJobRows = warehouseJobRows.filter((row) => row.status !== 'superseded');
       const jobCountByStatus = visibleWarehouseJobRows.reduce((counts, row) => {
@@ -2124,13 +2152,26 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           rowCount: toCoverageNumber(bingStatus.rowCount),
         },
         sourceJobs: {
+          blended: {
+            activeDateCount: countActiveDates(blendedSourceJobs, blendedMissingDates),
+            error: blendedErrorJobs.length,
+            lastError: blendedErrorJobs.find((job) => job.lastError)?.lastError || null,
+            queued: blendedActiveSummary.queued || 0,
+            retrying: blendedActiveSummary.retrying || 0,
+            running: blendedActiveSummary.running || 0,
+            staleActiveCount: blendedSourceStaleCount,
+            staleSince: sourceStaleSince(blendedSourceJobs),
+          },
           core: coreErrorSummary,
           ga4Pages: {
+            activeDateCount: countActiveDates(ga4PageSourceJobs, missingGa4PageDates),
             error: ga4PageErrorSummary.error,
             lastError: ga4PageErrorSummary.lastError,
             queued: ga4PageActiveSummary.queued || 0,
             retrying: ga4PageActiveSummary.retrying || 0,
             running: ga4PageActiveSummary.running || 0,
+            staleActiveCount: ga4PageSourceStaleCount,
+            staleSince: sourceStaleSince(ga4PageSourceJobs),
           },
           ga4Dimensions: {
             error: ga4DimensionErrorSummary.error,
@@ -2147,11 +2188,14 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
             running: ga4LlmActiveSummary.running || 0,
           },
           gsc: {
+            activeDateCount: countActiveDates(gscSourceJobs, missingGscDates),
             error: gscErrorSummary.error,
             lastError: gscErrorSummary.lastError,
             queued: gscActiveSummary.queued || 0,
             retrying: gscActiveSummary.retrying || 0,
             running: gscActiveSummary.running || 0,
+            staleActiveCount: gscSourceStaleCount,
+            staleSince: sourceStaleSince(gscSourceJobs),
           },
         },
         warehouseJobs: {

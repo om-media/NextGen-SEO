@@ -149,7 +149,7 @@ function getJobStatusLabel(status: string) {
 function getJobErrorCopy(error?: string | null) {
   if (!error) return null;
   if (/sufficient permission|permission denied|forbidden/i.test(error)) {
-    return "Google rejected access to this property. Reconnect Google Data or choose a property your account can access.";
+    return "Google rejected access to this property. The connected account does not have permission for the selected property. Reconnect Google Data with the account that owns it, or choose another property in the top bar/Settings.";
   }
   return error;
 }
@@ -195,18 +195,32 @@ export function DataImportStatusPanel({
     ? dataSource === "gsc"
       ? [coverage.sourceJobs.gsc]
       : dataSource === "blended"
-        ? [coverage.sourceJobs.gsc, coverage.sourceJobs.ga4Pages]
+        ? coverage.sourceJobs.blended
+          ? [coverage.sourceJobs.blended]
+          : [coverage.sourceJobs.gsc, coverage.sourceJobs.ga4Pages]
         : [coverage.sourceJobs.ga4Pages]
     : [];
   const activeJobCount = selectedSourceJobs.length > 0
     ? selectedSourceJobs.reduce((sum, source) => sum + Number(source.queued || 0) + Number(source.retrying || 0) + Number(source.running || 0), 0)
     : Number(coverage?.warehouseJobs.queued || 0) + Number(coverage?.warehouseJobs.retrying || 0) + Number(coverage?.warehouseJobs.running || 0);
+  const queuedJobCount = selectedSourceJobs.length > 0
+    ? selectedSourceJobs.reduce((sum, source) => sum + Number(source.queued || 0) + Number(source.retrying || 0), 0)
+    : Number(coverage?.warehouseJobs.queued || 0) + Number(coverage?.warehouseJobs.retrying || 0);
+  const runningJobCount = selectedSourceJobs.length > 0
+    ? selectedSourceJobs.reduce((sum, source) => sum + Number(source.running || 0), 0)
+    : Number(coverage?.warehouseJobs.running || 0);
   const failedJobCount = selectedSourceJobs.length > 0
     ? selectedSourceJobs.reduce((sum, source) => sum + Number(source.error || 0), 0)
     : Number(coverage?.warehouseJobs.error || 0);
-  const staleActiveCount = Number(coverage?.warehouseJobs.staleActiveCount || 0);
-  const staleSince = coverage?.warehouseJobs.staleSince || null;
-  const activeDateCount = Number(coverage?.warehouseJobs.activeDateCount || 0);
+  const staleActiveCount = selectedSourceJobs.length > 0
+    ? selectedSourceJobs.reduce((sum, source) => sum + Number(source.staleActiveCount || 0), 0)
+    : Number(coverage?.warehouseJobs.staleActiveCount || 0);
+  const staleSince = selectedSourceJobs.length > 0
+    ? selectedSourceJobs.map((source) => source.staleSince).filter(Boolean).sort()[0] || null
+    : coverage?.warehouseJobs.staleSince || null;
+  const activeDateCount = selectedSourceJobs.length > 0
+    ? selectedSourceJobs.reduce((max, source) => Math.max(max, Number(source.activeDateCount || 0)), 0)
+    : Number(coverage?.warehouseJobs.activeDateCount || 0);
 
   useEffect(() => {
     if (!siteUrl || !range || (dataSource !== "gsc" && dataSource !== "blended" && dataSource !== "ga4")) {
@@ -234,9 +248,20 @@ export function DataImportStatusPanel({
         setCoverage(nextCoverage);
         setJobs(nextJobs);
 
-        const activeJobCount = Number(nextCoverage.warehouseJobs.queued || 0)
-          + Number(nextCoverage.warehouseJobs.retrying || 0)
-          + Number(nextCoverage.warehouseJobs.running || 0);
+        const nextSourceJobs = nextCoverage.sourceJobs
+          ? dataSource === "gsc"
+            ? [nextCoverage.sourceJobs.gsc]
+            : dataSource === "blended"
+              ? nextCoverage.sourceJobs.blended
+                ? [nextCoverage.sourceJobs.blended]
+                : [nextCoverage.sourceJobs.gsc, nextCoverage.sourceJobs.ga4Pages]
+              : [nextCoverage.sourceJobs.ga4Pages]
+          : [];
+        const activeJobCount = nextSourceJobs.length > 0
+          ? nextSourceJobs.reduce((sum, source) => sum + Number(source.queued || 0) + Number(source.retrying || 0) + Number(source.running || 0), 0)
+          : Number(nextCoverage.warehouseJobs.queued || 0)
+            + Number(nextCoverage.warehouseJobs.retrying || 0)
+            + Number(nextCoverage.warehouseJobs.running || 0);
         if (activeJobCount > 0) {
           window.setTimeout(() => {
             if (!cancelled) setPollKey((key) => key + 1);
@@ -456,8 +481,8 @@ export function DataImportStatusPanel({
 
         <div className={compact ? "grid min-w-0 w-full gap-2 sm:grid-cols-5" : "grid min-w-0 gap-2 sm:grid-cols-5 lg:w-[640px]"}>
           <StatusMetric label="Missing" value={formatWholeNumber(stats.missingDateCount)} />
-          <StatusMetric label="Queued" value={formatWholeNumber(Number(coverage?.warehouseJobs.queued || 0) + Number(coverage?.warehouseJobs.retrying || 0))} />
-          <StatusMetric label="Running" value={formatWholeNumber(Number(coverage?.warehouseJobs.running || 0))} />
+          <StatusMetric label="Queued" value={formatWholeNumber(queuedJobCount)} />
+          <StatusMetric label="Running" value={formatWholeNumber(runningJobCount)} />
           <StatusMetric label="Failed" tone={failedJobCount > 0 ? "danger" : "default"} value={formatWholeNumber(failedJobCount)} />
           <StatusMetric label="Est. wait" value={staleActiveCount > 0 ? "Stalled" : activeJobCount > 0 ? estimatedRemaining || "Learning" : "Ready"} />
         </div>

@@ -55,9 +55,9 @@ export function AuthScreen() {
       await loginWithEmail(email, password)
     } catch (err: any) {
       if (err.code === 'AMBIGUOUS_ACCOUNT') {
-        setError("We found more than one workspace profile for this email. Use the matching password or Google account, or contact support if neither is yours.")
+        setError("This email is linked to more than one workspace. Use the password for the workspace you want, or choose Google if that workspace was created with Google. If neither works, contact support to merge the duplicate profiles.")
       } else if (err.code === 'INVALID_LOGIN' || err.code === 'PASSWORD_NOT_SET') {
-        setError("We couldn't sign you in with that email and password. If this email belongs to an older Google-created account, registering once with a local password will claim it for local sign-in.")
+        setError("We couldn't sign you in with that email and password. If the workspace was created with Google, use the Google button. If it has no local password yet, switch to Register with this same email to set one.")
       } else {
         setError(err.message)
       }
@@ -80,9 +80,11 @@ export function AuthScreen() {
       await signInWithGoogle()
     } catch (err: any) {
       const googleError = err.message || "Google sign-in failed."
-      setError(err.code === 'AMBIGUOUS_ACCOUNT' || /more than one workspace/i.test(googleError)
-        ? "This Google email is linked to more than one workspace profile. Choose the Google account that owns the workspace, or contact support."
-        : googleError)
+      setError(err.code === 'AMBIGUOUS_ACCOUNT' || /more than one workspace|multiple profiles|multiple accounts/i.test(googleError)
+        ? "This Google email is linked to more than one workspace. Close the Google window, sign in with the matching password, or contact support to merge the duplicate profiles."
+        : err.code === 'GOOGLE_OAUTH_ACCESS_DENIED'
+          ? "Google sign-in was cancelled, so no account was changed. Try again and allow access, or use email and password."
+          : googleError)
     } finally {
       setProviderLoading(null)
     }

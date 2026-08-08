@@ -128,12 +128,23 @@ await db.run(
   'INSERT INTO users (id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites, gscRefreshToken, bingApiKey) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   [tokenlessGa4OwnerId, 'pro', tokenlessGa4SiteUrl, tokenlessGa4PropertyId, JSON.stringify([]), JSON.stringify([tokenlessGa4SiteUrl]), null, null],
 );
+const mappedOnlyGa4OwnerId = 'owner-mapped-only-ga4';
+const mappedOnlyGa4SiteUrl = 'https://ga4-mapped-only.example/';
+const mappedOnlyGa4PropertyId = 'properties/789';
+await db.run(
+  'INSERT INTO users (id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites, gscRefreshToken, bingApiKey) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  [mappedOnlyGa4OwnerId, 'pro', null, null, JSON.stringify([mappedOnlyGa4SiteUrl]), JSON.stringify([]), null, null],
+);
 const stableDates = recentStableWarehouseDates(14);
 assert(stableDates.length === 14, 'Expected 14 stable dates');
 const targetDate = stableDates[0];
 await db.run(
   'INSERT INTO workspace_ga4_mappings (ownerId, siteUrl, propertyId, displayName, propertyCreatedAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)',
   [ownerId, siteUrl, propertyId, 'Scheduler property', `${stableDates.at(-1)}T00:00:00.000Z`, new Date().toISOString()],
+);
+await db.run(
+  'INSERT INTO workspace_ga4_mappings (ownerId, siteUrl, propertyId, displayName, propertyCreatedAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)',
+  [mappedOnlyGa4OwnerId, mappedOnlyGa4SiteUrl, mappedOnlyGa4PropertyId, 'Mapped-only property', `${stableDates.at(-1)}T00:00:00.000Z`, new Date().toISOString()],
 );
 
 await runWarehouseDailySchedulerTick(db);
@@ -154,10 +165,11 @@ const secondPassSummary = secondPassJobs.map((job) => ({
   range: `${job.targetStartDate || job.targetDate}..${job.targetDate}`,
 }));
 
-const coreJobs = firstPassJobs.filter((job) => job.jobType === 'core-range-sync');
-const dimJobs = firstPassJobs.filter((job) => job.jobType === 'ga4-dimension-range-sync');
-const llmJobs = firstPassJobs.filter((job) => job.jobType === 'ga4-llm-range-sync');
-const dailyJobs = firstPassJobs.filter((job) => job.jobType === 'daily-sync');
+const ownerJobs = firstPassJobs.filter((job) => job.siteUrl === siteUrl);
+const coreJobs = ownerJobs.filter((job) => job.jobType === 'core-range-sync');
+const dimJobs = ownerJobs.filter((job) => job.jobType === 'ga4-dimension-range-sync');
+const llmJobs = ownerJobs.filter((job) => job.jobType === 'ga4-llm-range-sync');
+const dailyJobs = ownerJobs.filter((job) => job.jobType === 'daily-sync');
 
 assert(coreJobs.length === 2, `Expected 2 core range jobs for 14-day backfill, got ${coreJobs.length}`);
 assert(dimJobs.length === 1, `Expected 1 GA4 dimension range job, got ${dimJobs.length}`);
@@ -167,7 +179,14 @@ assert(dimJobs[0]?.targetStartDate !== targetDate, 'Dimension scheduler follow-u
 assert(llmJobs[0]?.targetStartDate !== targetDate, 'LLM scheduler follow-up should reuse the backfill range instead of queueing a one-day duplicate');
 assert(JSON.stringify(firstPassSummary) === JSON.stringify(secondPassSummary), 'Second scheduler tick should not add duplicate warehouse jobs');
 const tokenlessGa4Jobs = secondPassJobs.filter((job: any) => job.siteUrl === tokenlessGa4SiteUrl);
-assert(tokenlessGa4Jobs.length === 0, 'A GA4-only account without a Google refresh token must not queue jobs it cannot authorize');
+assert(tokenlessGa4Jobs.length > 0, 'A GA4-only account with an activated property should receive GA4 warehouse jobs without a GSC token');
+assert(tokenlessGa4Jobs.every((job: any) => job.propertyId === tokenlessGa4PropertyId), 'GA4-only jobs should be scoped to the activated GA4 property');
+assert(tokenlessGa4Jobs.every((job: any) => job.jobType !== 'core-range-sync' && job.jobType !== 'daily-sync'), 'A GA4-only account must not queue GSC-backed core or daily jobs');
+assert(tokenlessGa4Jobs.some((job: any) => job.jobType === 'ga4-page-range-sync'), 'A GA4-only account should queue page metrics');
+const mappedOnlyGa4Jobs = secondPassJobs.filter((job: any) => job.siteUrl === mappedOnlyGa4SiteUrl);
+assert(mappedOnlyGa4Jobs.length > 0, 'A GA4-only account identified by a workspace mapping should receive GA4 warehouse jobs');
+assert(mappedOnlyGa4Jobs.every((job: any) => job.propertyId === mappedOnlyGa4PropertyId), 'Mapping-only GA4 jobs should be scoped to the mapped property');
+assert(mappedOnlyGa4Jobs.every((job: any) => job.jobType !== 'core-range-sync' && job.jobType !== 'daily-sync'), 'A mapping-only GA4 account must not queue GSC-backed jobs');
 
 console.log(JSON.stringify({
   ok: true,

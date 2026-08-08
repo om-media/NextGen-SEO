@@ -2227,10 +2227,10 @@ export async function queueWarehouseGa4DimensionBackfillJobs(db: AppDatabase, in
   return jobs;
 }
 
-export async function queueWarehouseBootstrapJobs(db: AppDatabase, input: { days?: number; ownerId: string; propertyId?: string | null; siteUrl: string }) {
-  const core = await queueWarehouseBackfillJobs(db, input);
+export async function queueWarehouseBootstrapJobs(db: AppDatabase, input: { days?: number; includeGsc?: boolean; ownerId: string; propertyId?: string | null; refreshGa4Metadata?: boolean; siteUrl: string }) {
+  const core = input.includeGsc === false ? [] : await queueWarehouseBackfillJobs(db, input);
   let ga4StartDate: string | null = null;
-  if (input.propertyId) {
+  if (input.propertyId && input.refreshGa4Metadata !== false) {
     try {
       await ensureWorkspaceGa4PropertyMetadata(db, {
         ownerId: input.ownerId,
@@ -2431,11 +2431,30 @@ function latestStableReportingDate() {
 export async function runWarehouseDailySchedulerTick(db: AppDatabase) {
   const targetDate = latestStableReportingDate();
   const users = await db.all<any>(`
-    SELECT id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites
+    SELECT id, tier, activatedSiteUrl, activatedGa4PropertyId, knownSites, unlockedSites, gscRefreshToken
     FROM users
-    -- The shared Google OAuth refresh token grants both Search Console and GA4 scopes.
-    WHERE gscRefreshToken IS NOT NULL AND gscRefreshToken != ''
+    WHERE (gscRefreshToken IS NOT NULL AND gscRefreshToken != '')
+       OR (activatedGa4PropertyId IS NOT NULL AND activatedGa4PropertyId != '')
+       OR EXISTS (
+         SELECT 1
+         FROM workspace_ga4_mappings mapping
+         WHERE mapping.ownerId = users.id
+       )
   `);
+
+  const mappingRows = await db.all<{ ownerId: string; siteUrl: string }>(`
+    SELECT ownerId, siteUrl
+    FROM workspace_ga4_mappings
+    WHERE siteUrl IS NOT NULL AND siteUrl != ''
+  `);
+  const mappedSitesByOwner = new Map<string, string[]>();
+  for (const mapping of mappingRows) {
+    const siteUrl = mapping.siteUrl.trim();
+    if (!siteUrl) continue;
+    const sites = mappedSitesByOwner.get(mapping.ownerId) || [];
+    sites.push(siteUrl);
+    mappedSitesByOwner.set(mapping.ownerId, sites);
+  }
 
   for (const user of users) {
     const sites = new Set<string>();
@@ -2449,6 +2468,11 @@ export async function runWarehouseDailySchedulerTick(db: AppDatabase) {
     for (const site of parseStringArray(user.knownSites)) {
       sites.add(site.trim());
     }
+    for (const site of mappedSitesByOwner.get(user.id) || []) {
+      sites.add(site);
+    }
+
+    const hasGscRefreshToken = typeof user.gscRefreshToken === 'string' && user.gscRefreshToken.trim().length > 0;
 
     for (const siteUrl of sites) {
       if (!(await canAccessSite(db, user.id, siteUrl))) {
@@ -2457,18 +2481,25 @@ export async function runWarehouseDailySchedulerTick(db: AppDatabase) {
       const mappedPropertyId = await resolveWorkspaceGa4Property(db, user.id, siteUrl);
       const activePropertyId = typeof user.activatedGa4PropertyId === 'string' ? user.activatedGa4PropertyId.trim() : '';
       const propertyId = mappedPropertyId || (siteUrl === activeSiteUrl && activePropertyId ? activePropertyId : null);
+      if (!hasGscRefreshToken && !propertyId) {
+        continue;
+      }
       await queueWarehouseBootstrapJobs(db, {
+        includeGsc: hasGscRefreshToken,
         ownerId: user.id,
         propertyId,
+        refreshGa4Metadata: hasGscRefreshToken,
         siteUrl,
       });
-      await queueWarehouseSyncJob(db, {
-        ownerId: user.id,
-        propertyId,
-        siteUrl,
-        targetDate,
-      });
-      if (propertyId) {
+      if (hasGscRefreshToken) {
+        await queueWarehouseSyncJob(db, {
+          ownerId: user.id,
+          propertyId,
+          siteUrl,
+          targetDate,
+        });
+      }
+      if (hasGscRefreshToken && propertyId) {
         await queueWarehouseGa4DimensionRangeJob(db, {
           endDate: targetDate,
           ownerId: user.id,

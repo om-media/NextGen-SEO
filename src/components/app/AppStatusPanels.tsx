@@ -87,6 +87,9 @@ export function AppStatusPanels({
     sourcePropertyCount > 0 &&
     !hasValidSelectedSite &&
       (googleConnected || dataSource === "bing");
+  const isGooglePropertyAccessError = Boolean(
+    apiError && /sufficient permission|permission denied|forbidden|not available to the connected google account|rejected access/i.test(apiError),
+  );
   if (hasNoSites) {
     return (
       <div className="mt-8 flex flex-col items-center justify-center space-y-6 rounded-2xl border border-border bg-card p-12 text-center shadow-[0_16px_44px_rgba(15,61,46,0.06)]">
@@ -139,9 +142,9 @@ export function AppStatusPanels({
         <div role="alert" className={`flex flex-col items-start space-y-4 rounded-2xl border p-6 shadow-[0_16px_44px_rgba(127,29,29,0.06)] ${apiError.startsWith("Network error:") ? "border-amber-300 bg-amber-50/90 dark:border-amber-900/50 dark:bg-amber-950/35" : "border-red-200 bg-red-50/90 dark:border-red-900/50 dark:bg-red-950/35"}`}>
           <div className={`flex items-center gap-2 font-semibold ${apiError.startsWith("Network error:") ? "text-amber-700 dark:text-amber-200" : "text-red-600"}`}>
             <AlertCircle className="h-5 w-5" />
-            <h3>{apiError.startsWith("Network error:") ? "Reporting connection failed" : apiError.includes("https://console.developers.google.com") ? "Google API setup required" : "Google reporting needs attention"}</h3>
+            <h3>{apiError.startsWith("Network error:") ? "Reporting connection failed" : apiError.includes("https://console.developers.google.com") ? "Google API setup required" : isGooglePropertyAccessError ? "Google property access needs attention" : "Google reporting needs attention"}</h3>
           </div>
-          <p className="text-sm text-foreground">{apiError.startsWith("Network error:") ? "The browser could not reach the reporting request. This is usually caused by a temporary connection problem, an ad blocker, a privacy extension, or the local server—not proof that the Google API is disabled." : apiError.includes("https://console.developers.google.com") ? "The required Google API must be enabled before live reporting can load for this workspace." : "Google returned an error while loading the reporting properties. Reconnect Google Data or review the details below."}</p>
+          <p className="text-sm text-foreground">{apiError.startsWith("Network error:") ? "The browser could not reach the reporting request. This is usually caused by a temporary connection problem, an ad blocker, a privacy extension, or the local server—not proof that the Google API is disabled." : apiError.includes("https://console.developers.google.com") ? "The required Google API must be enabled before live reporting can load for this workspace." : isGooglePropertyAccessError ? "The connected Google account cannot access the selected property. Reconnect with the account that owns it, or choose a different property for this workspace." : "Google returned an error while loading the reporting properties. Reconnect Google Data or review the details below."}</p>
           {apiError.includes("https://console.developers.google.com") ? (
             <div className="w-full space-y-4">
               <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
@@ -158,7 +161,10 @@ export function AppStatusPanels({
           ) : (
             <div className="w-full space-y-3">
               <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
-              {apiError.startsWith("Network error:") ? <Button onClick={onRetry} size="sm" variant="outline">Try again</Button> : <Button onClick={onConnectGoogle} disabled={isConnectingGoogle} size="sm" variant="outline">{isConnectingGoogle ? "Reconnecting..." : "Reconnect Google Data"}</Button>}
+              <div className="flex flex-wrap gap-2">
+                {apiError.startsWith("Network error:") ? <Button onClick={onRetry} size="sm" variant="outline">Try again</Button> : <Button onClick={onConnectGoogle} disabled={isConnectingGoogle} size="sm" variant="outline">{isConnectingGoogle ? "Reconnecting..." : "Reconnect Google Data"}</Button>}
+                {isGooglePropertyAccessError && dataSource === "ga4" ? <Button onClick={onOpenGa4Setup} disabled={isConnectingGoogle} size="sm" variant="outline">Choose another GA4 property</Button> : null}
+              </div>
             </div>
           )}
         </div>

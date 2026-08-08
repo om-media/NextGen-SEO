@@ -25,7 +25,7 @@ import { syncBingSites } from '../services/bingWarehouse.js';
 import { withNormalizedEmailLock } from '../services/normalizedEmailLock.js';
 import { isValidIsoDateRange, parseBoundedInteger } from '../routeValidation.js';
 
-function sendOauthPopupResponse(res: Response, success: boolean, message: string) {
+function sendOauthPopupResponse(res: Response, success: boolean, message: string, code?: string) {
   const escapedMessage = message
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -36,6 +36,7 @@ function sendOauthPopupResponse(res: Response, success: boolean, message: string
     source: 'nextgen-seo-google-oauth',
     success,
     message,
+    ...(code ? { code } : {}),
   });
 
   res
@@ -208,7 +209,8 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
     const error = asTrimmedString(req.query.error);
 
     if (error) {
-      return sendOauthPopupResponse(res, false, `Google connection failed: ${error}`);
+      const code = error === 'access_denied' ? 'GOOGLE_OAUTH_ACCESS_DENIED' : `GOOGLE_OAUTH_${error.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+      return sendOauthPopupResponse(res, false, error === 'access_denied' ? 'Google sign-in was cancelled or access was not granted. No changes were made.' : `Google connection failed: ${error}`, code);
     }
 
     if (!code || !state) {
@@ -279,7 +281,8 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
           return sendOauthPopupResponse(
             res,
             false,
-            'Multiple accounts use this email address. Contact support before continuing.',
+            'Google could not choose a workspace because this email is linked to multiple profiles. Close this window, then sign in with the matching password or contact support to merge the duplicate profiles.',
+            'AMBIGUOUS_ACCOUNT',
           );
         }
 

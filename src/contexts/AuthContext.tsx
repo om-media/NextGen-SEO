@@ -164,7 +164,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const data = await response.json();
     if (!response.ok || !data.authUrl) {
-      throw new Error(data.error || 'Failed to start Google sign-in');
+      const error = new Error(data.error || 'Failed to start Google sign-in') as Error & { code?: string };
+      error.code = data.code;
+      throw error;
     }
 
     const popup = window.open(data.authUrl, 'nextgen-google-auth', 'width=520,height=720');
@@ -211,7 +213,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         window.removeEventListener('message', handleMessage);
 
         if (!event.data.success) {
-          reject(new Error(event.data.message || 'Google sign-in failed.'));
+          const error = new Error(event.data.message || 'Google sign-in failed.') as Error & { code?: string };
+          error.code = typeof event.data.code === 'string' ? event.data.code : undefined;
+          reject(error);
           return;
         }
 
@@ -244,7 +248,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const data = await response.json();
     if (!response.ok || !data.authUrl) {
-      throw new Error(data.error || 'Failed to start Google connection');
+      const error = new Error(data.error || 'Failed to start Google connection') as Error & { code?: string };
+      error.code = data.code;
+      throw error;
     }
 
     const popup = window.open(data.authUrl, 'nextgen-google-oauth', 'width=520,height=720');
@@ -291,7 +297,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         window.removeEventListener('message', handleMessage);
 
         if (!event.data.success) {
-          reject(new Error(event.data.message || 'Google connection failed.'));
+          const error = new Error(event.data.message || 'Google connection failed.') as Error & { code?: string };
+          error.code = typeof event.data.code === 'string' ? event.data.code : undefined;
+          reject(error);
           return;
         }
 

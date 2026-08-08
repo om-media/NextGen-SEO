@@ -17,11 +17,14 @@ export type CoverageDataset = {
 };
 
 export type WarehouseSourceJobState = {
+  activeDateCount?: number;
   error: number;
   lastError: string | null;
   queued?: number;
   retrying?: number;
   running?: number;
+  staleActiveCount?: number;
+  staleSince?: string | null;
 };
 
 export type DataCoverageResponse = {
@@ -71,6 +74,7 @@ export type DataCoverageResponse = {
   };
   siteUrl: string;
   sourceJobs?: {
+    blended?: WarehouseSourceJobState;
     core: WarehouseSourceJobState;
     ga4Dimensions: WarehouseSourceJobState;
     ga4Llm: WarehouseSourceJobState;
