@@ -361,7 +361,7 @@ export function DataImportStatusPanel({
     missing: {
       icon: <Clock3 className="h-4 w-4 text-amber-600" />,
       label: "Missing data",
-      text: `${formatWholeNumber(stats.missingDateCount)} ${stats.missingDateCount === 1 ? "day is" : "days are"} missing and no import is running. Choose Prepare now to start the missing-day import.`,
+      text: `${formatWholeNumber(stats.missingDateCount)} ${stats.missingDateCount === 1 ? "day is" : "days are"} missing. The daily scheduler will queue them automatically; choose Prepare now to start immediately.`,
     },
     ready: {
       icon: <CheckCircle2 className="h-4 w-4 text-primary" />,

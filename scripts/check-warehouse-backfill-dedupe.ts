@@ -417,8 +417,8 @@ async function runGa4PageCompatibilityChecks() {
       siteUrl,
       startDate: targetDate,
     });
-    assert(reusedJob?.id === coreJob.id, 'GA4 page range job should reuse a covering core job');
-    assert(reusedJob?.jobType === 'core-range-sync', 'GA4 page range dedupe should resolve to the covering core job');
+    assert(reusedJob?.id !== coreJob.id, 'GA4 page range job must not reuse a covering GSC core job');
+    assert(reusedJob?.jobType === 'ga4-page-range-sync', 'GA4 page range dedupe should remain source-specific');
   } finally {
     await coveredByCoreDb.close();
   }

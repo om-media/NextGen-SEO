@@ -1335,9 +1335,8 @@ async function hasRequiredCoreWarehouseRows(
 ) {
   const expectedDays = eachIsoDate(startDate, endDate).length;
   if (expectedDays === 0) return false;
-  const propertyId = effectivePropertyId || job.propertyId || '';
 
-  const [gscCoverageRows, siteRows, queryRows, pageQueryRows, pageSummaryRows, ga4Rows] = await Promise.all([
+  const [gscCoverageRows, siteRows, queryRows, pageQueryRows, pageSummaryRows] = await Promise.all([
     db.all<{ dataset: GscCoverageDataset; date: string; status: GscDatasetCoverageStatus }>(`
       SELECT dataset, date, status
       FROM warehouse_dataset_coverage
@@ -1366,13 +1365,6 @@ async function hasRequiredCoreWarehouseRows(
       FROM gsc_page_metrics
       WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
     `, [job.ownerId, job.siteUrl, startDate, endDate]),
-    propertyId
-      ? db.get<{ count: number }>(`
-        SELECT COUNT(DISTINCT date) AS count
-        FROM ga4_page_metrics
-        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
-      `, [job.ownerId, propertyId, job.siteUrl, startDate, endDate])
-      : Promise.resolve({ count: expectedDays }),
   ]);
 
   const gscCoverageByDate = new Map();
@@ -1393,13 +1385,16 @@ async function hasRequiredCoreWarehouseRows(
   const hasStoredGscCoverage = hasPageSummaryCoverage
     && (allDatesHaveLedgerCoverage || (gscCoverageRows.length === 0 && legacyGscRowsStored));
 
-  return hasStoredGscCoverage
-    && Number(ga4Rows?.count || 0) >= expectedDays;
+  // Core jobs are the GSC backbone. GA4 pages have their own range jobs and
+  // must not keep GSC imports retrying when the selected GA4 property is
+  // inaccessible or temporarily disconnected.
+  return hasStoredGscCoverage;
 }
 
 async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: ReturnType<typeof createWarehouseJobLease>) {
   const totalStartedAt = Date.now();
   let syncResult = emptySyncResult();
+  const optionalPhaseErrors: Array<{ message: string; source: WarehouseSyncSource }> = [];
   const jobStartDate = job.targetStartDate || job.targetDate;
   const jobEndDate = job.targetDate;
   let syncedStartDate = jobStartDate;
@@ -1458,7 +1453,20 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: Re
       return;
     }
     const gscResult = await runWarehouseSyncPhase('gsc', () => syncGscRange(db, job, importStartDate, jobEndDate));
-    const ga4Result = propertyId ? await runWarehouseSyncPhase('ga4-pages', () => syncGa4PageRange(db, scopedJob, importStartDate, jobEndDate)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    let ga4Result = emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    if (propertyId) {
+      try {
+        ga4Result = await runWarehouseSyncPhase('ga4-pages', () => syncGa4PageRange(db, scopedJob, importStartDate, jobEndDate));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'GA4 page import failed';
+        optionalPhaseErrors.push({ message, source: 'ga4-pages' });
+        try {
+          await markGa4DatasetCoverageError(db, scopedJob, 'ga4-pages', error);
+        } catch (coverageError) {
+          console.error('[warehouse] Failed to persist optional GA4 page coverage error:', coverageError);
+        }
+      }
+    }
     syncResult = combineSyncResults([gscResult, ga4Result], {
       phases: {
         ga4Pages: {
@@ -1490,7 +1498,20 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: Re
     return;
   } else {
     const gscResult = await runWarehouseSyncPhase('gsc', () => syncGscDate(db, job));
-    const ga4Result = propertyId ? await runWarehouseSyncPhase('ga4-pages', () => syncGa4Date(db, scopedJob)) : emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    let ga4Result = emptySyncResult({ skippedReason: 'missing-ga4-property' });
+    if (propertyId) {
+      try {
+        ga4Result = await runWarehouseSyncPhase('ga4-pages', () => syncGa4Date(db, scopedJob));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'GA4 page import failed';
+        optionalPhaseErrors.push({ message, source: 'ga4-pages' });
+        try {
+          await markGa4DatasetCoverageError(db, scopedJob, 'ga4-pages', error);
+        } catch (coverageError) {
+          console.error('[warehouse] Failed to persist optional GA4 page coverage error:', coverageError);
+        }
+      }
+    }
     syncResult = combineSyncResults([gscResult, ga4Result], {
       phases: {
         ga4Pages: {
@@ -1519,6 +1540,7 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: Re
     rowsSynced: syncResult.rowsSynced,
     totalMs: elapsedMs(totalStartedAt),
     writeMs: syncResult.writeMs,
+    ...(optionalPhaseErrors.length > 0 ? { optionalPhaseErrors } : {}),
   });
   await lease.refresh();
   if (shouldUpdateWarehouseSyncStatus) {
@@ -1621,7 +1643,7 @@ const compatibleWarehouseJobTypes = (jobType: string) => (
   jobType === 'daily-sync' || jobType === 'core-range-sync'
     ? ['daily-sync', 'core-range-sync']
     : jobType === 'ga4-page-range-sync'
-      ? ['ga4-page-range-sync', 'daily-sync', 'core-range-sync']
+      ? ['ga4-page-range-sync']
       : [jobType]
 );
 
@@ -1826,8 +1848,7 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   const endDate = sortedDates[sortedDates.length - 1];
   if (!startDate || !endDate) return [];
 
-  const propertyId = input.propertyId || '';
-  const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, ga4PageRows, jobRows] = await Promise.all([
+  const [gscSiteRows, gscQueryRows, gscPageQueryRows, gscCountryRows, jobRows] = await Promise.all([
     db.all<{ date: string }>(`
       SELECT date
       FROM gsc_site_metrics
@@ -1852,14 +1873,6 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
       WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ?
       GROUP BY date
     `, [input.ownerId, input.siteUrl, startDate, endDate]),
-    propertyId
-      ? db.all<{ date: string }>(`
-        SELECT date
-        FROM ga4_page_metrics
-        WHERE ownerId = ? AND propertyId = ? AND siteUrl = ? AND date >= ? AND date <= ?
-        GROUP BY date
-      `, [input.ownerId, propertyId, input.siteUrl, startDate, endDate])
-      : Promise.resolve([]),
     db.all<{ propertyId: string | null; status: string; targetDate: string; targetStartDate: string | null }>(`
       SELECT propertyId, status, targetStartDate, targetDate
       FROM warehouse_jobs
@@ -1874,24 +1887,20 @@ async function missingCoreWarehouseDates(db: AppDatabase, input: { days?: number
   const gscQueryDates = new Set(gscQueryRows.map((row) => row.date));
   const gscPageQueryDates = new Set(gscPageQueryRows.map((row) => row.date));
   const gscCountryDates = new Set(gscCountryRows.map((row) => row.date));
-  const ga4PageDates = new Set(ga4PageRows.map((row) => row.date));
   const anyCoreJobDates = new Set<string>();
-  const matchingPropertyJobDates = new Set<string>();
 
   for (const row of jobRows) {
     for (const date of jobDatesWithin(row, startDate, endDate)) {
       anyCoreJobDates.add(date);
-      if (propertyId && row.propertyId === propertyId) {
-        matchingPropertyJobDates.add(date);
-      }
     }
   }
 
   return dates.filter((date) => {
     const needsExistingGsc = !gscSiteDates.has(date) || !gscQueryDates.has(date) || !gscPageQueryDates.has(date) || !gscCountryDates.has(date);
-    const needsGa4 = Boolean(propertyId && !ga4PageDates.has(date));
-    return (needsExistingGsc && !anyCoreJobDates.has(date))
-      || (needsGa4 && !matchingPropertyJobDates.has(date));
+    // GA4 page gaps are queued by queueWarehouseGa4PageBackfillJobs. Keeping
+    // them out of this GSC queue prevents a bad GA4 property from blocking
+    // otherwise healthy Search Console imports.
+    return needsExistingGsc && !anyCoreJobDates.has(date);
   });
 }
 

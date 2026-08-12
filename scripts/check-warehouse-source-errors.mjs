@@ -16,6 +16,18 @@ assert(
   warehouseJobs.includes('metricsJson: JSON.stringify({ failedAt, failedSource, jobType: job.jobType })'),
   'Warehouse job failures must persist source attribution',
 );
+assert(
+  warehouseJobs.includes('return hasStoredGscCoverage;'),
+  'GSC core completion must not depend on GA4 page coverage',
+);
+assert(
+  warehouseJobs.includes("? ['ga4-page-range-sync']"),
+  'GA4 page backfills must not reuse GSC core jobs after a property error',
+);
+assert(
+  warehouseJobs.includes('optionalPhaseErrors.push') && warehouseJobs.includes("markGa4DatasetCoverageError(db, scopedJob, 'ga4-pages', error)"),
+  'Optional GA4 failures must be recorded without blocking the GSC phase',
+);
 
 const warehouseRoute = read('server/routes/warehouse.ts');
 assert(warehouseRoute.includes('sourceJobs: {'), 'Coverage API must expose source-specific job state');
