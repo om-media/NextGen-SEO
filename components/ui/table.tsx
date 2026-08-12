@@ -10,7 +10,10 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
     >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn(
+          "w-full caption-bottom text-sm text-foreground [&_tbody_tr:nth-child(even)]:bg-muted/[0.16] [&_tbody_tr:hover]:bg-primary/[0.045] [&_tbody_tr[data-state=selected]]:bg-primary/[0.08]",
+          className,
+        )}
         {...props}
       />
     </div>
@@ -21,7 +24,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b [&_tr]:border-border [&_tr]:bg-card", className)}
+      className={cn("[&_tr]:border-b [&_tr]:border-border/80 [&_tr]:bg-muted/[0.28]", className)}
       {...props}
     />
   )
@@ -52,7 +55,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b border-border transition-colors hover:bg-muted/60 has-aria-expanded:bg-muted/60 data-[state=selected]:bg-secondary/60",
+        "group border-b border-border/80 transition-colors hover:bg-primary/[0.045] has-aria-expanded:bg-primary/[0.07] data-[state=selected]:bg-primary/[0.08]",
         className
       )}
       {...props}
@@ -65,7 +68,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-11 px-3 text-left align-middle text-xs font-semibold tracking-[-0.01em] leading-4 text-foreground [&:has([role=checkbox])]:pr-0",
+        "h-12 px-4 text-left align-middle text-[11px] font-semibold uppercase tracking-[0.055em] leading-4 text-muted-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
@@ -78,7 +81,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "px-3 py-3 align-middle text-foreground [&:has([role=checkbox])]:pr-0",
+        "px-4 py-3.5 align-middle text-[13px] leading-5 text-foreground tabular-nums [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}

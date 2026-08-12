@@ -17,6 +17,8 @@ const internalLinks = read('components/dashboard/InternalLinksView.tsx');
 const siteSelection = read('src/lib/siteSelection.ts');
 const ga4Service = read('src/services/ga4Service.ts');
 const googleRoute = read('server/routes/google.ts');
+const table = read('components/ui/table.tsx');
+const blendedPages = read('components/dashboard/BlendedPagesView.tsx');
 
 assert(header.includes('import { DataImportStatusPanel }'), 'The app header must own the compact source-data readiness control');
 assert(header.includes('<DataImportStatusPanel') && header.includes('compact'), 'The app header must render the compact readiness control');
@@ -51,6 +53,8 @@ assert(crawlInventory.includes('Estimate pending first run') && internalLinks.in
 assert(appStatusPanels.includes('Choose your GA4 property') && appStatusPanels.includes('none clearly match the active workspace site'), 'GA4 selection mismatches must ask the user to choose a mapped property instead of showing unrelated data');
 assert(siteSelection.includes('workspaceSiteUrls') && siteSelection.includes('cleanSiteIdentity(mappedSite)'), 'GA4 property selection must honor explicit workspace mappings before display-name heuristics');
 assert(ga4Service.includes('workspaceSiteUrls') && googleRoute.includes('workspaceSiteUrls'), 'GA4 property responses must carry workspace mappings to the selector');
+assert(table.includes('uppercase tracking-[0.055em]') && table.includes('nth-child(even)') && table.includes('hover:bg-primary/[0.045]'), 'Shared tables must provide unified headers, zebra rhythm, and hover affordances');
+assert(blendedPages.includes('text-[11px] font-semibold uppercase tracking-[0.055em]') && blendedPages.includes('bg-muted/[0.28]'), 'Blended tables must use the shared table visual language');
 
 const appToolbar = read('src/components/app/AppToolbar.tsx');
 const ga4ReportPaths = [

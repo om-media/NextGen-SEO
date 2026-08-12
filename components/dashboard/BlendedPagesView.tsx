@@ -1292,12 +1292,12 @@ export function BlendedPagesView({
               </Button>
             </div>
 
-            <div className="overflow-hidden rounded-2xl border border-[#E6ECE8]">
+            <div className="overflow-hidden rounded-2xl border border-border bg-card">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1320px] text-sm">
-                  <thead className="bg-[#FBFCFB] text-xs font-semibold text-[#34483E]">
+                <table className="w-full min-w-[1320px] text-sm text-foreground tabular-nums [&_tbody_tr:nth-child(even)]:bg-muted/[0.16] [&_tbody_tr:hover]:bg-primary/[0.045]">
+                  <thead className="bg-muted/[0.28] text-[11px] font-semibold uppercase tracking-[0.055em] text-muted-foreground">
                     <tr>
-                      <th className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-[#E6ECE8] bg-[#FBFCFB] px-4 py-3 text-left">
+                      <th className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-border bg-muted/[0.28] px-4 py-3 text-left">
                         <button className="inline-flex items-center gap-1" onClick={() => handleSort("page")}>
                           Page {sortIndicator("page")}
                         </button>
@@ -1363,13 +1363,13 @@ export function BlendedPagesView({
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={17} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={17} className="px-4 py-16 text-center text-muted-foreground">
                           Loading blended page data...
                         </td>
                       </tr>
                     ) : paginatedRows.length === 0 ? (
                       <tr>
-                        <td colSpan={17} className="px-4 py-16 text-center text-[#647067]">
+                        <td colSpan={17} className="px-4 py-16 text-center text-muted-foreground">
                           No page rows match this view.
                         </td>
                       </tr>
@@ -1385,80 +1385,80 @@ export function BlendedPagesView({
                         const metaState = getLengthState(row.crawl?.metaDescriptionLength ?? 0, 70, 170);
 
                         return (
-                          <tr key={row.pageKey || row.page} className="group border-t border-[#E6ECE8] hover:bg-[#F8FAF9]">
-                            <td className="sticky left-0 z-10 border-r border-[#E6ECE8] bg-white px-4 py-4 group-hover:bg-[#F8FAF9]">
+                          <tr key={row.pageKey || row.page} className="group border-t border-border/80 hover:bg-primary/[0.045]">
+                            <td className="sticky left-0 z-10 border-r border-border bg-card px-4 py-3.5 group-hover:bg-primary/[0.045]">
                               <div className="w-[328px]">
                                 <div className="flex items-start gap-2">
                                   <button
                                     type="button"
-                                    className="block min-w-0 max-w-full truncate text-left font-semibold text-[#24443A] hover:text-[#0F3D2E] hover:underline"
+                                    className="block min-w-0 max-w-full truncate text-left font-semibold text-foreground hover:text-primary hover:underline"
                                     onClick={() => setSelectedRow(row)}
                                   >
                                     {getPageTitle(row.page)}
                                   </button>
                                   <button
                                     type="button"
-                                    className="mt-[-2px] inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#E6ECE8] bg-white text-[#647067] shadow-sm transition-colors hover:border-[#C9D8D0] hover:text-[#0F3D2E]"
+                                    className="mt-[-2px] inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:border-primary/40 hover:text-primary"
                                     onClick={() => setSelectedRow(row)}
                                     title="Review page sources"
                                   >
                                     <FileText className="h-3.5 w-3.5" />
                                   </button>
                                 </div>
-                                <div className="mt-1 truncate text-xs text-[#647067]">{getDisplayPath(row.page)}</div>
+                                <div className="mt-1 truncate text-xs text-muted-foreground">{getDisplayPath(row.page)}</div>
                               </div>
                             </td>
-                            <td className="px-4 py-4 text-right">
-                              <div className="font-medium text-[#0F172A]">{formatNumber(row.gsc?.clicks ?? 0)}</div>
+                            <td className="px-4 py-3.5 text-right">
+                              <div className="font-medium text-foreground">{formatNumber(row.gsc?.clicks ?? 0)}</div>
                               {isCompareMode && <ChangeBadge value={clickChange} />}
                             </td>
-                            <td className="px-4 py-4 text-right">{formatNumber(row.gsc?.impressions ?? 0)}</td>
-                            <td className="px-4 py-4 text-right">{row.gsc ? formatPercent(row.gsc.ctr) : "-"}</td>
-                            <td className="px-4 py-4 text-right font-semibold text-[#6B5CFF]">{formatNumber(row.gsc?.queryCount ?? 0)}</td>
-                            <td className="px-4 py-4 text-right">
+                            <td className="px-4 py-3.5 text-right">{formatNumber(row.gsc?.impressions ?? 0)}</td>
+                            <td className="px-4 py-3.5 text-right">{row.gsc ? formatPercent(row.gsc.ctr) : "-"}</td>
+                            <td className="px-4 py-3.5 text-right font-semibold text-primary">{formatNumber(row.gsc?.queryCount ?? 0)}</td>
+                            <td className="px-4 py-3.5 text-right">
                               <div>{row.ga4 ? formatNumber(row.ga4.sessions) : "-"}</div>
                               {isCompareMode && row.ga4 && <ChangeBadge value={sessionChange} />}
                             </td>
-                            <td className="px-4 py-4 text-right">{row.ga4 ? formatNumber(row.ga4.pageViews) : "-"}</td>
-                            <td className="px-4 py-4 text-right">{row.ga4 ? formatPercent(row.ga4.bounceRate) : "-"}</td>
-                            <td className="px-4 py-4 text-right">
+                            <td className="px-4 py-3.5 text-right">{row.ga4 ? formatNumber(row.ga4.pageViews) : "-"}</td>
+                            <td className="px-4 py-3.5 text-right">{row.ga4 ? formatPercent(row.ga4.bounceRate) : "-"}</td>
+                            <td className="px-4 py-3.5 text-right">
                               <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${crawlStatus.className}`}>
                                 {crawlStatus.label}
                               </span>
-                              <div className="mt-1 text-xs text-[#647067]">{crawlStatus.detail}</div>
+                              <div className="mt-1 text-xs text-muted-foreground">{crawlStatus.detail}</div>
                             </td>
-                            <td className="px-4 py-4 text-right">
+                            <td className="px-4 py-3.5 text-right">
                               <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${indexabilityStatus.className}`}>
                                 {indexabilityStatus.label}
                               </span>
                             </td>
-                            <td className="px-4 py-4 text-right">
+                            <td className="px-4 py-3.5 text-right">
                               <div className={`text-xs font-semibold ${titleState.className}`}>{titleState.label}</div>
-                              <div className="mt-1 max-w-[140px] truncate text-xs text-[#647067]" title={row.crawl?.title || ""}>
+                              <div className="mt-1 max-w-[140px] truncate text-xs text-muted-foreground" title={row.crawl?.title || ""}>
                                 {row.crawl?.title || "-"}
                               </div>
                             </td>
-                            <td className="px-4 py-4 text-right">
+                            <td className="px-4 py-3.5 text-right">
                               <div className={`text-xs font-semibold ${metaState.className}`}>{metaState.label}</div>
-                              <div className="mt-1 max-w-[150px] truncate text-xs text-[#647067]" title={row.crawl?.metaDescription || ""}>
+                              <div className="mt-1 max-w-[150px] truncate text-xs text-muted-foreground" title={row.crawl?.metaDescription || ""}>
                                 {row.crawl?.metaDescription || "-"}
                               </div>
                             </td>
-                            <td className="px-4 py-4 text-right">
+                            <td className="px-4 py-3.5 text-right">
                               <div className={row.crawl?.h1Count === 1 ? "text-xs font-semibold text-[#0F3D2E]" : "text-xs font-semibold text-[#C2410C]"}>
                                 {row.crawl ? `${formatNumber(row.crawl.h1Count)} H1` : "-"}
                               </div>
-                              <div className="mt-1 max-w-[120px] truncate text-xs text-[#647067]" title={row.crawl?.h1Text || ""}>
+                              <div className="mt-1 max-w-[120px] truncate text-xs text-muted-foreground" title={row.crawl?.h1Text || ""}>
                                 {row.crawl?.h1Text || "-"}
                               </div>
                             </td>
-                            <td className="px-4 py-4 text-right">{row.crawl ? formatNumber(row.crawl.depth) : "-"}</td>
-                            <td className="px-4 py-4 text-right">
+                            <td className="px-4 py-3.5 text-right">{row.crawl ? formatNumber(row.crawl.depth) : "-"}</td>
+                            <td className="px-4 py-3.5 text-right">
                               <div>{row.crawl ? formatNumber(row.crawl.inboundLinkCount) : "-"}</div>
-                              <div className="mt-1 text-xs text-[#647067]">{row.crawl ? `${formatNumber(row.crawl.outgoingLinkCount)} out` : ""}</div>
+                              <div className="mt-1 text-xs text-muted-foreground">{row.crawl ? `${formatNumber(row.crawl.outgoingLinkCount)} out` : ""}</div>
                             </td>
-                            <td className="px-4 py-4 text-right">{row.crawl ? formatNumber(row.crawl.wordCount) : "-"}</td>
-                            <td className="px-4 py-4 text-right">
+                            <td className="px-4 py-3.5 text-right">{row.crawl ? formatNumber(row.crawl.wordCount) : "-"}</td>
+                            <td className="px-4 py-3.5 text-right">
                               <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${decisionStatus.className}`}>
                                 {decisionStatus.label}
                               </span>
