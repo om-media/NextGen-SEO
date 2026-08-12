@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "../../contexts/AuthContext"
 import { AlertCircle, BarChart3, CheckCircle2 } from "lucide-react"
-import { toast } from "sonner"
 
 const SIGNED_OUT_NOTICE_SESSION_KEY = "signed_out_notice";
 
@@ -16,7 +15,7 @@ export function AuthScreen() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [providerLoading, setProviderLoading] = useState<"Google" | "Microsoft" | null>(null)
+  const [providerLoading, setProviderLoading] = useState<"Google" | null>(null)
   const [signedOutMessage, setSignedOutMessage] = useState("")
 
   useEffect(() => {
@@ -66,16 +65,9 @@ export function AuthScreen() {
     }
   }
 
-  const handleProviderAuth = async (provider: "Google" | "Microsoft") => {
+  const handleProviderAuth = async () => {
     setError("")
-    if (provider === "Microsoft") {
-      toast.info("Microsoft app sign-in is not configured yet", {
-        description: "Use email and password or Google sign-in for now.",
-      })
-      return
-    }
-
-    setProviderLoading(provider)
+    setProviderLoading("Google")
     try {
       await signInWithGoogle()
     } catch (err: any) {
@@ -98,12 +90,12 @@ export function AuthScreen() {
           or {mode === "login" ? "sign in" : "register"} with
         </span>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3">
         <Button
           type="button"
           variant="outline"
           className="h-11 rounded-2xl border-[#E6ECE8] bg-white text-[#0F172A] shadow-sm hover:bg-[#FBFCFB]"
-          onClick={() => handleProviderAuth("Google")}
+          onClick={handleProviderAuth}
           disabled={loading || providerLoading !== null}
         >
           <span className="mr-2 flex h-5 w-5 items-center justify-center rounded-full border border-[#E6ECE8] text-[11px] font-bold text-[#4285F4]">
@@ -111,22 +103,8 @@ export function AuthScreen() {
           </span>
           {providerLoading === "Google" ? "Opening..." : "Google"}
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11 rounded-2xl border-[#E6ECE8] bg-white text-[#0F172A] shadow-sm hover:bg-[#FBFCFB]"
-          onClick={() => handleProviderAuth("Microsoft")}
-          disabled={loading || providerLoading !== null}
-        >
-          <span className="mr-2 grid h-4 w-4 grid-cols-2 gap-0.5">
-            <span className="bg-[#F25022]" />
-            <span className="bg-[#7FBA00]" />
-            <span className="bg-[#00A4EF]" />
-            <span className="bg-[#FFB900]" />
-          </span>
-          Microsoft
-        </Button>
       </div>
+      <p className="text-center text-xs text-[#647067]">Google is the only connected sign-in provider right now.</p>
     </div>
   )
 
@@ -194,16 +172,16 @@ export function AuthScreen() {
               </p>
             </div>
 
-        {signedOutMessage && (
-          <div aria-live="polite" role="status" className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <p>{signedOutMessage}</p>
-            </div>
-          </div>
-        )}
+            {signedOutMessage && (
+              <div aria-live="polite" role="status" className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p>{signedOutMessage}</p>
+                </div>
+              </div>
+            )}
 
-        <Tabs defaultValue="login" className="w-full">
+        <Tabs defaultValue="login" className="w-full" onValueChange={() => setError("")}>
           <TabsList className="grid w-full grid-cols-2 rounded-2xl border border-[#E6ECE8] bg-white/80 p-1 shadow-sm">
             <TabsTrigger value="login">Login</TabsTrigger>
             <TabsTrigger value="register">Register</TabsTrigger>
@@ -215,17 +193,17 @@ export function AuthScreen() {
                 <CardTitle>Welcome back</CardTitle>
                 <CardDescription>Enter your workspace email and password.</CardDescription>
               </CardHeader>
-              <form onSubmit={handleLogin}>
+              <form aria-busy={loading} onSubmit={handleLogin}>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" required value={email} onChange={e => setEmail(e.target.value)} />
+                    <Input autoComplete="email" id="email" type="email" required value={email} onChange={e => setEmail(e.target.value)} aria-invalid={Boolean(error)} aria-describedby={error ? "auth-error" : undefined} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="password">Password</Label>
-                    <Input id="password" type="password" required value={password} onChange={e => setPassword(e.target.value)} />
+                    <Input autoComplete="current-password" id="password" type="password" required value={password} onChange={e => setPassword(e.target.value)} aria-invalid={Boolean(error)} aria-describedby={error ? "auth-error" : undefined} />
                   </div>
-                  {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+                  {error && <div id="auth-error" role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><p>{error}</p></div>}
                 </CardContent>
                 <CardFooter className="flex flex-col space-y-4">
                   <Button type="submit" className="w-full" disabled={loading}>
@@ -244,17 +222,17 @@ export function AuthScreen() {
                 <CardTitle>Create your workspace</CardTitle>
                 <CardDescription>Start with email and password. Connect Search Console, GA4, and Bing after this step.</CardDescription>
               </CardHeader>
-              <form onSubmit={handleRegister}>
+              <form aria-busy={loading} onSubmit={handleRegister}>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="reg-email">Email</Label>
-                    <Input id="reg-email" type="email" required value={email} onChange={e => setEmail(e.target.value)} />
+                    <Input autoComplete="email" id="reg-email" type="email" required value={email} onChange={e => setEmail(e.target.value)} aria-invalid={Boolean(error)} aria-describedby={error ? "register-auth-error" : undefined} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="reg-password">Password</Label>
-                    <Input id="reg-password" type="password" required minLength={10} value={password} onChange={e => setPassword(e.target.value)} />
+                    <Input autoComplete="new-password" id="reg-password" type="password" required minLength={10} value={password} onChange={e => setPassword(e.target.value)} aria-invalid={Boolean(error)} aria-describedby={error ? "register-auth-error" : undefined} />
                   </div>
-                  {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+                  {error && <div id="register-auth-error" role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><p>{error}</p></div>}
                 </CardContent>
                 <CardFooter className="flex flex-col space-y-4">
                   <Button type="submit" className="w-full" disabled={loading}>

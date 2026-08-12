@@ -63,11 +63,12 @@ function MainApp() {
   const mappedProfileGa4Sites = useMemo(() => userProfile?.activatedGa4PropertyId ? [{
     siteUrl: userProfile.activatedGa4PropertyId,
     displayName: userProfile.activatedGa4DisplayName || userProfile.activatedGa4PropertyId,
-  }] : [], [userProfile?.activatedGa4DisplayName, userProfile?.activatedGa4PropertyId])
+    workspaceSiteUrl: userProfile.activatedSiteUrl || undefined,
+  }] : [], [userProfile?.activatedGa4DisplayName, userProfile?.activatedGa4PropertyId, userProfile?.activatedSiteUrl])
   const [settingsInitialTab, setSettingsInitialTab] = useState<"profile" | "workspace" | "integrations">("profile")
   const [sites, setSites] = useState<GscSite[]>([])
   const [bingSites, setBingSites] = useState<BingSite[]>([])
-  const [ga4Sites, setGa4Sites] = useState<{siteUrl: string, displayName: string}[]>([])
+  const [ga4Sites, setGa4Sites] = useState<{siteUrl: string, displayName: string, workspaceSiteUrl?: string, workspaceSiteUrls?: string[]}[]>([])
   const [selectedSite, setSelectedSite] = useState("")
   const [selectedGa4Property, setSelectedGa4Property] = useState("")
   const [selectedGa4PropertySite, setSelectedGa4PropertySite] = useState("")
@@ -552,7 +553,6 @@ function MainApp() {
       setSelectedGa4Property(getPreferredGa4PropertyId(accessibleGa4Sites, {
         activatedGa4PropertyId: userProfile?.activatedGa4PropertyId,
         activatedSiteUrl: userProfile?.activatedSiteUrl,
-        allowUnscopedPreference: Boolean(cachedProperty),
         currentPreference: cachedProperty,
         currentPreferenceSite: cachedProperty ? siteUrl : selectedGa4PropertySite,
         workspaceSite: siteUrl,

@@ -138,9 +138,9 @@ function getJobLabel(job: WarehouseJobSummary) {
 }
 
 function getJobStatusLabel(status: string) {
-  if (status === "retrying") return "Retrying after a failed attempt";
+  if (status === "retrying") return "Retrying now";
   if (status === "running") return "Running now";
-  if (status === "queued") return "Queued for the worker";
+  if (status === "queued") return "Queued";
   if (status === "error") return "Failed — action needed";
   if (status === "completed") return "Completed";
   return status;
@@ -315,7 +315,7 @@ export function DataImportStatusPanel({
     : activeJobCount > 0
     ? estimatedRemaining
       ? `Estimated wait ${estimatedRemaining}, based on the latest completed import job. Large sites and Google API throttling can change this.`
-      : "Estimated wait will appear after the first import job completes."
+      : "Calculating an estimate from the first completed import job."
     : null;
 
   const status = actionState === "importing" && stats.missingDateCount > 0
@@ -484,7 +484,7 @@ export function DataImportStatusPanel({
           <StatusMetric label="Queued" value={formatWholeNumber(queuedJobCount)} />
           <StatusMetric label="Running" value={formatWholeNumber(runningJobCount)} />
           <StatusMetric label="Failed" tone={failedJobCount > 0 ? "danger" : "default"} value={formatWholeNumber(failedJobCount)} />
-          <StatusMetric label="Est. wait" value={staleActiveCount > 0 ? "Stalled" : activeJobCount > 0 ? estimatedRemaining || "Learning" : "Ready"} />
+          <StatusMetric label="Est. wait" value={staleActiveCount > 0 ? "Stalled" : activeJobCount > 0 ? estimatedRemaining || "Calculating…" : "Ready"} />
         </div>
       </div>
 
@@ -494,7 +494,7 @@ export function DataImportStatusPanel({
             {error ? (
               <p className="text-sm text-destructive">{error}</p>
             ) : latestJob ? (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span>Latest job</span>
                 <span className={`rounded-full border px-2 py-0.5 font-medium ${getStatusClasses(latestJob.status)}`}>
                   {getJobStatusLabel(latestJob.status)}
@@ -507,7 +507,7 @@ export function DataImportStatusPanel({
                 {latestTotalDuration && <span>{latestTotalDuration} total</span>}
                 {latestApiDuration && <span>API {latestApiDuration}</span>}
                 {latestWriteDuration && <span>write {latestWriteDuration}</span>}
-                {getJobErrorCopy(latestJob.lastError) && <span className="text-destructive">{getJobErrorCopy(latestJob.lastError)}</span>}
+                {getJobErrorCopy(latestJob.lastError) && <span className="min-w-0 basis-full break-words text-destructive sm:basis-auto">{getJobErrorCopy(latestJob.lastError)}</span>}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No import jobs have run for this site yet.</p>

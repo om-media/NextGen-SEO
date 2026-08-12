@@ -4,6 +4,8 @@ export interface Ga4Property {
   property: string; // e.g., "properties/1234567"
   displayName: string;
   propertyType: string;
+  workspaceSiteUrl?: string;
+  workspaceSiteUrls?: string[];
 }
 
 export interface Ga4AccountSummary {
@@ -113,7 +115,7 @@ export class Ga4ApiService {
     return response.json() as Promise<T>;
   }
 
-  async getProperties(): Promise<{ siteUrl: string, displayName: string }[]> {
+  async getProperties(): Promise<{ siteUrl: string, displayName: string, workspaceSiteUrl?: string, workspaceSiteUrls?: string[] }[]> {
     const data = await this.fetchApi<any>('/api/google/ga4/properties');
     const summaries: Ga4AccountSummary[] = Array.isArray(data)
       ? data
@@ -121,14 +123,16 @@ export class Ga4ApiService {
         ? data.accountSummaries
         : [];
     
-    const properties: { siteUrl: string, displayName: string }[] = [];
+    const properties: { siteUrl: string, displayName: string, workspaceSiteUrl?: string, workspaceSiteUrls?: string[] }[] = [];
     
     for (const account of summaries) {
       if (account.propertySummaries) {
         for (const prop of account.propertySummaries) {
           properties.push({
             siteUrl: prop.property, // "properties/1234567"
-            displayName: `${prop.displayName} (${account.displayName})`
+            displayName: `${prop.displayName} (${account.displayName})`,
+            workspaceSiteUrl: prop.workspaceSiteUrl,
+            workspaceSiteUrls: prop.workspaceSiteUrls,
           });
         }
       }

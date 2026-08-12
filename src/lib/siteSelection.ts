@@ -2,6 +2,8 @@ export type SiteLike = {
   siteUrl: string;
   displayName?: string;
   permissionLevel?: string;
+  workspaceSiteUrl?: string;
+  workspaceSiteUrls?: string[];
 };
 
 export type DashboardDataSource = "gsc" | "bing" | "ga4" | "blended";
@@ -125,6 +127,14 @@ export function getWorkspaceSiteMatchCandidates(workspaceSite: string) {
 }
 
 export function isGa4PropertyForWorkspaceSite(site: SiteLike, workspaceSite: string) {
+  const mappedSites = [
+    ...(site.workspaceSiteUrl ? [site.workspaceSiteUrl] : []),
+    ...(site.workspaceSiteUrls || []),
+  ].filter(Boolean);
+  if (mappedSites.length > 0) {
+    return mappedSites.some((mappedSite) => cleanSiteIdentity(mappedSite) === cleanSiteIdentity(workspaceSite));
+  }
+
   const candidates = getWorkspaceSiteMatchCandidates(workspaceSite);
   if (candidates.length === 0) {
     return false;
@@ -143,7 +153,6 @@ export function getPreferredGa4PropertyId(
   options: {
     activatedGa4PropertyId?: string | null;
     activatedSiteUrl?: string | null;
-    allowUnscopedPreference?: boolean;
     currentPreference?: string;
     currentPreferenceSite?: string;
     preferCurrentPreference?: boolean;
@@ -153,7 +162,6 @@ export function getPreferredGa4PropertyId(
   const {
     activatedGa4PropertyId,
     activatedSiteUrl,
-    allowUnscopedPreference = false,
     currentPreference = "",
     currentPreferenceSite = "",
     preferCurrentPreference = false,
@@ -162,16 +170,21 @@ export function getPreferredGa4PropertyId(
 
   const currentPreferenceIsAvailable = Boolean(
     currentPreference
-    && (allowUnscopedPreference || currentPreferenceSite === workspaceSite)
+    && currentPreferenceSite === workspaceSite
     && availableSites.some((site) => site.siteUrl === currentPreference),
+  );
+  const currentPreferenceSiteEntry = currentPreference
+    ? availableSites.find((site) => site.siteUrl === currentPreference)
+    : null;
+  const currentPreferenceMatchesWorkspace = Boolean(
+    currentPreferenceSiteEntry &&
+    workspaceSite &&
+    isGa4PropertyForWorkspaceSite(currentPreferenceSiteEntry, workspaceSite),
   );
   if (preferCurrentPreference && currentPreferenceIsAvailable) {
     return currentPreference;
   }
 
-  const savedDefaultSite = activatedGa4PropertyId
-    ? availableSites.find((site) => site.siteUrl === activatedGa4PropertyId)
-    : null;
   const workspaceMatchedSites = availableSites.filter((site) => isGa4PropertyForWorkspaceSite(site, workspaceSite));
   const workspaceMatchedProperty = workspaceMatchedSites[0]?.siteUrl || "";
 
@@ -181,8 +194,8 @@ export function getPreferredGa4PropertyId(
   if (
     workspaceSite &&
     workspaceSite === activatedSiteUrl &&
-    savedDefaultSite &&
-    workspaceMatchedSites.some((site) => site.siteUrl === savedDefaultSite.siteUrl)
+    activatedGa4PropertyId &&
+    workspaceMatchedSites.some((site) => site.siteUrl === activatedGa4PropertyId)
   ) {
     return activatedGa4PropertyId || "";
   }
@@ -197,17 +210,7 @@ export function getPreferredGa4PropertyId(
     return workspaceMatchedProperty;
   }
 
-  if (
-    workspaceSite &&
-    workspaceSite === activatedSiteUrl &&
-    savedDefaultSite
-  ) {
-    return activatedGa4PropertyId || "";
-  }
-
-  if (
-    currentPreferenceIsAvailable
-  ) {
+  if (currentPreferenceIsAvailable && (preferCurrentPreference || currentPreferenceMatchesWorkspace)) {
     return currentPreference;
   }
 
@@ -298,7 +301,6 @@ export function resolveSourceSwitchSelection({
     selectedGa4Property: getPreferredGa4PropertyId(availableGa4Sites, {
       activatedGa4PropertyId,
       activatedSiteUrl,
-      allowUnscopedPreference: Boolean(cachedProperty),
       currentPreference: cachedProperty || currentSelectedGa4Property,
       currentPreferenceSite: cachedProperty ? nextSelectedSite : currentSelectedGa4PropertySite,
       workspaceSite: nextSelectedSite,
@@ -367,9 +369,21 @@ export function getPreferredSiteUrl(
 export function mergeUniqueSites<T extends SiteLike>(existingSites: T[], incomingSites: T[]) {
   const merged = [...existingSites];
   for (const site of incomingSites) {
-    if (!merged.some((existing) => existing.siteUrl === site.siteUrl)) {
+    const existingIndex = merged.findIndex((existing) => existing.siteUrl === site.siteUrl);
+    if (existingIndex === -1) {
       merged.push(site);
+      continue;
     }
+
+    merged[existingIndex] = {
+      ...site,
+      ...merged[existingIndex],
+      workspaceSiteUrl: merged[existingIndex].workspaceSiteUrl || site.workspaceSiteUrl,
+      workspaceSiteUrls: Array.from(new Set([
+        ...(site.workspaceSiteUrls || []),
+        ...(merged[existingIndex].workspaceSiteUrls || []),
+      ])),
+    } as T;
   }
   return merged;
 }

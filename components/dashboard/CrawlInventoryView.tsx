@@ -111,7 +111,7 @@ function crawlProcessedCount(job: CrawlJob | null) {
   );
 }
 function formatQueueWait(seconds: number | null) {
-  if (seconds === null) return "Learning from recent runs";
+  if (seconds === null) return "Estimate pending first run";
   if (seconds < 60) return "Under a minute";
   const minutes = Math.ceil(seconds / 60);
   if (minutes < 60) return `About ${minutes} min`;

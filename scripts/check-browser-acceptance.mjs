@@ -755,7 +755,7 @@ async function run() {
       const page = await context.newPage();
       const monitor = installPageMonitor(page, {
         ignoreConsole: ['Failed to load resource: the server responded with a status of 403'],
-        ignoreResponseFailures: ['/api/indexing/auto-sync/status', '/api/rank-tracking/keywords', '/api/warehouse/coverage'],
+        ignoreResponseFailures: ['/api/indexing/auto-sync/status', '/api/rank-tracking/keywords', '/api/warehouse/coverage', '/api/warehouse/jobs'],
       });
 
       const siteA = 'https://avanterrapark.com/';

@@ -79,14 +79,15 @@ export function AppStatusPanels({
     !apiError &&
     dataSource === "ga4" &&
     googleConnected &&
-    ga4SitesCount === 0 &&
-    fullGa4SitesCount > 0;
+    fullGa4SitesCount > 0 &&
+    (ga4SitesCount === 0 || !hasValidSelectedSite);
   const showInvalidSelection =
     !fetchingSites &&
     !apiError &&
     sourcePropertyCount > 0 &&
     !hasValidSelectedSite &&
-      (googleConnected || dataSource === "bing");
+      (googleConnected || dataSource === "bing") &&
+      !(dataSource === "ga4" && showGa4PropertySetup);
   const isGooglePropertyAccessError = Boolean(
     apiError && /sufficient permission|permission denied|forbidden|not available to the connected google account|rejected access/i.test(apiError),
   );
@@ -147,7 +148,10 @@ export function AppStatusPanels({
           <p className="text-sm text-foreground">{apiError.startsWith("Network error:") ? "The browser could not reach the reporting request. This is usually caused by a temporary connection problem, an ad blocker, a privacy extension, or the local server—not proof that the Google API is disabled." : apiError.includes("https://console.developers.google.com") ? "The required Google API must be enabled before live reporting can load for this workspace." : isGooglePropertyAccessError ? "The connected Google account cannot access the selected property. Reconnect with the account that owns it, or choose a different property for this workspace." : "Google returned an error while loading the reporting properties. Reconnect Google Data or review the details below."}</p>
           {apiError.includes("https://console.developers.google.com") ? (
             <div className="w-full space-y-4">
-              <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
+              <details className="rounded-xl border border-[#E6ECE8] bg-white text-sm text-muted-foreground dark:border-[#2A332F] dark:bg-[#171918]">
+                <summary className="cursor-pointer px-3 py-2.5 font-medium text-foreground">Show technical details</summary>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words border-t border-[#E6ECE8] p-3 font-mono text-xs dark:border-[#2A332F]">{apiError}</pre>
+              </details>
               <a
                 href={apiError.match(/https:\/\/console\.developers\.google\.com[^\s]*/)?.[0] || "#"}
                 target="_blank"
@@ -160,7 +164,10 @@ export function AppStatusPanels({
             </div>
           ) : (
             <div className="w-full space-y-3">
-              <div className="break-all rounded-xl border border-[#E6ECE8] bg-white p-3 font-mono text-xs text-muted-foreground">{apiError}</div>
+              <details className="rounded-xl border border-[#E6ECE8] bg-white text-sm text-muted-foreground dark:border-[#2A332F] dark:bg-[#171918]">
+                <summary className="cursor-pointer px-3 py-2.5 font-medium text-foreground">Show technical details</summary>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words border-t border-[#E6ECE8] p-3 font-mono text-xs dark:border-[#2A332F]">{apiError}</pre>
+              </details>
               <div className="flex flex-wrap gap-2">
                 {apiError.startsWith("Network error:") ? <Button onClick={onRetry} size="sm" variant="outline">Try again</Button> : <Button onClick={onConnectGoogle} disabled={isConnectingGoogle} size="sm" variant="outline">{isConnectingGoogle ? "Reconnecting..." : "Reconnect Google Data"}</Button>}
                 {isGooglePropertyAccessError && dataSource === "ga4" ? <Button onClick={onOpenGa4Setup} disabled={isConnectingGoogle} size="sm" variant="outline">Choose another GA4 property</Button> : null}

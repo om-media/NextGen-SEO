@@ -373,9 +373,38 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
   app.get('/api/google/ga4/properties', authRequired, async (req: AuthedRequest, res) => {
     try {
       const data = await googleApiFetchJson(db, req.authUser!.uid, 'https://analyticsadmin.googleapis.com/v1beta/accountSummaries');
-      res.json(data.accountSummaries || []);
+      const mappings = await db.all<{ propertyId: string; siteUrl: string }>(
+        'SELECT propertyId, siteUrl FROM workspace_ga4_mappings WHERE ownerId = ?',
+        [req.authUser!.uid],
+      );
+      const active = await db.get<{ activatedGa4PropertyId?: string | null; activatedSiteUrl?: string | null }>(
+        'SELECT activatedGa4PropertyId, activatedSiteUrl FROM users WHERE id = ?',
+        [req.authUser!.uid],
+      );
+      const workspaceSitesByProperty = new Map<string, string[]>();
+      for (const mapping of mappings) {
+        if (!mapping.propertyId || !mapping.siteUrl) continue;
+        const sites = workspaceSitesByProperty.get(mapping.propertyId) || [];
+        if (!sites.includes(mapping.siteUrl)) sites.push(mapping.siteUrl);
+        workspaceSitesByProperty.set(mapping.propertyId, sites);
+      }
+      if (active?.activatedGa4PropertyId && active.activatedSiteUrl) {
+        const sites = workspaceSitesByProperty.get(active.activatedGa4PropertyId) || [];
+        if (!sites.includes(active.activatedSiteUrl)) sites.push(active.activatedSiteUrl);
+        workspaceSitesByProperty.set(active.activatedGa4PropertyId, sites);
+      }
+      const accountSummaries = (data.accountSummaries || []).map((account: any) => ({
+        ...account,
+        propertySummaries: (account.propertySummaries || []).map((property: any) => {
+          const workspaceSiteUrls = workspaceSitesByProperty.get(property.property) || [];
+          return workspaceSiteUrls.length > 0
+            ? { ...property, workspaceSiteUrl: workspaceSiteUrls[0], workspaceSiteUrls }
+            : property;
+        }),
+      }));
+      res.json(accountSummaries);
     } catch (err: any) {
-      const storedProperties = await db.all<{ displayName: string | null; propertyId: string }>('SELECT propertyId, displayName FROM workspace_ga4_mappings WHERE ownerId = ? UNION SELECT activatedGa4PropertyId AS propertyId, activatedGa4DisplayName AS displayName FROM users WHERE id = ? AND activatedGa4PropertyId IS NOT NULL', [req.authUser!.uid, req.authUser!.uid]);
+      const storedProperties = await db.all<{ displayName: string | null; propertyId: string; siteUrl: string | null }>('SELECT propertyId, displayName, siteUrl FROM workspace_ga4_mappings WHERE ownerId = ? UNION SELECT activatedGa4PropertyId AS propertyId, activatedGa4DisplayName AS displayName, activatedSiteUrl AS siteUrl FROM users WHERE id = ? AND activatedGa4PropertyId IS NOT NULL', [req.authUser!.uid, req.authUser!.uid]);
       if (storedProperties.length > 0) {
         res.json([{
           displayName: 'Stored workspace data',
@@ -384,6 +413,8 @@ export function registerGoogleRoutes(app: Express, db: AppDatabase) {
             displayName: property.displayName || property.propertyId,
             property: property.propertyId,
             propertyType: 'PROPERTY_TYPE_ORDINARY',
+            workspaceSiteUrl: property.siteUrl,
+            workspaceSiteUrls: property.siteUrl ? [property.siteUrl] : [],
           })),
         }]);
         return;

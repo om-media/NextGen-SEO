@@ -11,6 +11,12 @@ const readinessPanel = read('src/components/app/DataImportStatusPanel.tsx');
 const warehouseRoute = read('server/routes/warehouse.ts');
 const llmTraffic = read('components/dashboard/Ga4LlmTraffic.tsx');
 const appStatusPanels = read('src/components/app/AppStatusPanels.tsx');
+const authScreen = read('src/components/auth/AuthScreen.tsx');
+const crawlInventory = read('components/dashboard/CrawlInventoryView.tsx');
+const internalLinks = read('components/dashboard/InternalLinksView.tsx');
+const siteSelection = read('src/lib/siteSelection.ts');
+const ga4Service = read('src/services/ga4Service.ts');
+const googleRoute = read('server/routes/google.ts');
 
 assert(header.includes('import { DataImportStatusPanel }'), 'The app header must own the compact source-data readiness control');
 assert(header.includes('<DataImportStatusPanel') && header.includes('compact'), 'The app header must render the compact readiness control');
@@ -38,6 +44,13 @@ assert(readinessPanel.includes('compact ? \"flex flex-col gap-4\"') && readiness
 assert(llmTraffic.includes('activeDateCount') && llmTraffic.includes('unscheduledMissingDateCount') && llmTraffic.includes('Analytics import needs attention'), 'LLM traffic readiness must expose the same queue and failure states as other Analytics pages');
 assert(llmTraffic.includes('rounded-2xl border border-border bg-card px-4 py-3') && llmTraffic.includes('coverageStatusDescription'), 'LLM traffic readiness must use the shared dashboard status-strip treatment');
 assert(appStatusPanels.includes('Reporting connection failed') && appStatusPanels.includes('onRetry') && appStatusPanels.includes('not proof that the Google API is disabled'), 'Network reporting failures must be distinguished from Google API configuration failures and be retryable');
+assert(appStatusPanels.includes('Show technical details') && appStatusPanels.includes('<pre className="max-h-40 overflow-auto'), 'API errors must keep technical details collapsed until requested');
+assert(authScreen.includes('Google is the only connected sign-in provider right now.') && authScreen.includes('aria-describedby={error ? "auth-error"'), 'Auth UX must make available providers and recovery errors explicit');
+assert(readinessPanel.includes('Retrying now') && readinessPanel.includes('Calculating…'), 'Readiness status copy must explain retries and pending estimates in plain language');
+assert(crawlInventory.includes('Estimate pending first run') && internalLinks.includes('Estimate pending first run'), 'Queue estimates must explain why an estimate is unavailable');
+assert(appStatusPanels.includes('Choose your GA4 property') && appStatusPanels.includes('none clearly match the active workspace site'), 'GA4 selection mismatches must ask the user to choose a mapped property instead of showing unrelated data');
+assert(siteSelection.includes('workspaceSiteUrls') && siteSelection.includes('cleanSiteIdentity(mappedSite)'), 'GA4 property selection must honor explicit workspace mappings before display-name heuristics');
+assert(ga4Service.includes('workspaceSiteUrls') && googleRoute.includes('workspaceSiteUrls'), 'GA4 property responses must carry workspace mappings to the selector');
 
 const appToolbar = read('src/components/app/AppToolbar.tsx');
 const ga4ReportPaths = [
