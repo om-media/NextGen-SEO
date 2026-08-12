@@ -423,6 +423,7 @@ export function GscDataGrid({
   const getIntentClassName = (intent: string | null) => {
     if (intent === "Navigational") return "bg-[#EAF4EC] text-[#0F3D2E] hover:bg-[#EAF4EC]";
     if (intent === "Commercial" || intent === "Transactional") return "bg-[#FFF2E8] text-[#C2410C] hover:bg-[#FFF2E8]";
+    if (intent === "Unclassified") return "bg-[#F3F4F6] text-[#647067] hover:bg-[#F3F4F6]";
     return "bg-[#EAF2FF] text-[#2563EB] hover:bg-[#EAF2FF]";
   };
 
@@ -763,7 +764,7 @@ export function GscDataGrid({
                         {dimension === "query" && (
                           <TableCell>
                             <Badge variant="secondary" className={`font-normal ${getIntentClassName(intent)}`}>
-                              {intent === "Commercial" ? "Transactional" : intent}
+                              {intent}
                             </Badge>
                           </TableCell>
                         )}

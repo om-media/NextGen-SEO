@@ -2,6 +2,7 @@ import type { GscSearchAnalyticsRow } from "@/src/services/gscService";
 
 export type SortColumn = "key" | "intent" | "clicks" | "impressions" | "ctr" | "position" | "queryCount" | null;
 export type GridDimension = "query" | "page" | "country";
+export type QueryIntent = "Navigational" | "Commercial" | "Informational" | "Unclassified";
 
 export type GridRow = GscSearchAnalyticsRow & {
   compareClicks?: number;
@@ -22,31 +23,86 @@ export type GridFilters = {
   searchTerm: string;
 };
 
-export function classifyIntent(query: string, siteUrl: string) {
-  const normalizedQuery = String(query || "").toLowerCase();
-  let brand = "";
+function normalizeIntentText(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function getSiteHostname(siteUrl: string) {
+  const rawValue = String(siteUrl || "").trim().replace(/^sc-domain:/i, "");
+  if (!rawValue) return "";
 
   try {
-    const cleanUrl = siteUrl.replace("sc-domain:", "").replace("https://", "").replace("http://", "").replace("www.", "");
-    brand = cleanUrl.split(".")[0].toLowerCase();
+    const parsed = new URL(rawValue.includes("://") ? rawValue : `https://${rawValue}`);
+    return parsed.hostname.replace(/^www\./i, "").toLowerCase();
   } catch {
-    // Ignore brand extraction issues and fall back to keyword signals.
+    return rawValue.split(/[/?#]/, 1)[0].replace(/^www\./i, "").toLowerCase();
   }
+}
 
-  const navWords = ["login", "signin", "sign up", "contact", "support", "dashboard", "portal"];
-  if (navWords.some((word) => normalizedQuery.includes(word))) return "Navigational";
+function matchesIntentSignal(queryText: string, signal: string) {
+  const normalizedSignal = normalizeIntentText(signal);
+  if (!normalizedSignal) return false;
+  if (normalizedSignal.includes(" ")) return ` ${queryText} `.includes(` ${normalizedSignal} `);
+  return new Set(queryText.split(" ")).has(normalizedSignal);
+}
 
-  const commercialWords = ["buy", "price", "cheap", "software", "tool", "review", "vs", "compare", "best", "top", "discount", "coupon", "order", "purchase", "hire", "services", "cost", "pricing", "deal", "app", "platform"];
-  if (commercialWords.some((word) => normalizedQuery.includes(word))) return "Commercial";
+function hasAnyIntentSignal(queryText: string, signals: string[]) {
+  return signals.some((signal) => matchesIntentSignal(queryText, signal));
+}
 
-  const informationalWords = ["how", "what", "guide", "tutorial", "why", "when", "where", "who", "tips", "ideas", "examples", "learn", "meaning", "definition", "can", "is", "does", "ways", "benefits", "history", "news", "free"];
-  if (informationalWords.some((word) => normalizedQuery.includes(word))) return "Informational";
+/**
+ * Classifies a query with transparent, deterministic heuristics. This is not
+ * an ML prediction: explicit query signals win, then site identity, and an
+ * ambiguous query remains Unclassified instead of being mislabeled.
+ */
+export function classifyIntent(query: string, siteUrl: string): QueryIntent {
+  const rawQuery = String(query || "");
+  const normalizedQuery = normalizeIntentText(rawQuery);
+  if (!normalizedQuery) return "Unclassified";
 
-  if (brand && (normalizedQuery === brand || normalizedQuery.includes(brand) || normalizedQuery.includes(brand.replace(/-/g, " ")))) {
-    return "Navigational";
-  }
+  const commercialWords = [
+    "buy", "price", "cheap", "software", "tool", "review", "vs", "compare", "best", "top",
+    "discount", "coupon", "order", "purchase", "hire", "service", "services", "cost", "pricing",
+    "deal", "app", "platform", "booking", "book", "reserve", "reservation", "ticket", "tickets", "free",
+  ];
+  const localCommercialWords = [
+    "visit", "open", "hours", "location", "directions", "near", "nearby", "accommodation", "hotel",
+    "rental", "rent", "tour", "tours", "attractions", "activities", "camping",
+    "adventure park", "adrenalinski park", "things to do", "water park", "theme park",
+  ];
+  const informationalWords = [
+    "how", "what", "guide", "tutorial", "why", "when", "where", "who", "tips", "ideas", "examples",
+    "learn", "meaning", "definition", "can", "is", "are", "does", "ways", "benefits", "history", "news",
+  ];
+  const navWords = ["login", "signin", "sign in", "sign up", "contact", "support", "dashboard", "portal"];
 
-  return "Informational";
+  // A purchase/decision signal is more useful than the brand name alone:
+  // “brand tickets” is commercial, while “where is brand?” is informational.
+  if (hasAnyIntentSignal(normalizedQuery, commercialWords)) return "Commercial";
+  if (rawQuery.includes("?") || hasAnyIntentSignal(normalizedQuery, informationalWords)) return "Informational";
+  if (hasAnyIntentSignal(normalizedQuery, navWords)) return "Navigational";
+  if (hasAnyIntentSignal(normalizedQuery, localCommercialWords)) return "Commercial";
+
+  const hostname = getSiteHostname(siteUrl);
+  const hostLabels = hostname.split(".").filter((label) => label && !["com", "net", "org", "io", "co", "uk", "de", "fr", "es", "it", "nl", "au", "ca", "us", "shop", "store", "online", "site"].includes(label));
+  const compactQuery = normalizedQuery.replace(/\s+/g, "");
+  const identityCandidates = hostLabels.flatMap((label) => [label, label.replace(/[-_]/g, " ")]);
+  const isSiteQuery = identityCandidates.some((candidate) => {
+    const compactCandidate = normalizeIntentText(candidate).replace(/\s+/g, "");
+    if (compactCandidate.length < 5) return false;
+    return compactQuery.includes(compactCandidate) || (
+      compactCandidate.includes(compactQuery) && compactQuery.length >= Math.max(5, Math.ceil(compactCandidate.length * 0.55))
+    );
+  });
+
+  if (isSiteQuery) return "Navigational";
+  return "Unclassified";
 }
 
 export function filterGridData(data: GridRow[], dimension: GridDimension, filters: GridFilters, siteUrl: string) {

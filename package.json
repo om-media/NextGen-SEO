@@ -44,7 +44,7 @@
     "check:warehouse-daily-lifecycle": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-daily-lifecycle.ts",
     "check:warehouse-runtime-health": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-runtime-health.ts",
     "check:warehouse-route-lifecycle": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-route-lifecycle.ts",
-    "check:selector-stability": "node scripts/check-selector-stability.mjs && tsx components/dashboard/rawDataRequestFence.test.ts && tsx components/dashboard/crawlInventoryRequestFence.test.ts && tsx components/dashboard/visualSemanticsRequestFence.test.ts",
+    "check:selector-stability": "node scripts/check-selector-stability.mjs && tsx components/dashboard/rawDataRequestFence.test.ts && tsx components/dashboard/crawlInventoryRequestFence.test.ts && tsx components/dashboard/visualSemanticsRequestFence.test.ts && tsx components/dashboard/gscGridUtils.test.ts",
     "check:workspace-defaults": "node scripts/check-workspace-defaults.mjs",
     "check:ai-provider-readiness": "tsx --tsconfig tsconfig.json scripts/check-ai-provider-readiness.ts",
     "check:google-token-lifecycle": "tsx --tsconfig tsconfig.server.json scripts/check-google-token-lifecycle.ts",

@@ -97,6 +97,7 @@ export function GscFilterToolbar({
                 <SelectItem value="commercial">Commercial</SelectItem>
                 <SelectItem value="informational">Informational</SelectItem>
                 <SelectItem value="navigational">Navigational</SelectItem>
+                <SelectItem value="unclassified">Unclassified</SelectItem>
               </SelectContent>
             </Select>
           )}
