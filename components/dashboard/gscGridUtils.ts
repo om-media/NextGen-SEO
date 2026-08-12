@@ -67,9 +67,11 @@ export function classifyIntent(query: string, siteUrl: string): QueryIntent {
   if (!normalizedQuery) return "Unclassified";
 
   const commercialWords = [
-    "buy", "price", "cheap", "software", "tool", "review", "vs", "compare", "best", "top",
+    "buy", "price", "cheap", "software", "tool", "review", "reviews", "vs", "compare", "best", "top",
     "discount", "coupon", "order", "purchase", "hire", "service", "services", "cost", "pricing",
     "deal", "app", "platform", "booking", "book", "reserve", "reservation", "ticket", "tickets", "free",
+    "cijena", "ulaznica", "ulaznice", "karte", "karta", "biglietti", "biglietto", "entradas", "entrada",
+    "billet", "billets", "precio", "prezzo", "rezervacija", "rezervacije", "karten", "eintritt",
   ];
   const localCommercialWords = [
     "visit", "open", "hours", "location", "directions", "near", "nearby", "accommodation", "hotel",
@@ -79,6 +81,7 @@ export function classifyIntent(query: string, siteUrl: string): QueryIntent {
   const informationalWords = [
     "how", "what", "guide", "tutorial", "why", "when", "where", "who", "tips", "ideas", "examples",
     "learn", "meaning", "definition", "can", "is", "are", "does", "ways", "benefits", "history", "news",
+    "kako", "zasto", "zašto", "kada", "gdje", "gde", "radno vrijeme", "radno vreme", "vrijeme", "vreme", "weather",
   ];
   const navWords = ["login", "signin", "sign in", "sign up", "contact", "support", "dashboard", "portal"];
 
@@ -118,7 +121,7 @@ export function filterGridData(data: GridRow[], dimension: GridDimension, filter
 
     if (dimension === "query") {
       if (filters.intentFilter !== "all") {
-        const intent = classifyIntent(rowKey, siteUrl).toLowerCase();
+        const intent = (row.intent || classifyIntent(rowKey, siteUrl)).toLowerCase();
         if (intent !== filters.intentFilter) {
           return false;
         }
@@ -162,8 +165,8 @@ export function sortGridData(data: GridRow[], sortColumn: SortColumn, sortDirect
       valueA = typeof a.keys?.[0] === "string" ? a.keys[0] : "";
       valueB = typeof b.keys?.[0] === "string" ? b.keys[0] : "";
     } else if (sortColumn === "intent") {
-      valueA = classifyIntent(typeof a.keys?.[0] === "string" ? a.keys[0] : "", siteUrl);
-      valueB = classifyIntent(typeof b.keys?.[0] === "string" ? b.keys[0] : "", siteUrl);
+      valueA = a.intent || classifyIntent(typeof a.keys?.[0] === "string" ? a.keys[0] : "", siteUrl);
+      valueB = b.intent || classifyIntent(typeof b.keys?.[0] === "string" ? b.keys[0] : "", siteUrl);
     } else if (sortColumn === "queryCount") {
       valueA = a.queryCount || 0;
       valueB = b.queryCount || 0;

@@ -439,6 +439,24 @@ const commonSchemaSql = `
     rowsSynced INTEGER DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS gsc_query_intent_cache (
+    ownerId TEXT,
+    siteUrl TEXT,
+    query TEXT,
+    modelVersion TEXT,
+    intent TEXT,
+    confidence REAL DEFAULT 0,
+    reason TEXT,
+    status TEXT DEFAULT 'pending',
+    attemptCount INTEGER DEFAULT 0,
+    nextRunAt TEXT,
+    lastError TEXT,
+    createdAt TEXT,
+    updatedAt TEXT,
+    classifiedAt TEXT,
+    PRIMARY KEY (ownerId, siteUrl, query, modelVersion)
+  );
+
   CREATE TABLE IF NOT EXISTS warehouse_runtime_heartbeats (
     role TEXT PRIMARY KEY,
     processId TEXT,
@@ -866,6 +884,7 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site ON warehouse_jobs(ownerId, siteUrl, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_target_status ON warehouse_jobs(ownerId, siteUrl, targetDate, status);
   CREATE INDEX IF NOT EXISTS idx_warehouse_jobs_owner_site_range_status ON warehouse_jobs(ownerId, siteUrl, targetStartDate, targetDate, status);
+  CREATE INDEX IF NOT EXISTS idx_gsc_query_intent_cache_queue ON gsc_query_intent_cache(ownerId, siteUrl, modelVersion, status, nextRunAt, updatedAt);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouse_jobs_one_running_per_site ON warehouse_jobs(ownerId, siteUrl) WHERE status = 'running';
   CREATE INDEX IF NOT EXISTS idx_crawl_jobs_owner_site_status ON crawl_jobs(ownerId, siteUrl, status, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_crawl_jobs_queue ON crawl_jobs(status, nextRunAt, updatedAt);

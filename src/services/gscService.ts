@@ -17,6 +17,9 @@ export interface GscSearchAnalyticsRow {
   page?: string;
   query?: string;
   queryCount?: number;
+  intent?: "Navigational" | "Commercial" | "Informational" | "Unclassified";
+  intentConfidence?: number;
+  intentReason?: string;
 }
 
 export interface GscSearchAnalyticsResponse {

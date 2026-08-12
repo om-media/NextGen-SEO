@@ -33,6 +33,7 @@ import {
   queueWarehouseLlmRangeJob,
   queueWarehouseSyncJob,
 } from '../services/warehouseJobs.js';
+import { intentClassifierModelVersion } from '../services/intentClassificationWarehouse.js';
 import { canAccessGa4Property, canAccessSite } from '../accessControl.js';
 import { getBingCacheStatus } from '../services/bingWarehouse.js';
 import { resolveWorkspaceGa4PropertyStartDate, upsertWorkspaceGa4Mapping } from '../services/ga4Mappings.js';
@@ -3214,6 +3215,27 @@ export function registerWarehouseRoutes(app: Express, db: AppDatabase) {
           position: toFiniteNumber(r.position),
         };
       });
+
+      if (hasQuery && rows.length > 0) {
+        const queryKeys = [...new Set(rows.map((row: any) => row.query).filter((query: unknown): query is string => typeof query === 'string' && query.length > 0))];
+        if (queryKeys.length > 0) {
+          const placeholders = queryKeys.map(() => '?').join(', ');
+          const cachedIntentRows = await db.all<{ query: string; intent: string; confidence: number; reason: string | null }>(
+            `SELECT query, intent, confidence, reason
+             FROM gsc_query_intent_cache
+             WHERE ownerId = ? AND siteUrl = ? AND modelVersion = ? AND status = 'completed'
+               AND query IN (${placeholders})`,
+            [ownerId, siteUrl, intentClassifierModelVersion(), ...queryKeys],
+          );
+          const cachedByQuery = new Map(cachedIntentRows.map((row) => [row.query, row]));
+          rows = rows.map((row: any) => {
+            const cached = cachedByQuery.get(row.query);
+            return cached
+              ? { ...row, intent: cached.intent, intentConfidence: Number(cached.confidence || 0), intentReason: cached.reason || undefined }
+              : row;
+          });
+        }
+      }
 
       if (shouldIncludeTotal) {
         res.json(totalRowCount === undefined ? { rows } : { rows, totalRowCount });

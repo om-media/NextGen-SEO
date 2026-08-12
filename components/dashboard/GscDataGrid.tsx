@@ -175,7 +175,7 @@ export function GscDataGrid({
   );
   const exportableRows = sortedData.map((row) => ({
     ...row,
-    intentLabel: dimension === "query" ? classifyIntent(row.keys[0], siteUrl) : undefined,
+    intentLabel: dimension === "query" ? (row.intent || classifyIntent(row.keys[0], siteUrl)) : undefined,
   }));
 
   const totalPages = Math.ceil(filteredData.length / pageSize);
@@ -695,7 +695,7 @@ export function GscDataGrid({
                 ) : (
                   sortedData.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((row, i) => {
                     const key = row.keys[0];
-                    const intent = dimension === "query" ? classifyIntent(key, siteUrl) : null;
+                    const intent = dimension === "query" ? (row.intent || classifyIntent(key, siteUrl)) : null;
                     const pageDisplay = dimension === "page" ? formatPageCell(key) : null;
                     const hasExactQueryCount = typeof row.queryCount === "number" && Number.isFinite(row.queryCount);
 

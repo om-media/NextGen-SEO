@@ -9,6 +9,11 @@ import {
 } from './ga4Mappings.js';
 import { refreshGscMonthlySummariesForRange } from './gscMonthlySummaries.js';
 import { googleApiFetchJson } from './googleAuth.js';
+import {
+  INTENT_CLASSIFICATION_JOB_TYPE,
+  intentClassifierModelVersion,
+  runIntentClassificationWarehouseJob,
+} from './intentClassificationWarehouse.js';
 
 type WarehouseJob = {
   attemptCount: number | null;
@@ -60,7 +65,7 @@ function combineSyncResults(results: WarehouseSyncResult[], metrics?: Record<str
   };
 }
 
-type WarehouseSyncSource = 'core' | 'gsc' | 'ga4-pages' | 'ga4-dimensions' | 'ga4-llm';
+type WarehouseSyncSource = 'core' | 'gsc' | 'ga4-pages' | 'ga4-dimensions' | 'ga4-llm' | 'intent';
 
 class WarehouseSyncPhaseError extends Error {
   readonly syncSource: WarehouseSyncSource;
@@ -85,6 +90,7 @@ function failedSourceForJob(job: WarehouseJob, error: unknown): WarehouseSyncSou
   if (job.jobType === 'ga4-page-range-sync') return 'ga4-pages';
   if (job.jobType === 'ga4-dimension-range-sync') return 'ga4-dimensions';
   if (job.jobType === 'ga4-llm-range-sync' || job.jobType === 'ga4-llm-sync') return 'ga4-llm';
+  if (job.jobType === INTENT_CLASSIFICATION_JOB_TYPE) return 'intent';
   return 'core';
 }
 const prepareWarehouseStatement = (db: AppDatabase, sql: string) => (db.dialect === 'sqlite' ? db.prepare(sql) : null);
@@ -1401,7 +1407,21 @@ async function executeWarehouseJob(db: AppDatabase, job: WarehouseJob, lease: Re
   let shouldUpdateWarehouseSyncStatus = true;
   const propertyId = await resolveActiveGa4PropertyForSite(db, job);
   const scopedJob = propertyId === job.propertyId ? job : { ...job, propertyId };
-  if (job.jobType === 'ga4-page-range-sync') {
+  if (job.jobType === INTENT_CLASSIFICATION_JOB_TYPE) {
+    shouldUpdateWarehouseSyncStatus = false;
+    const intentResult = await runWarehouseSyncPhase('intent', () => runIntentClassificationWarehouseJob(db, {
+      modelVersion: intentClassifierModelVersion(),
+      ownerId: job.ownerId,
+      siteUrl: job.siteUrl,
+    }));
+    syncResult = {
+      apiMs: 0,
+      metrics: { ...intentResult, source: 'intent' },
+      rows: { intentQueries: intentResult.processed },
+      rowsSynced: intentResult.processed,
+      writeMs: 0,
+    };
+  } else if (job.jobType === 'ga4-page-range-sync') {
     shouldUpdateWarehouseSyncStatus = false;
     syncResult = propertyId
       ? await runWarehouseSyncPhase('ga4-pages', () => syncGa4PageRange(db, scopedJob, jobStartDate, jobEndDate))
@@ -1581,7 +1601,8 @@ export async function claimNextWarehouseJob(db: AppDatabase) {
         WHEN 'ga4-dimension-range-sync' THEN 3
         WHEN 'ga4-llm-range-sync' THEN 4
         WHEN 'ga4-llm-sync' THEN 5
-        ELSE 6
+        WHEN 'intent-classification-sync' THEN 6
+        ELSE 7
       END ASC,
       queued.nextRunAt ASC,
       queued.targetDate DESC,
@@ -1628,7 +1649,9 @@ async function failOrRetry(db: AppDatabase, job: WarehouseJob, lease: ReturnType
     if (failedSource === 'gsc') {
       await markGscDatasetCoverageError(db, job, error);
     }
-    await markGa4DatasetCoverageError(db, job, failedSource, error);
+    if (failedSource !== 'intent') {
+      await markGa4DatasetCoverageError(db, job, failedSource, error);
+    }
   } catch (coverageError) {
     console.error('[warehouse] Failed to persist dataset coverage error:', coverageError);
   }
@@ -2335,6 +2358,17 @@ export async function queueWarehouseGa4DimensionRangeJob(db: AppDatabase, input:
   });
 }
 
+export async function queueWarehouseIntentClassificationJob(db: AppDatabase, input: { dedupeCompleted?: boolean; ownerId: string; priority?: number; siteUrl: string; targetDate: string }) {
+  return queueWarehouseSyncJob(db, {
+    dedupeCompleted: input.dedupeCompleted,
+    jobType: INTENT_CLASSIFICATION_JOB_TYPE,
+    ownerId: input.ownerId,
+    priority: input.priority,
+    siteUrl: input.siteUrl,
+    targetDate: input.targetDate,
+  });
+}
+
 export async function listWarehouseJobs(db: AppDatabase, ownerId: string, siteUrl: string, limit = 20) {
   return db.all<WarehouseJob>("SELECT * FROM warehouse_jobs WHERE ownerId = ? AND siteUrl = ? AND status != 'superseded' ORDER BY updatedAt DESC LIMIT ?", [ownerId, siteUrl, limit]);
 }
@@ -2504,6 +2538,12 @@ export async function runWarehouseDailySchedulerTick(db: AppDatabase) {
         await queueWarehouseSyncJob(db, {
           ownerId: user.id,
           propertyId,
+          siteUrl,
+          targetDate,
+        });
+        await queueWarehouseIntentClassificationJob(db, {
+          dedupeCompleted: false,
+          ownerId: user.id,
           siteUrl,
           targetDate,
         });
