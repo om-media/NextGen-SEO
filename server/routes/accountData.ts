@@ -10,6 +10,7 @@ import { queueWarehouseBootstrapJobs } from '../services/warehouseJobs.js';
 import { canAccessSite } from '../accessControl.js';
 import { ensureWorkspaceGa4PropertyMetadata, resolveWorkspaceGa4Property, upsertWorkspaceGa4Mapping, verifyGoogleGa4PropertyAccess } from '../services/ga4Mappings.js';
 import { getInitialRegistrationTier } from '../services/registrationTier.js';
+import { getGoogleSearchUpdateAnnotations } from '../services/googleSearchUpdates.js';
 
 export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
@@ -396,10 +397,12 @@ export function registerAccountDataRoutes(app: Express, db: AppDatabase) {
         return res.status(403).json({ error: 'This site is not activated for your workspace.' });
       }
 
-      const annotations = siteUrl && siteUrl !== 'null'
+      const userAnnotations = siteUrl && siteUrl !== 'null'
         ? await db.all('SELECT * FROM annotations WHERE userId = ? AND (siteUrl = ? OR siteUrl IS NULL) ORDER BY date DESC', [req.params.userId, siteUrl as string])
         : await db.all('SELECT * FROM annotations WHERE userId = ? ORDER BY date DESC', [req.params.userId]);
-      res.json(annotations);
+      const systemAnnotations = await getGoogleSearchUpdateAnnotations();
+      const allAnnotations = [...userAnnotations, ...systemAnnotations] as Array<{ date: string }>;
+      res.json(allAnnotations.sort((left, right) => String(right.date).localeCompare(String(left.date))));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

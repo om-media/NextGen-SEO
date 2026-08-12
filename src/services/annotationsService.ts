@@ -11,7 +11,9 @@ export interface Annotation {
   createdAt: string;
 }
 
-const SYSTEM_ANNOTATIONS: Annotation[] = [
+const SYSTEM_ANNOTATIONS_FALLBACK: Annotation[] = [
+  { id: 'sys-2026-06-spam', userId: 'system', siteUrl: null, date: '2026-06-24', title: 'June 2026 Spam Update', description: 'Google June 2026 spam update rollout began. It applies globally and to all languages.', type: 'system', createdAt: '' },
+  { id: 'sys-2026-05-core', userId: 'system', siteUrl: null, date: '2026-05-21', title: 'May 2026 Core Update', description: 'Google May 2026 core update rollout began.', type: 'system', createdAt: '' },
   { id: 'sys-2026-03-core', userId: 'system', siteUrl: null, date: '2026-03-27', title: 'March 2026 Core Update', description: 'Google March 2026 core update rollout began.', type: 'system', createdAt: '' },
   { id: 'sys-2026-03-spam', userId: 'system', siteUrl: null, date: '2026-03-24', title: 'March 2026 Spam Update', description: 'Google March 2026 spam update rollout began.', type: 'system', createdAt: '' },
   { id: 'sys-2026-02-discover', userId: 'system', siteUrl: null, date: '2026-02-05', title: 'February 2026 Discover Update', description: 'Google February 2026 Discover update rollout began.', type: 'system', createdAt: '' },
@@ -33,8 +35,11 @@ export class AnnotationsService {
     if (!response.ok) {
       throw new Error('Failed to fetch annotations');
     }
-    const userAnnotations = await response.json();
-    return [...userAnnotations, ...SYSTEM_ANNOTATIONS].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const serverAnnotations = await response.json();
+    const annotations = Array.isArray(serverAnnotations) ? serverAnnotations as Annotation[] : [];
+    const hasSystemAnnotations = annotations.some((annotation) => annotation.type === 'system');
+    const fallbackAnnotations = hasSystemAnnotations ? [] : SYSTEM_ANNOTATIONS_FALLBACK;
+    return [...annotations, ...fallbackAnnotations].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 
   static async addAnnotation(userId: string, annotation: Partial<Annotation>): Promise<void> {

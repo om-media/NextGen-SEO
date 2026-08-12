@@ -110,6 +110,12 @@ export function AnnotationsSettings({
                 <Switch checked={showSystemAnnotations} onCheckedChange={setShowSystemAnnotations} id="show-sys" />
               </div>
             </div>
+            <p className="-mt-2 text-xs leading-5 text-muted-foreground">
+              Syncs automatically from Google&apos;s public ranking feed. Markers appear on the chart only when the update date falls inside the selected date range.{' '}
+              <a className="font-medium text-primary underline-offset-2 hover:underline" href="https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history?showAll=true" target="_blank" rel="noreferrer">
+                View Google&apos;s update history
+              </a>
+            </p>
             <div className="min-w-0 rounded-2xl border border-[#E6ECE8] bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -195,7 +201,7 @@ export function AnnotationsSettings({
               </div>
             {systemAnnotations.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-[#D9E5DE] bg-white p-8 text-center text-sm text-muted-foreground">
-                No annotations found for this view.
+                No Google updates are recorded for this workspace yet.
               </div>
             ) : (
               systemAnnotations.map(ann => (

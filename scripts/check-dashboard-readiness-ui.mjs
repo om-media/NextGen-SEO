@@ -19,6 +19,9 @@ const ga4Service = read('src/services/ga4Service.ts');
 const googleRoute = read('server/routes/google.ts');
 const table = read('components/ui/table.tsx');
 const blendedPages = read('components/dashboard/BlendedPagesView.tsx');
+const annotationsService = read('src/services/annotationsService.ts');
+const annotationsRoute = read('server/routes/accountData.ts');
+const googleSearchUpdates = read('server/services/googleSearchUpdates.ts');
 
 assert(header.includes('import { DataImportStatusPanel }'), 'The app header must own the compact source-data readiness control');
 assert(header.includes('<DataImportStatusPanel') && header.includes('compact'), 'The app header must render the compact readiness control');
@@ -55,6 +58,9 @@ assert(siteSelection.includes('workspaceSiteUrls') && siteSelection.includes('cl
 assert(ga4Service.includes('workspaceSiteUrls') && googleRoute.includes('workspaceSiteUrls'), 'GA4 property responses must carry workspace mappings to the selector');
 assert(table.includes('uppercase tracking-[0.055em]') && table.includes('nth-child(even)') && table.includes('hover:bg-primary/[0.045]'), 'Shared tables must provide unified headers, zebra rhythm, and hover affordances');
 assert(blendedPages.includes('text-[11px] font-semibold uppercase tracking-[0.055em]') && blendedPages.includes('bg-muted/[0.28]'), 'Blended tables must use the shared table visual language');
+assert(annotationsRoute.includes('getGoogleSearchUpdateAnnotations') && annotationsRoute.includes('systemAnnotations'), 'Annotations API must include server-fetched Google update markers');
+assert(googleSearchUpdates.includes('https://status.search.google.com/incidents.json') && googleSearchUpdates.includes('parseGoogleSearchIncidents'), 'Google update feed must use the official status JSON feed with a parser');
+assert(annotationsService.includes('SYSTEM_ANNOTATIONS_FALLBACK') && annotationsService.includes('hasSystemAnnotations'), 'Annotation client must keep a safe fallback without duplicating server-fetched updates');
 
 const appToolbar = read('src/components/app/AppToolbar.tsx');
 const ga4ReportPaths = [
