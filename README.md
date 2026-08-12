@@ -30,10 +30,6 @@ This repository is the public AGPL-3.0 core. It is self-hostable without a hoste
 
 <br>
 
-## Open source and hosted SaaS
-
-This repository is the public AGPL-3.0 core. It is self-hostable without a hosted account, and public releases continue to receive bug fixes, UX polish, accessibility, security, reliability, and documentation improvements. A separate hosted-only SaaS may provide managed infrastructure, hosted AI, automation, backups, quotas, billing, monitoring, and support; SaaS-only implementation is not included in this repository. See the [open-source and SaaS boundary](docs/open-source-saas-boundary.md) and [control-plane contract](docs/contracts/saas-api-v1.md).
-
 ## Features
 
 - **SEO data warehouse**: persist GSC, GA4, Bing, crawl, rank tracking, and workspace-site data in your own database.
