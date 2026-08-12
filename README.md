@@ -24,7 +24,15 @@ NextGen SEO is a full-stack SEO analytics and monitoring platform for Google Sea
 
 Built-in data warehouse: No more 16-month/1k rows limit. Sync your (unlimited) data into your own SQLite or PostgreSQL database, keep it long-term, and report from saved history instead of depending on live API calls, export limits, or short retention windows.
 
+## Open source and hosted SaaS
+
+This repository is the public AGPL-3.0 core. It is self-hostable without a hosted account, and public releases continue to receive bug fixes, UX polish, accessibility, security, reliability, and documentation improvements. A separate hosted-only SaaS may provide managed infrastructure, hosted AI, automation, backups, quotas, billing, monitoring, and support; SaaS-only implementation is not included in this repository. See the [open-source and SaaS boundary](docs/open-source-saas-boundary.md) and [control-plane contract](docs/contracts/saas-api-v1.md).
+
 <br>
+
+## Open source and hosted SaaS
+
+This repository is the public AGPL-3.0 core. It is self-hostable without a hosted account, and public releases continue to receive bug fixes, UX polish, accessibility, security, reliability, and documentation improvements. A separate hosted-only SaaS may provide managed infrastructure, hosted AI, automation, backups, quotas, billing, monitoring, and support; SaaS-only implementation is not included in this repository. See the [open-source and SaaS boundary](docs/open-source-saas-boundary.md) and [control-plane contract](docs/contracts/saas-api-v1.md).
 
 ## Features
 
