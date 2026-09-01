@@ -46,6 +46,7 @@ const migrations: TableMigration[] = [
   { table: 'warehouse_dataset_coverage', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'dataset'] },
   { table: 'gsc_site_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date'] },
   { table: 'gsc_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
+  { table: 'gsc_query_intent_cache', conflictColumns: ['ownerId', 'siteUrl', 'query', 'modelVersion'] },
   { table: 'gsc_country_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'country'] },
   { table: 'gsc_page_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'pageKey'] },
   { table: 'gsc_page_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'page', 'query'] },
