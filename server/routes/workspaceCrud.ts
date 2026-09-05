@@ -2,7 +2,6 @@ import type { Express } from 'express';
 import type { AppDatabase } from '../database.js';
 import { requireAuth } from '../auth.js';
 import type { AuthedRequest } from '../types.js';
-import { canAccessSite } from '../accessControl.js';
 import { isNonEmptyString } from '../validation.js';
 
 function parseStringArray(value: unknown) {
@@ -24,6 +23,8 @@ const toNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const placeholdersFor = (values: unknown[]) => values.map(() => '?').join(', ');
+
 export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
   const authRequired = requireAuth(db);
 
@@ -42,20 +43,33 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
       ]);
 
       const rows = [];
-      for (const siteUrl of sites) {
-        const isAccessibleSite = await canAccessSite(db, ownerId, siteUrl);
-        const warehouse = await db.get<any>(`
-          SELECT
+      if (sites.length === 0) {
+        return res.json({
+          ga4PropertyId: user.activatedGa4PropertyId || null,
+          sites: rows,
+        });
+      }
+
+      const sitePlaceholders = placeholdersFor(sites);
+      const siteParams = [ownerId, ...sites];
+      const [warehouseRows, syncRows, importJobStatsRows, latestImportRows, latestCrawlRows] = await Promise.all([
+        db.all<any>(`
+          SELECT siteUrl,
             MIN(date) AS earliestMetricDate,
             MAX(date) AS lastMetricDate,
             COUNT(DISTINCT date) AS metricDayCount,
             COUNT(*) AS rowCount
           FROM gsc_site_metrics
-          WHERE ownerId = ? AND siteUrl = ?
-        `, [ownerId, siteUrl]);
-        const syncStatus = await db.get<any>('SELECT * FROM warehouse_sync_status WHERE ownerId = ? AND siteUrl = ?', [ownerId, siteUrl]);
-        const importJobs = await db.get<any>(`
-          SELECT
+          WHERE ownerId = ? AND siteUrl IN (${sitePlaceholders})
+          GROUP BY siteUrl
+        `, siteParams),
+        db.all<any>(`
+          SELECT siteUrl, status, lastSyncDate, lastUpdated
+          FROM warehouse_sync_status
+          WHERE ownerId = ? AND siteUrl IN (${sitePlaceholders})
+        `, siteParams),
+        db.all<any>(`
+          SELECT siteUrl,
             SUM(CASE WHEN status != 'superseded' THEN 1 ELSE 0 END) AS total,
             SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
             SUM(CASE WHEN status = 'retrying' THEN 1 ELSE 0 END) AS retrying,
@@ -64,36 +78,68 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
             SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
             MAX(updatedAt) AS latestUpdatedAt
           FROM warehouse_jobs
-          WHERE ownerId = ? AND siteUrl = ?
+          WHERE ownerId = ? AND siteUrl IN (${sitePlaceholders})
             AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
-        `, [ownerId, siteUrl]);
-        const latestImportJob = await db.get<any>(`
-          SELECT status, targetStartDate, targetDate, rowsSynced, lastError, updatedAt
-          FROM warehouse_jobs
-          WHERE ownerId = ? AND siteUrl = ?
-            AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
-            AND status != 'superseded'
-          ORDER BY updatedAt DESC
-          LIMIT 1
-        `, [ownerId, siteUrl]);
-        const latestCrawl = await db.get<any>(`
-          SELECT *
-          FROM crawl_jobs
-          WHERE ownerId = ? AND siteUrl = ?
-          ORDER BY COALESCE(completedAt, updatedAt, startedAt) DESC
-          LIMIT 1
-        `, [ownerId, siteUrl]);
-        const crawlSummary = latestCrawl
-          ? await db.get<any>(`
-            SELECT
+          GROUP BY siteUrl
+        `, siteParams),
+        db.all<any>(`
+          SELECT siteUrl, status, targetStartDate, targetDate, rowsSynced, lastError, updatedAt
+          FROM (
+            SELECT siteUrl, status, targetStartDate, targetDate, rowsSynced, lastError, updatedAt,
+              ROW_NUMBER() OVER (PARTITION BY siteUrl ORDER BY updatedAt DESC, id DESC) AS row_number
+            FROM warehouse_jobs
+            WHERE ownerId = ? AND siteUrl IN (${sitePlaceholders})
+              AND jobType IN ('daily-sync', 'core-range-sync', 'ga4-page-range-sync', 'ga4-dimension-range-sync', 'ga4-llm-range-sync')
+              AND status != 'superseded'
+          ) latest
+          WHERE row_number = 1
+        `, siteParams),
+        db.all<any>(`
+          SELECT siteUrl, id, completedAt, crawledCount, discoveredCount, errorCount, lastError,
+            renderMode, startedAt, status, updatedAt
+          FROM (
+            SELECT siteUrl, id, completedAt, crawledCount, discoveredCount, errorCount, lastError,
+              renderMode, startedAt, status, updatedAt,
+              ROW_NUMBER() OVER (
+                PARTITION BY siteUrl
+                ORDER BY COALESCE(completedAt, updatedAt, startedAt) DESC, id DESC
+              ) AS row_number
+            FROM crawl_jobs
+            WHERE ownerId = ? AND siteUrl IN (${sitePlaceholders})
+          ) latest
+          WHERE row_number = 1
+        `, siteParams),
+      ]);
+
+      const latestCrawlPairs = latestCrawlRows.map((crawl) => [crawl.siteUrl, crawl.id]);
+      const crawlSummaryRows = latestCrawlPairs.length > 0
+        ? await db.all<any>(`
+            SELECT siteUrl, jobId,
               COUNT(*) AS totalPages,
               SUM(CASE WHEN statusCode BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS successPages,
               SUM(CASE WHEN statusCode >= 400 OR statusCode IS NULL THEN 1 ELSE 0 END) AS errorPages,
               SUM(CASE WHEN noindex = 1 THEN 1 ELSE 0 END) AS noindexPages
             FROM crawl_pages
-            WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
-          `, [ownerId, siteUrl, latestCrawl.id])
-          : null;
+            WHERE ownerId = ?
+              AND (${latestCrawlPairs.map(() => '(siteUrl = ? AND jobId = ?)').join(' OR ')})
+            GROUP BY siteUrl, jobId
+          `, [ownerId, ...latestCrawlPairs.flat()])
+        : [];
+
+      const warehouseBySite = new Map(warehouseRows.map((row) => [row.siteUrl, row]));
+      const syncBySite = new Map(syncRows.map((row) => [row.siteUrl, row]));
+      const importStatsBySite = new Map(importJobStatsRows.map((row) => [row.siteUrl, row]));
+      const latestImportBySite = new Map(latestImportRows.map((row) => [row.siteUrl, row]));
+      const latestCrawlBySite = new Map(latestCrawlRows.map((row) => [row.siteUrl, row]));
+      const crawlSummaryBySite = new Map(crawlSummaryRows.map((row) => [row.siteUrl, row]));
+
+      for (const siteUrl of sites) {
+        const warehouse = warehouseBySite.get(siteUrl);
+        const syncStatus = syncBySite.get(siteUrl);
+        const importJobs = importStatsBySite.get(siteUrl);
+        const latestImportJob = latestImportBySite.get(siteUrl);
+        const latestCrawl = latestCrawlBySite.get(siteUrl);
+        const crawlSummary = latestCrawl ? crawlSummaryBySite.get(siteUrl) : null;
 
         rows.push({
           crawl: latestCrawl ? {
@@ -115,7 +161,7 @@ export function registerWorkspaceCrudRoutes(app: Express, db: AppDatabase) {
             updatedAt: latestCrawl.updatedAt || null,
           } : null,
           isDefault: siteUrl === user.activatedSiteUrl,
-          isUnlocked: isAccessibleSite,
+          isUnlocked: true,
           siteUrl,
           warehouse: {
             earliestMetricDate: warehouse?.earliestMetricDate || null,

@@ -1,102 +1,41 @@
-# ADR: Production Worker Architecture For 200-User Acceptance
+# ADR: Separate production worker roles
 
 ## Status
 
-Accepted
+Accepted in the repository configuration. This ADR describes the topology; it does not certify production capacity.
 
 ## Context
 
-The platform now combines:
-
-- authenticated dashboard reads
-- crawl queueing and processing
-- internal-link analysis jobs
-- Postgres + pgvector retrieval
-- a managed Python SentenceTransformer worker running `BAAI/bge-m3`
-
-The load harness in [`scripts/load`](../../scripts/load/) needs a stable production target to validate. Without a declared topology, the same acceptance run can mean very different things from one environment to the next.
+The application handles dashboard reads, provider imports, crawl jobs, internal-link analysis, page analysis, warehouse work, and scheduled refreshes. These workloads use different CPU, network, database, and queue resources.
 
 ## Decision
 
-Use a split architecture for production and production-like acceptance:
+Run the HTTP application and background workloads as separate roles:
 
-1. Stateless API instances handle dashboard traffic and job admission.
-2. Crawl workers run independently from API instances.
-3. Internal-link workers run independently from crawl workers.
-4. The BGE embedding worker runs as a separately managed service with explicit readiness checks.
-5. Postgres remains the single source of truth for dashboard reads, queue state, and pgvector retrieval.
+1. `web` serves authenticated dashboard/API traffic.
+2. `crawl` processes crawl and page-analysis jobs.
+3. `internal-links` processes semantic internal-link analysis.
+4. `warehouse` processes warehouse jobs and GSC monthly-summary backfill.
+5. `scheduler` runs Bing, warehouse, and rank-tracking schedules.
 
-## Why this shape
+`database-prepare` runs schema preparation and legacy backfills once before the application roles start. PostgreSQL remains the source of truth for production data, queue state, and pgvector retrieval.
 
-### API separation
+## Repository evidence
 
-Dashboard traffic should not compete directly with heavy background work in the same process. Queue admission, read endpoints, and readiness probes stay more predictable when API instances are stateless and disposable.
+- `server.ts` accepts `web` or `all`; production defaults to `web`.
+- `worker.ts` accepts `crawl`, `internal-links`, `warehouse`, or `scheduler` and exposes `/health` and `/ready`.
+- `server/runtimeRoles.ts` maps each role to its services.
+- `docker-compose.production.yml` wires the roles, readiness dependencies, healthchecks, and per-role PostgreSQL pool caps.
+- Web replicas set `START_BACKGROUND_WORKERS=false` and all production roles skip normal database backfills.
 
-### Dedicated crawl workers
+## Queue and recovery model
 
-Crawl bursts can be large, spiky, and network-bound. Isolating them keeps fetch-heavy behavior away from dashboard request handling and from the semantic analysis path.
+PostgreSQL workers claim durable queue rows with short scheduling locks; job execution runs outside the claim lock. Crawl and internal-link jobs heartbeat their leases. Internal-link leases include a rotating token so a stale worker cannot finish replacement work. The BGE-M3 service runs separately with bounded request/text queues.
 
-### Dedicated internal-link workers
+## Consequences
 
-Internal-link analysis mixes SQL reads, pgvector similarity lookups, scoring, and optional cancellation. It deserves its own concurrency budget and queue visibility.
+The split keeps dashboard traffic independent from crawl and analysis work and makes queue health observable per role. It also adds deployment and supervision requirements: all required services must start, share the same database, and pass readiness checks.
 
-### Separate BGE worker
+## Validation
 
-Embedding latency and model warmup behave differently from the Node app. The Python worker should be supervised, health-checked, and scaled on its own axis.
-
-## Expected concurrency model
-
-For the 200-user acceptance harness:
-
-- Dashboard reads scale horizontally across API instances.
-- Crawl burst concurrency is limited by dedicated crawl workers.
-- Internal-link burst concurrency is limited by dedicated internal-link workers.
-- BGE concurrency is limited by the worker process count or validated per-process batch headroom.
-
-This separation keeps queue fairness measurable and makes failure injection easier to interpret.
-
-## Operational consequences
-
-### Positive
-
-- Dashboard latency remains measurable even during crawl and internal-link bursts.
-- Queue fairness has clearer ownership.
-- BGE worker bottlenecks are easier to spot.
-- Postgres restart recovery can be tested without confusing API-process crashes for DB failures.
-
-### Negative
-
-- More runtime roles means more deployment wiring and process supervision.
-- Acceptance failures must be read with per-role metrics, not just HTTP summaries.
-- Some fairness issues may still require deeper queue instrumentation later.
-
-## Acceptance mapping
-
-The harness scenarios map to the topology like this:
-
-| Scenario | Primary bottleneck it should reveal |
-| --- | --- |
-| `dashboard` | API + Postgres read path |
-| `crawlBurst` | crawl worker admission and queue depth |
-| `internalLinksBurst` | internal-link worker throughput + pgvector reads |
-| `bge` | embedding worker latency and concurrency headroom |
-| `cancellation` | queue responsiveness under contention |
-| `fairness` | cross-site starvation and worker scheduling imbalance |
-| `restart` | DB readiness recovery and API resilience |
-
-## Follow-up expectations
-
-- Add runtime dashboards that mirror the harness gates.
-- Add worker-level queue age metrics if fairness becomes ambiguous from HTTP-visible state alone.
-- Re-baseline the documented SLO thresholds after several clean production-like runs.
-
-
-## Implemented concurrency and recovery details
-
-The accepted architecture is implemented with explicit runtime roles: `web`, `crawl`, `internal-links`, `warehouse`, and `scheduler`. Production defaults the HTTP entrypoint to `web`, so background loops cannot accidentally start in every web replica.
-
-Queue claims use PostgreSQL `FOR UPDATE SKIP LOCKED` plus a short advisory transaction lock around fairness selection. The advisory lock does not cover job execution. Crawl jobs and internal-link jobs maintain heartbeats; internal-link workers additionally rotate a lease token, which fences a stale process after replacement.
-
-BGE-M3 is hosted as a private Python service. Concurrent requests are dynamically coalesced into inference batches, and bounded request/text queues return explicit backpressure responses instead of allowing unbounded memory growth.
-
-Schema preparation and legacy backfills run once through the `database-prepare` service. Normal web and worker replicas set `RUN_DATABASE_BACKFILLS=false`, avoiding a startup stampede.
+Use `npm run verify:docker` for the production-like Compose smoke test and the load harness in [`docs/production-scaling.md`](../production-scaling.md) for workload checks. A passing TypeScript build does not validate this topology.

@@ -15,7 +15,7 @@
     "audit:prod": "npm audit --omit=dev",
     "guard:public-files": "node scripts/check-public-files.mjs --tracked",
     "check:dashboard-readiness-ui": "node scripts/check-dashboard-readiness-ui.mjs",
-    "verify": "npm run guard:public-files && npm run lint && npm run check:dashboard-readiness-ui && npm run check:google-updates-feed && npm run check:api-boundaries && npm run check:warehouse-backfill && npm run check:warehouse-source-errors && npm run check:warehouse-job-leases && npm run check:gsc-summaries && npm run check:bing-query-dedupe && npm run check:bing-query-facts && npm run check:internal-link-quality && npm run check:internal-link-lifecycle && npm run check:crawl-worker-claims && npm run check:crawl-canonical-orphans && npm run check:internal-link-worker-claims && npm run check:postgres-hardening && npm run check:load-harness && npm run check:ga4-warehouse && npm run check:ga4-property-metadata && npm run check:ga4-property-start-boundary && npm run check:gsc-analytical-workflows && npm run check:warehouse-daily-lifecycle && npm run check:intent-classification-warehouse && npm run check:warehouse-runtime-health && npm run check:warehouse-route-lifecycle && npm run check:selector-stability && npm run check:workspace-defaults && npm run check:migration-coverage && npm run check:page-contracts && npm run audit:prod && npm run build && npm run check:runtime-roles",
+    "verify": "npm run guard:public-files && npm run lint && npm run check:dashboard-readiness-ui && npm run check:google-updates-feed && npm run check:api-boundaries && npm run check:warehouse-backfill && npm run check:warehouse-source-errors && npm run check:warehouse-job-leases && npm run check:gsc-summaries && npm run check:bing-query-dedupe && npm run check:bing-query-facts && npm run check:internal-link-quality && npm run check:internal-link-lifecycle && npm run check:crawl-worker-claims && npm run check:crawl-canonical-orphans && npm run check:crawl-compare-regression && npm run check:internal-link-worker-claims && npm run check:postgres-hardening && npm run check:load-harness && npm run check:ga4-warehouse && npm run check:ga4-property-metadata && npm run check:ga4-property-start-boundary && npm run check:gsc-analytical-workflows && npm run check:warehouse-daily-lifecycle && npm run check:intent-classification-warehouse && npm run check:warehouse-runtime-health && npm run check:warehouse-route-lifecycle && npm run check:workspace-sites-performance && npm run check:warehouse-storage-report && npm run check:warehouse-storage-archive && npm run check:warehouse-storage-partition-plan && npm run check:warehouse-storage-route && npm run check:warehouse-storage-purge-plan && npm run check:selector-stability && npm run check:workspace-defaults && npm run check:migration-coverage && npm run check:page-contracts && npm run audit:prod && npm run build && npm run check:runtime-roles",
     "verify:docker": "npm run check:page-analysis-postgres && node scripts/verify-docker-smoke.mjs",
     "verify:production-url": "node scripts/verify-production-url.mjs",
     "secrets:generate": "node scripts/generate-production-secrets.mjs",
@@ -27,6 +27,12 @@
     "check:migration-coverage": "tsx --tsconfig tsconfig.server.json scripts/migrate-sqlite-to-postgres.ts --check-coverage",
     "db:prepare": "node .server-dist/databasePrepare.js",
     "db:backfill:gsc-summaries": "tsx --tsconfig tsconfig.server.json scripts/backfill-gsc-monthly-summaries.ts",
+    "warehouse:storage-report": "tsx --tsconfig tsconfig.server.json scripts/warehouse-storage-report.ts",
+    "warehouse:storage-archive": "tsx --tsconfig tsconfig.server.json scripts/warehouse-storage-archive.ts",
+    "warehouse:storage-verify": "tsx --tsconfig tsconfig.server.json scripts/warehouse-storage-verify.ts",
+    "warehouse:storage-route": "tsx --tsconfig tsconfig.server.json scripts/warehouse-storage-route.ts",
+    "warehouse:storage-purge-plan": "tsx --tsconfig tsconfig.server.json scripts/warehouse-storage-purge-plan.ts",
+    "warehouse:partition-plan": "tsx --tsconfig tsconfig.server.json scripts/warehouse-storage-partition-plan.ts",
     "benchmark:warehouse:pages": "tsx --tsconfig tsconfig.server.json scripts/benchmark-warehouse-pages.ts",
     "start": "node .server-dist/server.js",
     "start:web": "node .server-dist/server.js",
@@ -45,6 +51,12 @@
     "check:intent-classification-warehouse": "tsx --tsconfig tsconfig.server.json server/services/queryIntentClassifier.test.ts && tsx --tsconfig tsconfig.server.json scripts/check-intent-classification-warehouse.ts",
     "check:warehouse-runtime-health": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-runtime-health.ts",
     "check:warehouse-route-lifecycle": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-route-lifecycle.ts",
+    "check:workspace-sites-performance": "tsx --tsconfig tsconfig.server.json scripts/check-workspace-sites-status-performance.ts",
+    "check:warehouse-storage-report": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-storage-report.ts",
+    "check:warehouse-storage-archive": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-storage-archive.ts",
+    "check:warehouse-storage-partition-plan": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-storage-partition-plan.ts",
+    "check:warehouse-storage-route": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-storage-route.ts",
+    "check:warehouse-storage-purge-plan": "tsx --tsconfig tsconfig.server.json scripts/check-warehouse-storage-purge-plan.ts",
     "check:selector-stability": "node scripts/check-selector-stability.mjs && tsx components/dashboard/rawDataRequestFence.test.ts && tsx components/dashboard/crawlInventoryRequestFence.test.ts && tsx components/dashboard/visualSemanticsRequestFence.test.ts && tsx components/dashboard/gscGridUtils.test.ts && tsx components/dashboard/intentGoldSet.test.ts",
     "check:workspace-defaults": "node scripts/check-workspace-defaults.mjs",
     "check:ai-provider-readiness": "tsx --tsconfig tsconfig.json scripts/check-ai-provider-readiness.ts",
@@ -69,6 +81,7 @@
     "check:runtime-roles": "npm run build:server && node scripts/check-runtime-roles.mjs",
     "check:crawl-worker-claims": "tsx --tsconfig tsconfig.server.json scripts/check-crawl-worker-claims.ts",
     "check:crawl-canonical-orphans": "tsx --tsconfig tsconfig.server.json scripts/check-crawl-canonical-orphans.ts",
+    "check:crawl-compare-regression": "tsx --tsconfig tsconfig.server.json scripts/check-crawl-compare-regression.ts",
     "check:internal-link-worker-claims": "tsx --tsconfig tsconfig.server.json scripts/check-internal-link-worker-claims.ts",
     "check:postgres-hardening": "tsx --tsconfig tsconfig.server.json scripts/check-postgres-hardening.ts",
     "check:postgres-recovery": "node scripts/check-postgres-connection-recovery.mjs",
@@ -128,6 +141,7 @@
   "overrides": {
     "hono": "4.13.1",
     "nanoid": "3.3.18",
-    "undici": "7.29.0"
+    "undici": "7.29.0",
+    "qs": "6.16.0"
   }
 }

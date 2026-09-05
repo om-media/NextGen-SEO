@@ -1062,14 +1062,19 @@ async function getLatestCompletedCrawlJob(db, ownerId, siteUrl) {
     LIMIT 1
   `, [ownerId, siteUrl]);
 }
-async function loadGscAggregates(db, ownerId, siteUrl, startDate, endDate) {
+async function loadGscAggregates(db, ownerId, siteUrl, startDate, endDate, pageKeys = null) {
+    if (Array.isArray(pageKeys) && pageKeys.length === 0)
+        return new Map();
+    const pageKeyFilter = Array.isArray(pageKeys)
+        ? ` AND COALESCE(NULLIF(pageKey, ''), page) IN (${pageKeys.map(() => '?').join(', ')})`
+        : '';
     const rows = await db.all(`
     SELECT COALESCE(NULLIF(pageKey, ''), page) AS pageKey, query, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
       CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions) * 1.0 / SUM(impressions) ELSE 0 END AS position
     FROM gsc_page_query_metrics
-    WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND COALESCE(NULLIF(pageKey, ''), page) <> ''
+    WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND COALESCE(NULLIF(pageKey, ''), page) <> ''${pageKeyFilter}
     GROUP BY COALESCE(NULLIF(pageKey, ''), page), query
-  `, [ownerId, siteUrl, startDate, endDate]);
+  `, [ownerId, siteUrl, startDate, endDate, ...(pageKeys || [])]);
     const map = new Map();
     for (const row of rows) {
         const pageKey = canonicalPageKey(row.pageKey, siteUrl);
@@ -1099,13 +1104,18 @@ async function loadGscAggregates(db, ownerId, siteUrl, startDate, endDate) {
     }
     return output;
 }
-async function loadGa4Aggregates(db, ownerId, siteUrl, startDate, endDate) {
+async function loadGa4Aggregates(db, ownerId, siteUrl, startDate, endDate, pageKeys = null) {
+    if (Array.isArray(pageKeys) && pageKeys.length === 0)
+        return new Map();
+    const pageKeyFilter = Array.isArray(pageKeys)
+        ? ` AND pageKey IN (${pageKeys.map(() => '?').join(', ')})`
+        : '';
     const rows = await db.all(`
     SELECT pageKey, SUM(sessions) AS sessions, SUM(pageViews) AS pageViews
     FROM ga4_page_metrics
-    WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND pageKey <> ''
+    WHERE ownerId = ? AND siteUrl = ? AND date >= ? AND date <= ? AND pageKey <> ''${pageKeyFilter}
     GROUP BY pageKey
-  `, [ownerId, siteUrl, startDate, endDate]);
+  `, [ownerId, siteUrl, startDate, endDate, ...(pageKeys || [])]);
     return new Map(rows.map((row) => [canonicalPageKey(row.pageKey, siteUrl), {
             sessions: toFiniteNumber(row.sessions),
             pageViews: toFiniteNumber(row.pageViews),
@@ -1569,27 +1579,35 @@ function opportunityType(page, gsc, ga4) {
 async function runInternalLinkAnalysis(db, job) {
     const heartbeat = createAnalysisHeartbeat(db, job);
     await heartbeat(true);
-    const [crawlRows, linkRows, sentenceRows, gsc, ga4] = await Promise.all([
-        db.all(`
+    const crawlRows = await db.all(`
       SELECT url, normalizedUrl, pageKey, statusCode, contentType, title, metaDescription, h1Text, wordCount, depth, noindex, inboundLinkCount, canonicalUrl
       FROM crawl_pages
       WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
       ORDER BY depth ASC, url ASC
       LIMIT ?
-    `, [job.ownerId, job.siteUrl, job.crawlJobId, job.maxPages || 1000]),
-        db.all(`
+    `, [job.ownerId, job.siteUrl, job.crawlJobId, job.maxPages || 1000]);
+    const selectedPageKeys = Array.from(new Set(crawlRows.flatMap((row) => [row.pageKey, row.normalizedUrl, row.url]
+        .map((value) => normalizeText(value))
+        .filter(Boolean))));
+    const [linkRows, sentenceRows, gsc, ga4] = await Promise.all([
+        selectedPageKeys.length
+            ? db.all(`
       SELECT fromPageKey, toPageKey
       FROM crawl_links
-      WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
-    `, [job.ownerId, job.siteUrl, job.crawlJobId]),
-        db.all(`
+      WHERE ownerId = ? AND siteUrl = ? AND jobId = ? AND fromPageKey IN (${selectedPageKeys.map(() => '?').join(', ')})
+    `, [job.ownerId, job.siteUrl, job.crawlJobId, ...selectedPageKeys])
+            : [],
+        selectedPageKeys.length
+            ? db.all(`
       SELECT pageUrl, pageKey, paragraphIndex, sentenceIndex, sentenceText, textHash, headingText, linkDensity, boilerplateScore, extractionVersion
       FROM crawl_page_sentences
       WHERE ownerId = ? AND siteUrl = ? AND jobId = ?
+        AND COALESCE(NULLIF(pageKey, ''), pageUrl) IN (${selectedPageKeys.map(() => '?').join(', ')})
       ORDER BY pageKey, paragraphIndex, sentenceIndex
-    `, [job.ownerId, job.siteUrl, job.crawlJobId]),
-        loadGscAggregates(db, job.ownerId, job.siteUrl, job.startDate, job.endDate),
-        loadGa4Aggregates(db, job.ownerId, job.siteUrl, job.startDate, job.endDate),
+    `, [job.ownerId, job.siteUrl, job.crawlJobId, ...selectedPageKeys])
+            : [],
+        loadGscAggregates(db, job.ownerId, job.siteUrl, job.startDate, job.endDate, selectedPageKeys),
+        loadGa4Aggregates(db, job.ownerId, job.siteUrl, job.startDate, job.endDate, selectedPageKeys),
     ]);
     const currentSentenceRows = sentenceRows.filter((row) => toFiniteNumber(row.extractionVersion) >= REQUIRED_SENTENCE_EXTRACTION_VERSION);
     if (!currentSentenceRows.length) {

@@ -1,25 +1,38 @@
-# PostgreSQL hardening
+# PostgreSQL configuration and checks
 
-`server/database.ts` now reads these optional PostgreSQL pool settings from the environment:
+`server/database.ts` builds a PostgreSQL pool from environment variables and exposes pool, transaction, and recoverable-error diagnostics through `getDiagnostics()`.
 
-- `POSTGRES_POOL_MAX` (default `20`)
-- `POSTGRES_POOL_MIN` (default `0`)
-- `POSTGRES_IDLE_TIMEOUT_MS` (default `30000`)
-- `POSTGRES_CONNECTION_TIMEOUT_MS` (default `10000`)
-- `POSTGRES_POOL_MAX_LIFETIME_SECONDS` (default `1800`)
-- `POSTGRES_QUERY_TIMEOUT_MS` (default `0`)
-- `POSTGRES_STATEMENT_TIMEOUT_MS` (default `0`)
-- `POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS` (default `120000`)
-- `POSTGRES_KEEP_ALIVE` (default `true`)
-- `POSTGRES_KEEP_ALIVE_INITIAL_DELAY_MS` (default `10000`)
-- `POSTGRES_APPLICATION_NAME` (default `gscplus`)
+## Pool settings
 
-The runtime validates malformed values before creating the pool, keeps SQLite fallback behavior unchanged, preserves PostgreSQL migration advisory locking, and exposes pool/transaction diagnostics through `getDiagnostics()`.
+| Variable | Default |
+| --- | ---: |
+| `POSTGRES_POOL_MAX` | `20` |
+| `POSTGRES_POOL_MIN` | `0` |
+| `POSTGRES_IDLE_TIMEOUT_MS` | `30000` |
+| `POSTGRES_CONNECTION_TIMEOUT_MS` | `10000` |
+| `POSTGRES_POOL_MAX_LIFETIME_SECONDS` | `1800` |
+| `POSTGRES_QUERY_TIMEOUT_MS` | `0` |
+| `POSTGRES_STATEMENT_TIMEOUT_MS` | `0` |
+| `POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS` | `120000` |
+| `POSTGRES_KEEP_ALIVE` | `true` |
+| `POSTGRES_KEEP_ALIVE_INITIAL_DELAY_MS` | `10000` |
+| `POSTGRES_APPLICATION_NAME` | `gscplus` |
 
-Run the focused validation script with:
+Role-specific Compose settings such as `WEB_POSTGRES_POOL_MAX` override the shared pool maximum for that process.
+
+## Behavior covered by code
+
+- Invalid numeric and boolean pool values fail validation before pool creation.
+- SQLite fallback remains available when no PostgreSQL URL is configured outside production.
+- PostgreSQL initialization uses migration locking and nested transactions use savepoints.
+- Pool and transaction diagnostics are available through the health/readiness path without exposing credentials.
+
+## Check
+
+Run:
 
 ```bash
-npx tsx --tsconfig tsconfig.server.json scripts/check-postgres-hardening.ts
+npm run check:postgres-hardening
 ```
 
-If `DATABASE_URL` or `POSTGRES_URL` is set, the script also verifies PostgreSQL initialization, nested savepoint-backed transactions, rollback isolation, and diagnostics counters against a live database.
+Without an exported `DATABASE_URL` or `POSTGRES_URL`, the script checks configuration and skips live PostgreSQL integration. With a reachable database, it also checks initialization, nested savepoint transactions, rollback isolation, and diagnostics counters.

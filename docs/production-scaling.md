@@ -1,278 +1,138 @@
-# Production Scaling
+# Production load and operations
 
-## Goal
+This document describes the load harness and the production topology that the Compose files define. It does not claim that the application meets the thresholds below in every environment.
 
-This harness defines a repeatable acceptance run for the current production stack:
+## Preconditions
 
-- React 19 dashboard traffic
-- Express API reads and writes
-- crawl queue bursts
-- internal-link analysis queue bursts
-- managed BAAI/bge-m3 worker pressure
-- cancellation behavior
-- fairness across site workloads
-- optional Postgres restart recovery
+The harness lives in [`scripts/load`](../scripts/load/). A real run needs:
 
-The implementation lives in [`scripts/load`](../scripts/load/).
+- a built and running API;
+- PostgreSQL with the application schema;
+- the worker roles required by the selected scenarios;
+- a ready BGE-M3 worker for embedding scenarios;
+- authentication fixtures for dashboard and queue scenarios.
 
-## Safety model
+Run the harness self-check without external services:
 
-The load scripts are safe by default:
-
-- `dashboard` is the only enabled scenario in the sample config.
-- Crawl, internal-link, and cancellation scenarios require `allowWrites=true`.
-- Database restart requires `allowDbRestart=true`.
-- A run without `auth.usersPath` is rejected unless `bge` is the only enabled scenario.
-- Reusing fewer than 200 auth fixtures is rejected unless `auth.allowAuthReuse=true`.
-
-That means the default command exercises real authenticated dashboard reads, but it will not enqueue crawls, queue internal-link jobs, cancel work, or restart infrastructure unless those switches are deliberately armed.
-
-## Topology under test
-
-The acceptance harness assumes the production shape below:
-
-```text
-200 authenticated dashboard users
-  -> Express API
-    -> Postgres + pgvector
-    -> crawl queue worker
-    -> internal-links worker
-    -> managed Python BAAI/bge-m3 embedding worker
+```bash
+npm run check:load-harness
 ```
 
-Recommended production worker topology for the 200-user acceptance target:
+The default configuration is in [`scripts/load/fixtures/sample-config.json`](../scripts/load/fixtures/sample-config.json), merged with defaults from [`scripts/load/lib/config.mjs`](../scripts/load/lib/config.mjs).
 
-| Layer | Minimum topology for acceptance |
+## Safety gates
+
+The harness starts with the read-only `dashboard` scenario enabled. The following actions require explicit flags:
+
+| Action | Required flag |
 | --- | --- |
-| API | 2 stateless Express instances behind a shared LB |
-| Postgres | 1 primary with readiness probes and connection limits set explicitly |
-| pgvector | same primary, with enough memory for active similarity retrieval and indexes warmed |
-| Crawl worker | 2 worker processes |
-| Internal-link worker | 2 worker processes |
-| BGE worker | 2 worker processes or 1 process with validated concurrency headroom |
+| Crawl burst, internal-link burst, or cancellation | `--allow-writes` |
+| PostgreSQL restart | `--allow-db-restart` |
+| Dashboard or queue scenarios | `--users <path>` or `auth.usersPath` |
 
-## Warehouse scheduler monitoring
+`--plan-only` validates the configuration and prints the execution plan without sending requests. The harness rejects missing auth fixtures for scenarios that need authenticated users.
 
-The production `warehouse-worker` and `scheduler` processes expose two internal probes:
+## Scenarios and defaults
 
-- `/health` is process liveness and remains `200` while the process is serving HTTP.
-- `/ready` checks the database and, for these two roles, returns `503` when the runtime heartbeat is missing/stale, a tick has failed, a running job is stale, or ready work has exceeded the stale-age threshold. The JSON includes queue counts, oldest ready age, stale running count, and 24-hour auth/quota/provider failure counts.
+The code currently defines these scenarios:
 
-Scrape the JSON on ports `3103` (warehouse worker) and `3104` (scheduler), or let the Docker healthchecks restart unhealthy roles. Do not alert on an idle queue: `idle` is a healthy state. Alert on `degraded`/`failed`, stale heartbeat age, non-zero stale running jobs, or growing `recentFailures.auth`/`recentFailures.quota`.
+| Scenario | Default | Behavior |
+| --- | ---: | --- |
+| `dashboard` | enabled | Authenticated reads across session, workspace, warehouse, crawl, and internal-link endpoints |
+| `crawlBurst` | disabled | Enqueues 12 crawl jobs |
+| `internalLinksBurst` | disabled | Enqueues 12 local BGE/local-rules analyses |
+| `bge` | disabled | 24 batches of 16 texts at concurrency 8 |
+| `cancellation` | disabled | Cancels selected crawl and internal-link jobs after a delay |
+| `fairness` | disabled | Observes queue start lag and cross-site distribution |
+| `restart` | disabled | Runs a configured database restart command and checks recovery |
 
-The scheduler uses the shared Google OAuth refresh token stored as `gscRefreshToken`; that token carries both Search Console and GA4 scopes. A connected account with only GA4 properties is therefore included. A tokenless GA4 account is intentionally not scheduled because there is no credential with which to fetch the API data.
-## Scenarios
+The default dashboard run uses 200 virtual users, two loops per user, a 60-second ramp, and a 28-day coverage range. Those are test inputs, not production capacity claims.
 
-### 1. Dashboard read load
+## Default gates
 
-Target: 200 authenticated users, each executing 2 loops across:
-
-- `/api/auth/session`
-- `/api/workspace/sites/status`
-- `/api/warehouse/status`
-- `/api/warehouse/coverage`
-- `/api/crawl/status`
-- `/api/crawl/jobs`
-- `/api/crawl/pages`
-- `/api/crawl/links`
-- `/api/internal-links/jobs`
-- `/api/internal-links/opportunities`
-
-This is the baseline production gate and should always run first.
-
-### 2. Crawl burst
-
-Target: enqueue 12 crawl jobs across distinct sites or tenant slices. This verifies admission behavior, conflict behavior, and downstream fairness when the queue is stressed.
-
-### 3. Internal-link burst
-
-Target: enqueue 12 internal-link analysis jobs using the local rules + built-in BGE path:
-
-- `embeddingProvider=local`
-- `embeddingModel=bge-m3-local`
-- `provider=local`
-- `reviewProvider=local-rules`
-
-This is the cheapest production-like acceptance path because it avoids hosted spend while still stressing pgvector retrieval and the SentenceTransformer worker.
-
-### 4. BGE concurrent batches
-
-Target: pressure `/embed` with 24 batches x 16 texts at concurrency 8. This is the worker-only saturation check and should be treated as a separate acceptance dimension from the dashboard load.
-
-### 5. Cancellation
-
-Target: cancel a subset of crawl and internal-link jobs after a short delay to verify that queue state changes stay responsive under contention.
-
-### 6. Fairness
-
-Target: observe queued jobs and fail the run when one site or one queue slice starves. The harness computes:
-
-- `terminalJain`
-- `p95StartLagMs`
-- `maxStartLagMs`
-
-### 7. DB restart recovery
-
-Target: while probes keep running, restart Postgres and require the stack to return to healthy readiness inside the configured recovery window.
-
-This scenario is opt-in only.
-
-## SLOs and pass/fail gates
-
-The sample harness encodes these default gates:
+The harness evaluates these defaults:
 
 | Gate | Default |
-| --- | --- |
+| --- | ---: |
 | Overall request error rate | `<= 2%` |
 | Dashboard p95 | `<= 1500 ms` |
 | Dashboard p99 | `<= 3500 ms` |
-| BGE `/embed` p95 | `<= 12000 ms` |
-| Cancellation success rate | `>= 90%` |
+| BGE p95 | `<= 12000 ms` |
+| Cancellation success | `>= 90%` |
 | Fairness Jain index | `>= 0.90` |
-| Fairness max start lag | `<= 60000 ms` |
-| DB restart recovery | `<= 120000 ms` |
+| Fairness maximum start lag | `<= 60000 ms` |
+| Database restart recovery | `<= 120000 ms` |
 
-Treat these as acceptance defaults, not eternal truths. Tighten them after production baselines stabilize.
-
-## Capacity metrics to capture
-
-During any 200-user acceptance run, collect:
-
-- API instance CPU and RSS
-- API request p50/p95/p99
-- Postgres CPU, memory, active connections, and restart recovery time
-- pgvector query latency and buffer hit ratio
-- crawl queue depth and oldest queued age
-- internal-link queue depth and oldest queued age
-- BGE worker latency and active batch concurrency
-
-If external observability is available, line these metrics up with the harness summary JSON instead of relying on the harness alone.
+Treat these values as acceptance defaults. Record the commit, configuration, database size, topology, and result JSON with each meaningful run. Do not present a single local run as a general SLO.
 
 ## Commands
 
-Plan only:
+Print a plan:
 
 ```bash
 node scripts/load/run-production-load.mjs --config scripts/load/fixtures/sample-config.json --plan-only
 ```
 
-200-user dashboard acceptance:
+Run the read-only dashboard baseline with supplied fixtures:
 
 ```bash
-node scripts/load/run-production-load.mjs --config scripts/load/fixtures/sample-config.json --users path/to/200-users.json --output scripts/load/results/dashboard-200.json
+node scripts/load/run-production-load.mjs --config scripts/load/fixtures/sample-config.json --users path/to/200-users.json --output .tmp/dashboard-200.json
 ```
 
-Write-enabled crawl + internal-link burst:
+Run write-enabled queue scenarios in a disposable environment:
 
 ```bash
 node scripts/load/run-production-load.mjs --config path/to/load-config.json --users path/to/200-users.json --allow-writes --scenarios dashboard,crawlBurst,internalLinksBurst,cancellation,fairness
 ```
 
-BGE worker saturation:
+Run BGE pressure by itself:
 
 ```bash
 node scripts/load/run-production-load.mjs --config path/to/load-config.json --scenarios bge
 ```
 
-DB restart recovery:
+Run database recovery only during a maintenance or staging window:
 
 ```bash
 node scripts/load/run-production-load.mjs --config path/to/load-config.json --users path/to/200-users.json --allow-db-restart --scenarios dashboard,restart
 ```
 
-Harness self-check:
-
-```bash
-node scripts/load/check-load-harness.mjs
-```
-
-## Recommended acceptance sequence
-
-1. Run `--plan-only`.
-2. Run the 200-user dashboard baseline.
-3. Run `dashboard + crawlBurst + internalLinksBurst + cancellation + fairness` with writes armed.
-4. Run the BGE saturation scenario by itself.
-5. Run DB restart recovery only in a maintenance window or a production-like staging environment.
-
-## Known blind spots
-
-- The harness measures HTTP behavior and queue observability, not browser paint timing.
-- It does not generate or seed 200 accounts; you must provide auth fixtures.
-- It observes fairness through exposed job status, not internal queue instrumentation.
-- It will surface 409 conflicts, but interpreting whether that conflict rate is healthy still needs environment context.
-
-
-## Implemented single-VPS topology
-
-The repository includes `docker-compose.production.yml` with:
-
-- an Nginx gateway on `APP_PORT`
-- `WEB_REPLICAS` stateless web replicas
-- a one-shot `database-prepare` service for migrations and legacy backfills
-- dedicated crawl, internal-link, warehouse, and singleton scheduler processes
-- self-hosted PostgreSQL 16 with pgvector
-- a private, self-hosted BGE-M3 service with dynamic batching and bounded queues
-- shared uploads and model-cache volumes
-
-Start it with:
-
-```bash
-cp .env.production.example .env.production
-# Replace every CHANGE_ME value before continuing.
-docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
-```
-
-The web and unrelated workers do not depend on BGE-M3 health. If embeddings are unavailable, internal-link semantic analysis pauses or errors clearly while dashboard reads, crawls, warehouse jobs, and scheduling remain available.
-
-## Capacity controls
-
-| Variable | Purpose | Production example |
-| --- | --- | --- |
-| `WEB_REPLICAS` | Stateless HTTP replicas behind Nginx | `2` |
-| `*_POSTGRES_POOL_MAX` | Role-specific connection cap per process | web `15`, crawl `8`, internal links `10`, warehouse `8`, scheduler `4` |
-| `CRAWL_JOB_CONCURRENCY` | Crawl jobs per crawl-worker process | `2` |
-| `CRAWL_PAGE_CONCURRENCY` | Simultaneous page fetches per crawl job | `4` |
-| `INTERNAL_LINK_JOB_CONCURRENCY` | Analyses per internal-link worker process | `2` |
-| `INTERNAL_LINK_LOCK_TIMEOUT_MS` | Stale analysis recovery threshold | `600000` |
-| `EMBEDDING_MAX_BATCH_SIZE` | Maximum texts coalesced per BGE inference | `128` |
-| `EMBEDDING_MAX_QUEUE_REQUESTS` | BGE request backpressure limit | `128` |
-| `EMBEDDING_MAX_QUEUE_TEXTS` | BGE text backpressure limit | `4096` |
-
-Total background concurrency is process replicas multiplied by the per-process concurrency setting. The example role caps keep the steady-state Compose topology near 60 possible PostgreSQL connections (30 web + 8 crawl + 10 internal links + 8 warehouse + 4 scheduler), below PostgreSQL's usual 100-connection default with operational headroom. Increase one axis at a time while watching PostgreSQL waiting connections, crawler CPU/RSS, target-site response behavior, BGE batch latency, and queue age.
-
-PostgreSQL is self-hosted and free in this topology. Backups, off-host retention, TLS, disk monitoring, and failover remain operator responsibilities.
-
-## Queue guarantees
-
-- Crawl and internal-link claims are durable PostgreSQL rows.
-- Claim selection is serialized for only the short scheduling decision with PostgreSQL advisory transaction locks; job execution remains parallel.
-- Scheduling balances the first worker wave across owners and prevents concurrent work for the same owner/site queue.
-- Crawl and internal-link jobs heartbeat their leases.
-- Stale internal-link workers are fenced by a rotating lease token and cannot complete or mark replacement work as failed.
-- Recovered internal-link jobs reuse persisted embedding cache and existing recommendation checkpoints.
-- The product API and UI expose workspace queue position, workload state, queue depth, and learned ETA.
-
-## Verified local acceptance
-
-On 2026-07-11, the compiled web-only artifact was tested against local PostgreSQL/pgvector with 200 distinct authenticated sessions. One dashboard loop per user exercised ten endpoints each:
-
-- 2,000 requests
-- 0 failures
-- p50 3.56 ms
-- p95 16.32 ms
-- p99 27.96 ms
-- max 57.63 ms
-
-This proves the application path under the local fixture workload; it is not a substitute for repeating the harness on the target VPS with production-sized data, network latency, and observability enabled. The summary is written to the configured `outputPath`.
-
-Create disposable local fixtures after a build:
+The fixture helper creates disposable auth data after a build:
 
 ```bash
 npm run load:fixtures -- --count 200 --output .tmp/load-users-200.json
-```
-
-Remove them when finished:
-
-```bash
 npm run load:fixtures -- --cleanup
 ```
+
+## Production topology
+
+`docker-compose.production.yml` defines these services:
+
+- Nginx gateway;
+- stateless web replicas;
+- one-shot `database-prepare` for schema setup and legacy backfills;
+- dedicated crawl, internal-link, warehouse, and scheduler processes;
+- PostgreSQL 16 with pgvector;
+- a self-hosted Python BGE-M3 worker with bounded queues and dynamic batching.
+
+Production web replicas set `APP_PROCESS_ROLE=web`, disable background workers, and skip database backfills. Worker readiness probes use ports 3101 through 3104. The Compose defaults allocate 30 PostgreSQL connections to two web replicas, then 8 to crawl, 10 to internal links, 8 to warehouse, and 4 to the scheduler.
+
+The standalone Docker image runs the web role only. It does not provide scheduled imports or background workers.
+
+## Worker probes
+
+For crawl, internal-link, warehouse, and scheduler workers:
+
+- `/health` reports process liveness;
+- `/ready` checks database access and, for warehouse/scheduler, runtime health.
+
+An idle queue is healthy. Alert on failed or degraded runtime status, stale heartbeats, stale running jobs, or growing authentication/quota/provider failures.
+
+## What this harness does not measure
+
+- Browser paint and interaction timing.
+- Production network latency or target-site behavior unless the test environment includes it.
+- Capacity beyond the configured scenarios and fixture data.
+- Internal fairness details that the public job state does not expose.
+
+The repository has no current, reproducible benchmark recorded in this document. Add measured results only with the run metadata described above.

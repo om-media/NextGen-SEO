@@ -372,6 +372,8 @@ const toFiniteNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const toCount = (value: unknown) => Math.max(0, Math.trunc(toFiniteNumber(value)));
+
 const toBoundedInteger = (value: unknown, fallback: number, min: number, max: number) => {
   const number = Math.trunc(Number(value));
   if (!Number.isFinite(number)) return fallback;
@@ -2743,66 +2745,95 @@ export async function compareCrawlJobs(
     };
   }
 
-  const [baseRows, compareRows] = await Promise.all([
-    db.all<CrawlPageRecord>('SELECT * FROM crawl_pages WHERE ownerId = ? AND siteUrl = ? AND jobId = ?', [ownerId, siteUrl, baseJob.id]),
-    db.all<CrawlPageRecord>('SELECT * FROM crawl_pages WHERE ownerId = ? AND siteUrl = ? AND jobId = ?', [ownerId, siteUrl, compareJob.id]),
+  const baseKey = "COALESCE(NULLIF(base.pageKey, ''), base.normalizedUrl)";
+  const compareKey = "COALESCE(NULLIF(compare.pageKey, ''), compare.normalizedUrl)";
+  const statusChanged = 'COALESCE(base.statusCode, -1) <> COALESCE(compare.statusCode, -1)';
+  const titleChanged = "COALESCE(base.title, '') <> COALESCE(compare.title, '')";
+  const canonicalChanged = "COALESCE(base.canonicalUrl, '') <> COALESCE(compare.canonicalUrl, '')";
+  const matchedJoin = `
+    compare.ownerId = base.ownerId
+    AND compare.siteUrl = base.siteUrl
+    AND compare.jobId = ?
+    AND ${compareKey} = ${baseKey}
+  `;
+  const [summaryRow, missingRow, newRows, statusRows, titleRows, canonicalRows, missingRows] = await Promise.all([
+    db.get<any>(`
+      SELECT
+        COALESCE(SUM(CASE WHEN compare.ownerId IS NULL THEN 1 ELSE 0 END), 0) AS new_count,
+        COALESCE(SUM(CASE WHEN compare.ownerId IS NOT NULL AND (${statusChanged}) THEN 1 ELSE 0 END), 0) AS status_changed,
+        COALESCE(SUM(CASE WHEN compare.ownerId IS NOT NULL AND (${titleChanged}) THEN 1 ELSE 0 END), 0) AS title_changed,
+        COALESCE(SUM(CASE WHEN compare.ownerId IS NOT NULL AND (${canonicalChanged}) THEN 1 ELSE 0 END), 0) AS canonical_changed,
+        COALESCE(SUM(CASE WHEN compare.ownerId IS NOT NULL AND NOT (${statusChanged} OR ${titleChanged} OR ${canonicalChanged}) THEN 1 ELSE 0 END), 0) AS unchanged
+      FROM crawl_pages base
+      LEFT JOIN crawl_pages compare ON ${matchedJoin}
+      WHERE base.ownerId = ? AND base.siteUrl = ? AND base.jobId = ?
+    `, [compareJob.id, ownerId, siteUrl, baseJob.id]),
+    db.get<any>(`
+      SELECT COUNT(*) AS count
+      FROM crawl_pages compare
+      LEFT JOIN crawl_pages base ON
+        base.ownerId = compare.ownerId
+        AND base.siteUrl = compare.siteUrl
+        AND base.jobId = ?
+        AND ${baseKey} = ${compareKey}
+      WHERE compare.ownerId = ? AND compare.siteUrl = ? AND compare.jobId = ? AND base.ownerId IS NULL
+    `, [baseJob.id, ownerId, siteUrl, compareJob.id]),
+    db.all<any>(`
+      SELECT base.url
+      FROM crawl_pages base
+      LEFT JOIN crawl_pages compare ON ${matchedJoin}
+      WHERE base.ownerId = ? AND base.siteUrl = ? AND base.jobId = ? AND compare.ownerId IS NULL
+      LIMIT 20
+    `, [compareJob.id, ownerId, siteUrl, baseJob.id]),
+    db.all<any>(`
+      SELECT base.url, base.statusCode AS current_status, compare.statusCode AS previous_status
+      FROM crawl_pages base
+      JOIN crawl_pages compare ON ${matchedJoin}
+      WHERE base.ownerId = ? AND base.siteUrl = ? AND base.jobId = ? AND (${statusChanged})
+      LIMIT 20
+    `, [compareJob.id, ownerId, siteUrl, baseJob.id]),
+    db.all<any>(`
+      SELECT base.url, base.title AS current_title, compare.title AS previous_title
+      FROM crawl_pages base
+      JOIN crawl_pages compare ON ${matchedJoin}
+      WHERE base.ownerId = ? AND base.siteUrl = ? AND base.jobId = ? AND (${titleChanged})
+      LIMIT 20
+    `, [compareJob.id, ownerId, siteUrl, baseJob.id]),
+    db.all<any>(`
+      SELECT base.url, base.canonicalUrl AS current_canonical, compare.canonicalUrl AS previous_canonical
+      FROM crawl_pages base
+      JOIN crawl_pages compare ON ${matchedJoin}
+      WHERE base.ownerId = ? AND base.siteUrl = ? AND base.jobId = ? AND (${canonicalChanged})
+      LIMIT 20
+    `, [compareJob.id, ownerId, siteUrl, baseJob.id]),
+    db.all<any>(`
+      SELECT compare.url
+      FROM crawl_pages compare
+      LEFT JOIN crawl_pages base ON
+        base.ownerId = compare.ownerId
+        AND base.siteUrl = compare.siteUrl
+        AND base.jobId = ?
+        AND ${baseKey} = ${compareKey}
+      WHERE compare.ownerId = ? AND compare.siteUrl = ? AND compare.jobId = ? AND base.ownerId IS NULL
+      LIMIT 20
+    `, [baseJob.id, ownerId, siteUrl, compareJob.id]),
   ]);
 
-  const previousByKey = new Map(compareRows.map((row) => [row.pageKey || row.normalizedUrl, row]));
-  const currentByKey = new Map(baseRows.map((row) => [row.pageKey || row.normalizedUrl, row]));
   const samples: CrawlCompareResponse['samples'] = {
-    canonicalChanged: [],
-    missing: [],
-    new: [],
-    statusChanged: [],
-    titleChanged: [],
+    canonicalChanged: canonicalRows.map((row) => ({ currentCanonical: row.current_canonical || null, previousCanonical: row.previous_canonical || null, url: row.url })),
+    missing: missingRows.map((row) => ({ url: row.url })),
+    new: newRows.map((row) => ({ url: row.url })),
+    statusChanged: statusRows.map((row) => ({ currentStatus: row.current_status || null, previousStatus: row.previous_status || null, url: row.url })),
+    titleChanged: titleRows.map((row) => ({ currentTitle: row.current_title || null, previousTitle: row.previous_title || null, url: row.url })),
   };
   const summary = {
-    canonicalChanged: 0,
-    missing: 0,
-    new: 0,
-    statusChanged: 0,
-    titleChanged: 0,
-    unchanged: 0,
+    canonicalChanged: toCount(summaryRow?.canonical_changed),
+    missing: toCount(missingRow?.count),
+    new: toCount(summaryRow?.new_count),
+    statusChanged: toCount(summaryRow?.status_changed),
+    titleChanged: toCount(summaryRow?.title_changed),
+    unchanged: toCount(summaryRow?.unchanged),
   };
-
-  for (const row of baseRows) {
-    const key = row.pageKey || row.normalizedUrl;
-    const previous = previousByKey.get(key);
-    if (!previous) {
-      summary.new += 1;
-      if (samples.new.length < 20) samples.new.push({ url: row.url });
-      continue;
-    }
-
-    let changed = false;
-    if ((row.statusCode || null) !== (previous.statusCode || null)) {
-      changed = true;
-      summary.statusChanged += 1;
-      if (samples.statusChanged.length < 20) samples.statusChanged.push({ currentStatus: row.statusCode || null, previousStatus: previous.statusCode || null, url: row.url });
-    }
-    if ((row.title || '') !== (previous.title || '')) {
-      changed = true;
-      summary.titleChanged += 1;
-      if (samples.titleChanged.length < 20) samples.titleChanged.push({ currentTitle: row.title || null, previousTitle: previous.title || null, url: row.url });
-    }
-    if ((row.canonicalUrl || '') !== (previous.canonicalUrl || '')) {
-      changed = true;
-      summary.canonicalChanged += 1;
-      if (samples.canonicalChanged.length < 20) samples.canonicalChanged.push({ currentCanonical: row.canonicalUrl || null, previousCanonical: previous.canonicalUrl || null, url: row.url });
-    }
-    if (!changed) {
-      summary.unchanged += 1;
-    }
-  }
-
-  for (const row of compareRows) {
-    const key = row.pageKey || row.normalizedUrl;
-    if (!currentByKey.has(key)) {
-      summary.missing += 1;
-      if (samples.missing.length < 20) samples.missing.push({ url: row.url });
-    }
-  }
 
   return {
     baseJob,

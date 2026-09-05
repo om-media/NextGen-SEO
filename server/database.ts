@@ -348,6 +348,33 @@ const commonSchemaSql = `
     PRIMARY KEY (ownerId, propertyId, siteUrl, date, dataset)
   );
 
+  CREATE TABLE IF NOT EXISTS warehouse_storage_archives (
+    id TEXT PRIMARY KEY,
+    tableName TEXT NOT NULL,
+    beforeDate TEXT NOT NULL,
+    archivePath TEXT NOT NULL,
+    rowCount INTEGER NOT NULL DEFAULT 0,
+    fileBytes INTEGER NOT NULL DEFAULT 0,
+    sha256 TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'verified',
+    createdAt TEXT NOT NULL,
+    verifiedAt TEXT NOT NULL,
+    UNIQUE (tableName, beforeDate)
+  );
+
+  CREATE TABLE IF NOT EXISTS warehouse_storage_partitions (
+    id TEXT PRIMARY KEY,
+    tableName TEXT NOT NULL,
+    partitionName TEXT NOT NULL,
+    rangeStart TEXT NOT NULL,
+    rangeEnd TEXT NOT NULL,
+    storageClass TEXT NOT NULL DEFAULT 'hot',
+    status TEXT NOT NULL DEFAULT 'planned',
+    createdAt TEXT NOT NULL,
+    appliedAt TEXT,
+    UNIQUE (tableName, partitionName)
+  );
+
   CREATE TABLE IF NOT EXISTS warehouse_sync_status (
     ownerId TEXT,
     siteUrl TEXT,
@@ -876,6 +903,8 @@ const indexSql = `
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_source_date ON ga4_llm_referral_metrics(ownerId, propertyId, sourceClass, date);
   CREATE INDEX IF NOT EXISTS idx_ga4_llm_owner_property_page_date ON ga4_llm_referral_metrics(ownerId, propertyId, pageKey, date);
   CREATE INDEX IF NOT EXISTS idx_warehouse_dataset_coverage_scope_date ON warehouse_dataset_coverage(ownerId, propertyId, siteUrl, dataset, date);
+  CREATE INDEX IF NOT EXISTS idx_warehouse_storage_archives_table_cutoff ON warehouse_storage_archives(tableName, beforeDate);
+  CREATE INDEX IF NOT EXISTS idx_warehouse_storage_partitions_table_range ON warehouse_storage_partitions(tableName, rangeStart, rangeEnd);
   CREATE INDEX IF NOT EXISTS idx_bing_query_stats_owner_site_fetched ON bing_query_stats(ownerId, siteUrl, fetchedAt);
   CREATE INDEX IF NOT EXISTS idx_bing_query_metrics_owner_site_date ON bing_query_metrics(ownerId, siteUrl, date);
   CREATE INDEX IF NOT EXISTS idx_bing_query_metrics_owner_site_query_date ON bing_query_metrics(ownerId, siteUrl, query, date);
@@ -2798,7 +2827,7 @@ function formatPostgresConnectionLog(db: AppDatabase) {
   return `[db] Connected to PostgreSQL (${formatPostgresPoolSettings(diagnostics.pool)}) total=${diagnostics.pool.totalCount} idle=${diagnostics.pool.idleCount} waiting=${diagnostics.pool.waitingCount}`;
 }
 
-export async function initializeDatabase(): Promise<AppDatabase> {
+export async function initializeDatabase(options: { skipDataBackfills?: boolean } = {}): Promise<AppDatabase> {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 
   if (databaseUrl) {
@@ -2827,9 +2856,11 @@ export async function initializeDatabase(): Promise<AppDatabase> {
         await applyPostgresMigrations(db);
       });
       await runMigrations();
-      await backfillLegacyBingQueryMetrics(db);
+      if (!options.skipDataBackfills) {
+        await backfillLegacyBingQueryMetrics(db);
+      }
       await validatePostgresRuntime(db);
-      if (process.env.RUN_DATABASE_BACKFILLS !== 'false') {
+      if (!options.skipDataBackfills && process.env.RUN_DATABASE_BACKFILLS !== 'false') {
         scheduleCrawlCanonicalPageKeyBackfill(db);
         await backfillGscPageKeys(db);
         await backfillGscPageMetrics(db);
@@ -2846,13 +2877,15 @@ export async function initializeDatabase(): Promise<AppDatabase> {
   const sqlite = createSqliteConnection();
   applySqliteMigrations(sqlite);
   const db = new SqliteAppDatabase(sqlite);
-  await backfillLegacyBingQueryMetrics(db);
-  if (process.env.RUN_DATABASE_BACKFILLS !== 'false') {
-    scheduleCrawlCanonicalPageKeyBackfill(db);
+  if (!options.skipDataBackfills) {
+    await backfillLegacyBingQueryMetrics(db);
   }
-  await backfillGscPageKeys(db);
-  await backfillGscPageMetrics(db);
-  await backfillGscSiteQueryCounts(db);
+  if (!options.skipDataBackfills && process.env.RUN_DATABASE_BACKFILLS !== 'false') {
+    scheduleCrawlCanonicalPageKeyBackfill(db);
+    await backfillGscPageKeys(db);
+    await backfillGscPageMetrics(db);
+    await backfillGscSiteQueryCounts(db);
+  }
   console.log('[db] Connected to local SQLite');
   return db;
 }

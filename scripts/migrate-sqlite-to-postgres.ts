@@ -44,6 +44,8 @@ const migrations: TableMigration[] = [
   { table: 'warehouse_jobs', conflictColumns: ['id'] },
   { table: 'warehouse_runtime_heartbeats', conflictColumns: ['role'] },
   { table: 'warehouse_dataset_coverage', conflictColumns: ['ownerId', 'propertyId', 'siteUrl', 'date', 'dataset'] },
+  { table: 'warehouse_storage_archives', conflictColumns: ['id'] },
+  { table: 'warehouse_storage_partitions', conflictColumns: ['id'] },
   { table: 'gsc_site_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date'] },
   { table: 'gsc_query_metrics', conflictColumns: ['ownerId', 'siteUrl', 'date', 'query'] },
   { table: 'gsc_query_intent_cache', conflictColumns: ['ownerId', 'siteUrl', 'query', 'modelVersion'] },
