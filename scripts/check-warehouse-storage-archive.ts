@@ -2,6 +2,7 @@ import { createGunzip } from 'node:zlib';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Writable } from 'node:stream';
 import Database from 'better-sqlite3';
@@ -66,7 +67,7 @@ await db.run('INSERT INTO gsc_page_query_metrics VALUES (?, ?, ?, ?, ?, ?, ?)', 
 await db.run('INSERT INTO gsc_page_query_metrics VALUES (?, ?, ?, ?, ?, ?, ?)', ['owner', 'site', '2026-02-01', '/b', '/b', 'two', 2]);
 await db.run('INSERT INTO gsc_page_query_metrics VALUES (?, ?, ?, ?, ?, ?, ?)', ['owner', 'site', '2026-03-01', '/c', '/c', 'three', 3]);
 
-const archiveDir = await mkdtemp(`${tmpdir()}\\gscplus-warehouse-`);
+const archiveDir = await mkdtemp(join(tmpdir(), 'gscplus-warehouse-'));
 try {
   const manifest = await archiveWarehouseTable(db, {
     archiveDir,
